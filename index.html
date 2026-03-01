@@ -1,89 +1,98 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
-    <meta name="author" content="光波" />
-    <meta name="copyright" content="Copyright (c) 2025 光波. All rights reserved." />
-    <meta name="description" content="AIYOU - AI驱动的一站式漫剧创作平台，开发者：光波" />
-    <title>AIYOU - AI驱动的一站式漫剧创作平台 | 光波开发</title>
-    <link rel="stylesheet" href="/index.css">
-    <style>
-      :root {
-        --glass-border: rgba(255, 255, 255, 0.12);
-        --glass-surface: rgba(30, 30, 32, 0.75);
-        --glass-highlight: rgba(255, 255, 255, 0.08);
-        --apple-spring: cubic-bezier(0.32, 0.72, 0, 1);
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+  <meta name="author" content="光波" />
+  <meta name="copyright" content="Copyright (c) 2025 光波. All rights reserved." />
+  <meta name="description" content="HahaHome - AI驱动的一站式漫剧创作平台" />
+  <title>HahaHome - AI驱动的一站式漫剧创作平台</title>
+  <link rel="stylesheet" href="/index.css">
+  <style>
+    :root {
+      --glass-border: rgba(255, 255, 255, 0.12);
+      --glass-surface: rgba(30, 30, 32, 0.75);
+      --glass-highlight: rgba(255, 255, 255, 0.08);
+      --apple-spring: cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    body {
+      background-color: #020202;
+      background-image:
+        radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.03), transparent 40%),
+        radial-gradient(circle at 50% 100%, rgba(34, 211, 238, 0.02), transparent 40%);
+      color: #f5f5f7;
+      font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Inter", sans-serif;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      user-select: none;
+    }
+
+    ::-webkit-scrollbar {
+      width: 0px;
+      background: transparent;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background-color: rgba(255, 255, 255, 0.15);
+      border-radius: 100px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .noise-bg {
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      mix-blend-mode: overlay;
+      z-index: 0;
+    }
+
+    .font-display {
+      font-family: "SF Pro Display", "Inter", sans-serif;
+      letter-spacing: -0.02em;
+    }
+
+    @keyframes border-glow {
+
+      0%,
+      100% {
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.3),
+          0 0 20px rgba(59, 130, 246, 0.2);
+        border-color: rgba(59, 130, 246, 0.4);
       }
 
-      body {
-        background-color: #020202;
-        background-image:
-          radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.03), transparent 40%),
-          radial-gradient(circle at 50% 100%, rgba(34, 211, 238, 0.02), transparent 40%);
-        color: #f5f5f7;
-        font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Inter", sans-serif;
-        overflow: hidden;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-        user-select: none;
+      50% {
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.6),
+          0 0 30px rgba(59, 130, 246, 0.4),
+          0 0 40px rgba(59, 130, 246, 0.2);
+        border-color: rgba(59, 130, 246, 0.8);
       }
+    }
 
-      ::-webkit-scrollbar {
-        width: 0px;
-        background: transparent;
-      }
+    .animate-border-glow {
+      animation: border-glow 2s ease-in-out infinite;
+    }
+  </style>
+</head>
 
-      .custom-scrollbar::-webkit-scrollbar {
-        width: 4px;
-        height: 4px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb {
-        background-color: rgba(255, 255, 255, 0.15);
-        border-radius: 100px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-        background-color: rgba(255, 255, 255, 0.3);
-      }
+<body>
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
 
-      .noise-bg {
-        position: absolute;
-        inset: 0;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
-        pointer-events: none;
-        mix-blend-mode: overlay;
-        z-index: 0;
-      }
-
-      .font-display {
-        font-family: "SF Pro Display", "Inter", sans-serif;
-        letter-spacing: -0.02em;
-      }
-
-      @keyframes border-glow {
-        0%, 100% {
-          box-shadow: 0 0 10px rgba(59, 130, 246, 0.3),
-                      0 0 20px rgba(59, 130, 246, 0.2);
-          border-color: rgba(59, 130, 246, 0.4);
-        }
-        50% {
-          box-shadow: 0 0 20px rgba(59, 130, 246, 0.6),
-                      0 0 30px rgba(59, 130, 246, 0.4),
-                      0 0 40px rgba(59, 130, 246, 0.2);
-          border-color: rgba(59, 130, 246, 0.8);
-        }
-      }
-
-      .animate-border-glow {
-        animation: border-glow 2s ease-in-out infinite;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
 </html>

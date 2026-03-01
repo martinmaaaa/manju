@@ -14,13 +14,13 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 
 export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<Language>(() => {
-    const saved = localStorage.getItem('aiyou-language');
+    const saved = localStorage.getItem('hahahome-language');
     return (saved === 'en' ? 'en' : 'zh') as Language;
   });
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
-    localStorage.setItem('aiyou-language', lang);
+    localStorage.setItem('hahahome-language', lang);
   };
 
   const t = language === 'zh' ? zh : en;

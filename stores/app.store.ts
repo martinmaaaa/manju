@@ -288,7 +288,7 @@ export const useAppStore = create<AppState>()(
       })
     }),
     {
-      name: 'aiyou-storage', // LocalStorage key
+      name: 'hahahome-storage', // LocalStorage key
       partialize: (state) => ({
         // 只持久化部分状态
         nodes: state.nodes,

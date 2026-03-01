@@ -1,295 +1,119 @@
-<div align="center">
+# 🎬 HahaHome - AI 驱动的一站式漫剧创作平台
 
-# 🎬 AIYOU - AI-Powered Short Drama Production Platform
-
-**One Person, One Team | Complete AI Solution from Idea to Final Video**
-
-[![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)](https://www.typescriptlang.org)
-[![Vite](https://img.shields.io/badge/Vite-6.2-646CFF?logo=vite)](https://vite.dev)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js)](https://nodejs.org)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-
-[English](#english) | 简体中文
-
-</div>
+<p align="center">
+  <strong>从创意到成片，一个人就是一个团队</strong>
+</p>
 
 ---
 
 ## ✨ 项目简介
 
-**AIYOU** 是一个革命性的AI驱动漫剧创作平台，让创作者能够通过简单的节点式操作，完成从创意构思到最终视频成片的全流程制作。
+**HahaHome** 是一款 AI 驱动的漫剧创作平台，通过直观的节点式工作流，让创作者能够完成从剧本构思到最终视频成片的全流程制作。无需专业团队，一个人即可完成编剧、分镜设计、角色设计、图片生成、视频合成等全部创作环节。
 
-先看看效果，这一段成本在2块钱不到（之前sora2稳定时候）
-<video src="https://github.com/user-attachments/assets/cdc2a60d-7c41-43c2-9fb9-fd64b7947521" width="900" controls></video>
-
-
-
-### 🎯 核心优势
-
-- 🚀 **极致效率**：传统需要一周的制作流程，现在2小时完成
-- 🎨 **专业品质**：支持2K高清输出，媲美专业制作团队
-- 🤖 **全流程AI**：12个智能节点覆盖剧本、角色、分镜、视频全流程
-- 🔗 **节点联动**：拖拽连线即可自动生成，像搭积木一样简单
-- 💰 **成本极低**：无需外包，一个人就能完成所有工作
-- 🔒 **数据安全**：本地部署，创作隐私有保障
-
----
-跟你唠唠嗑：这个项目本身是为了锻炼自己vibe coding能力的，因此这个项目完善度不足，会有很多小BUG请见谅，但在这个项目中从短剧知识的学习，到整体流程的搭建，都是一点一滴揣摩出来；系统我只能给30分，提示词我觉得还是可以的能给50分，这个产品只能作为交流学习的工具，不能作为生产力工具
-当然通过这个产品也学习了很多，准备重构这一款产品，将未完善，未构建的能力都补充尽量，真正的作为一个生产力工具去使用，所以如果你是从业者或者对产品有建议可以随时沟通，欢迎拍砖指点
-针对产品有任何问题可以添加我然后进入开源群一起交流沟通
-
-  <img src="https://github.com/user-attachments/assets/efe47326-2a4d-4074-8d78-d0eb8aa10743" height="300"/> <img src="https://github.com/user-attachments/assets/a25a8fa7-4ee0-47f6-a3f6-6e078f5553eb" height="300"/>
-
-
-
-## 🎨 功能模块
+## � 核心功能
 
 ### 📝 剧本创作
+- **剧本大纲生成** — AI 自动生成完整剧本架构
+- **分集剧本** — 自动拆分为多集，每集包含详细对白和场景描述
+- **风格预设** — 设定画面风格，统一全剧视觉调性
 
-| 节点 | 功能 | 价值 |
-|------|------|------|
-| **剧本大纲** | 一键生成5-50集剧本框架，包含世界观、角色设定 | 省去数天的剧本构思时间 |
-| **剧本分集** | 自动拆分每集剧情，生成人物对白和场景描写 | 对白、场景自动完成，专业级质量 |
+### � 视觉创作
+- **文字生图** — 支持多模型（Gemini Imagen、GPT Image、FLUX 等），可配置分辨率、比例、画质
+- **角色设计** — AI 生成角色三视图和多种表情
+- **分镜生成** — 根据剧本自动生成分镜画面
+- **图片裁剪 & 融合** — 内置图片编辑工具
 
-### 🎭 角色与分镜
+### 🎬 视频制作
+- **图生视频** — 将分镜画面转化为动态视频片段
+- **Sora 2 集成** — 接入 OpenAI Sora 进行高质量视频生成
+- **视频编辑器** — 内置剪辑工具，支持片段拼接和导出
+- **配音 & 音效** — Sonic Studio 音频生成
 
-| 节点 | 功能 | 价值 |
-|------|------|------|
-| **角色设计** | AI自动设计角色形象，生成三视图+九宫格表情包 | 无需美术基础，主角配角都能设计 |
-| **分镜生成** | 根据剧本自动生成分镜脚本，景别、角度、运镜、时长全专业 | 专业镜头语言，导演级分镜 |
-| **分镜图设计** | 文字直接生成2K高清分镜画面，支持九宫格/六宫格布局 | 每一帧都是壁纸级别，快速可视化 |
+### � 工作流引擎
+- **节点式画布** — 拖拽连线，自由组合创作流程
+- **工作流模板** — 保存和复用常用创作流程
+- **多项目管理** — 支持多个项目独立管理
+- **智能模型降级** — 主模型不可用时自动切换备选模型
 
+## 🛠️ 技术栈
 
-### 🎬 视频与音频
+| 层级 | 技术 |
+|------|------|
+| 前端框架 | React + TypeScript |
+| 构建工具 | Vite |
+| 状态管理 | Zustand |
+| 桌面端 | Tauri (Windows / macOS) |
+| AI 模型 | Gemini、GPT、FLUX、Sora 2、Kling、Luma、Runway |
+| 在线部署 | Vercel |
 
-| 节点 | 功能 | 价值 |
-|------|------|------|
-| **Sora视频** | 将分镜自动化的组合成标准的sora可适配结构，智能化构建prompt | 自动化生成连贯视频 |
-| **分镜视频** | 通过自由组合分镜实现分镜图片及prompt智能构建，支持多视频模型生成 | 自定义视频生成 |
+## 🚀 快速开始
 
+### 环境要求
 
-### 📊 剧集优化
+- Node.js ≥ 18.0.0
+- npm ≥ 8.0.0
+- 现代浏览器（Chrome / Edge / Safari）
 
-| 节点 | 功能 | 价值 |
-|------|------|------|
-| **剧集分析** | 分析爆款剧的世界观、逻辑性、角色弧光、受众共鸣点 | 学习爆款的成功秘诀 |
+### 安装运行
 
----
-
-## 💡 适用场景
-
-- 🎬 **短视频创作者** - 批量生产高质量内容，提升粉丝增长
-- 📚 **漫画工作室** - 快速出分镜，大幅提升制作效率
-- 🎮 **游戏开发者** - 角色设计、剧情CG、宣传视频一站式搞定
-- 🎨 **设计师** - 灵感爆发，创意快速落地
-- 📱 **自媒体运营** - 内容创作自动化，效率提升10倍
-
----
-
-## 🏗️ Architecture
-
-```
-aiyou/
-├── frontend/          # React + TypeScript + Vite (Port 4000)
-├── server/            # Express + Tencent COS (Port 3001)
-└── docs/              # Documentation
-```
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Node.js 18+
-- npm or yarn or pnpm
-
-### Installation
-
-1. **Clone the repository**
 ```bash
-git clone https://github.com/yubowen123/AIYOU_open-ai-video-drama-generator.git
-cd AIYOU_open-ai-video-drama-generator
-```
+# 克隆项目
+git clone https://github.com/martinmaaaa/manju.git
+cd manju
 
-2. **Install dependencies**
-```bash
-# Frontend
+# 安装依赖
 npm install
 
-# Backend
-cd server
-npm install
-cd ..
-```
-
-3. **Configure environment variables**
-
-Create `.env.local` in root directory:
-```env
-GEMINI_API_KEY=your_api_key_here
-```
-
-Create `server/.env`:
-```env
-OSS_BUCKET=your_bucket_name
-OSS_REGION=ap-guangzhou
-OSS_SECRET_ID=your_secret_id
-OSS_SECRET_KEY=your_secret_key
-PORT=3001
-```
-
-> 💡 Get API keys: [Google AI Studio](https://ai.google.dev/) | [Tencent Cloud COS](https://console.cloud.tencent.com/cos)
-
-4. **Start the development servers**
-
-Terminal 1 (Backend):
-```bash
-cd server
-npm start
-```
-
-Terminal 2 (Frontend):
-```bash
+# 启动开发服务器
 npm run dev
 ```
 
-5. **Open your browser**
+访问 http://localhost:5173 即可使用。
 
-Visit [http://localhost:4000](http://localhost:4000)
+### 配置 API Key
 
----
+首次使用需要配置 AI 模型的 API Key：
 
-## 🛠️ Tech Stack
+1. 打开项目列表页，点击右上角 **⚙ 系统设置**
+2. 在「基础设置」中选择 API 提供商（Gemini / 云雾 / 自定义）
+3. 输入对应的 API Key 并保存
 
-### Frontend
-- **React 19.2** - UI Framework
-- **TypeScript 5.8** - Type Safety
-- **Vite 6.2** - Build Tool
-- **Zustand** - State Management
-- **React Flow** - Node-based Editor
-- **Tailwind CSS** - Styling
-
-### Backend
-- **Node.js 18+** - Runtime
-- **Express** - Web Framework
-- **Tencent COS SDK** - File Storage
-- **Multer** - File Upload
-
-### AI Integration
-- **Google Gemini API** - Image/Video/Script Generation
-- **DeepSeek** - Backup AI Model
-- **Multi-model Support** - Sora, Runway, Veo, Luma, MiniMax
-- **Auto Fallback** - Automatic model switching
-
----
-
-## 📖 Documentation
-
-- [Backend Architecture](docs/BACKEND_ARCHITECTURE.md)
-- [Code Splitting Guide](docs/CODE_SPLITTING_GUIDE.md)
-- [Error Boundaries](docs/ERROR_BOUNDARIES.md)
-- [Contributing Guide](CONTRIBUTING.md)
-
----
-
-## 📖 使用指南
-
-### 基础工作流
+## � 项目结构
 
 ```
-创意描述 → 剧本大纲 → 剧本分集 → 角色设计 → 分镜图设计 → 文生视频
+hahahome/
+├── App.tsx              # 主应用组件
+├── components/          # UI 组件
+│   ├── nodes/           # 节点组件（核心）
+│   ├── SettingsPanel.tsx # 全局设置面板
+│   └── ...
+├── handlers/            # 节点动作处理器
+├── services/            # AI 服务层（Gemini、LLM Providers）
+├── stores/              # 状态管理 (Zustand)
+├── hooks/               # 自定义 Hooks
+├── utils/               # 工具函数
+├── src/i18n/            # 国际化（中/英文）
+├── src-tauri/           # Tauri 桌面端配置
+└── public/              # 静态资源
 ```
 
-### 典型创作流程
+## 🌐 部署
 
-1. **输入创意** - 使用「创意描述」节点写下故事想法
-2. **生成剧本** - 连接「剧本大纲」和「剧本分集」生成完整剧本
-3. **设计角色** - 使用「角色设计」节点创建角色三视图和表情包
-4. **制作分镜** - 连接「分镜图设计」节点，生成分镜画面
-5. **生成视频** - 使用「文生视频」节点生成最终视频
+### Vercel（在线版）
 
+项目已配置 `vercel.json`，连接 GitHub 后可一键部署。
 
----
+### Tauri（桌面版）
 
-## 🎯 核心特性
-
-### 节点式创作
-- 拖拽节点到画布
-- 连线建立数据流
-- 自动执行生成任务
-- 实时预览结果
-
-### 智能联动
-- 剧本自动传递给分镜
-- 角色信息共享到所有节点
-- 分镜图直接生成视频
-- 全流程无缝衔接
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License - see [LICENSE](LICENSE) for details.
-
-**Important**: Commercial resale requires explicit written permission from the original author.
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
----
-
-## 📧 Contact
-
-- GitHub Issues: [Submit Issues](https://github.com/yubowen123/AIYOU_open-ai-video-drama-generator/issues)
-- Email: a@ggbo.com
-
----
-
-<div align="center">
-
-**If this project helps you, please give us a ⭐️!**
-
-Made with ❤️ by [光波](https://github.com/yubowen123)
-
-</div>
-
----
-
-## English
-
-### Features
-
-- 🎬 **12 Intelligent Nodes**: Cover scriptwriting, character design, storyboard, video generation
-- 🚀 **Extreme Efficiency**: Complete in 2 hours what traditionally takes a week
-- 🎨 **Professional Quality**: 2K HD output, comparable to professional production
-- 🔗 **Node-based Workflow**: Drag-and-drop interface, connect nodes to automate
-- 💰 **Ultra-Low Cost**: No outsourcing needed, one person can do it all
-- 🔒 **Data Security**: Local deployment, full privacy control
-
-### AI Models Supported
-
-- **Video Generation**: Sora, Runway Gen-3, Veo, Luma Dream Machine
-- **Image Generation**: Gemini, Midjourney, Flux, DALL-E
-- **Script & Story**: Gemini 2.5 Pro, DeepSeek V3
-- **Audio Generation**: Suno V4
-
-### Typical Workflow
-
-```
-Idea Description → Script Outline → Character Design → Storyboard → Video Generation → Music
+```bash
+# 需要安装 Rust 环境
+npm run tauri build
 ```
 
----
+支持 Windows (.exe) 和 macOS (.dmg) 打包。
 
-<div align="center">
+## 📄 许可证
 
-**如果这个项目对你有帮助，请给个 ⭐️ 支持一下！**
+本项目基于 [MIT License](./LICENSE) 开源。
 
-Made with ❤️ by [光波](https://github.com/yubowen123)
-
-</div>
+原项目来自 [AIYOU](https://github.com/yubowen123/AIYOU_open-ai-video-drama-generator)，由光波开发。

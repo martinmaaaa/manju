@@ -2,7 +2,7 @@ import { Translation } from './zh';
 
 export const en: Translation = {
   // App Name
-  appName: 'AIYOUSTUDIO',
+  appName: 'HahaHome',
   welcome: 'Welcome',
 
   // Node Types

@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
-  "productName": "AIYOU",
+  "productName": "HahaHome",
   "version": "0.1.0",
-  "identifier": "com.aiyou.app",
+  "identifier": "com.hahahome.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "AIYOU 漫剧生成平台",
+        "title": "HahaHome 漫剧生成平台",
         "width": 1400,
         "height": 900,
         "minWidth": 1024,
@@ -36,7 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/aiyou-server"],
+    "externalBin": [
+      "binaries/hahahome-server"
+    ],
     "resources": [
       "binaries/server-bundle.cjs",
       "binaries/node_modules/**/*"
@@ -55,8 +57,8 @@
       "open": true,
       "scope": [
         {
-          "name": "aiyou-server",
-          "cmd": "binaries/aiyou-server",
+          "name": "hahahome-server",
+          "cmd": "binaries/hahahome-server",
           "args": true
         }
       ]

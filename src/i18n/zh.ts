@@ -1,6 +1,6 @@
 export const zh = {
   // App Name
-  appName: 'AIYOUSTUDIO',
+  appName: 'HahaHome',
   welcome: '人人可用的短剧生产力',
 
   // Node Types

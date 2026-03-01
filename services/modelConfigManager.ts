@@ -235,7 +235,7 @@ const DEFAULT_CONFIG: ModelConfiguration = {
 // 存储键
 // ============================================================
 
-const STORAGE_KEY = 'aiyou-model-configuration';
+const STORAGE_KEY = 'hahahome-model-configuration';
 
 // ============================================================
 // 配置管理类

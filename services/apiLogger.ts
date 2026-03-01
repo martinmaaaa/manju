@@ -46,7 +46,7 @@ export interface APILogEntry {
 class APILogger {
     private logs: APILogEntry[] = [];
     private maxLogs = 30;  // 最多保存30条日志（减少内存占用）
-    private storageKey = 'AIYOU_API_LOGS';
+    private storageKey = 'HAHAHOME_API_LOGS';
     // 开发者标识 - 用于证明版权归属
     private readonly DEVELOPER = '光波';
     private readonly DEVELOPER_EMAIL = 'a@ggbo.com';
@@ -275,12 +275,12 @@ class APILogger {
             body: JSON.stringify(cleanLog),
             keepalive: true
         })
-        .then(() => {
-        })
-        .catch(err => {
-            // 不阻塞主流程，但记录错误
-            console.error(`[API Logger] ✗ 发送日志失败: ${cleanLog.apiName}`, err.message);
-        });
+            .then(() => {
+            })
+            .catch(err => {
+                // 不阻塞主流程，但记录错误
+                console.error(`[API Logger] ✗ 发送日志失败: ${cleanLog.apiName}`, err.message);
+            });
     }
 
     private sanitizeResponse(response: any): any {

@@ -1,6 +1,6 @@
 /**
  * Gemini AI 服务
- * AIYOU 漫剧生成平台核心服务
+ * HahaHome 漫剧生成平台核心服务
  *
  * @developer 光波 (a@ggbo.com)
  * @copyright Copyright (c) 2025 光波. All rights reserved.

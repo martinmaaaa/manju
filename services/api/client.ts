@@ -1,5 +1,5 @@
 /**
- * AIYOU API 客户端 - 统一 HTTP 请求封装
+ * HahaHome API 客户端 - 统一 HTTP 请求封装
  *
  * @developer 光波 (a@ggbo.com)
  * @copyright Copyright (c) 2025 光波. All rights reserved.

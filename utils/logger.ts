@@ -1,5 +1,5 @@
 /**
- * AIYOU 漫剧生成平台 - 日志工具
+ * HahaHome 漫剧生成平台 - 日志工具
  *
  * @developer 光波 (a@ggbo.com)
  * @copyright Copyright (c) 2025 光波. All rights reserved.
