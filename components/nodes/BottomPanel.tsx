@@ -10,7 +10,7 @@
 
 import React, { useState } from 'react';
 import { NodeType, NodeStatus, StoryboardShot, CharacterProfile } from '../../types';
-import { RefreshCw, Play, Image as ImageIcon, Video as VideoIcon, Type, AlertCircle, CheckCircle, Plus, Maximize2, Download, MoreHorizontal, Wand2, Scaling, FileSearch, Edit, Loader2, Layers, Trash2, X, Upload, Scissors, Film, MousePointerClick, Crop as CropIcon, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, GripHorizontal, Link, Copy, Monitor, Music, Pause, Volume2, Mic2, BookOpen, ScrollText, Clapperboard, LayoutGrid, Box, User, Users, Save, RotateCcw, Eye, List, Sparkles, ZoomIn, ZoomOut, Minus, Circle, Square, Maximize, Move, RotateCw, TrendingUp, TrendingDown, ArrowRight, ArrowUp, ArrowDown, ArrowUpRight, ArrowDownRight, Palette, Grid, Grid3X3, MoveHorizontal, ArrowUpDown, Database, ShieldAlert, ExternalLink, Package } from 'lucide-react';
+import { Plus, Maximize2, Minimize2, Image as ImageIcon, Music, RefreshCw, Layers, LayoutGrid, AlertCircle, Wand2, X, Clock, Eye, Film, Scissors, CheckCircle2, ChevronRight, MessageSquare, Monitor, FileText, ChevronDown, Check, Settings, EyeOff, Lock, User, Palette, Film as FilmIcon, Youtube, Wand, Clapperboard, Layers as LayersIcon, SplitSquareVertical, Upload, Link, Loader2, Sparkles, FileIcon, MousePointerClick, Crop as CropIcon, ChevronUp, ChevronLeft, GripHorizontal, Copy, Pause, Volume2, Mic2, BookOpen, ScrollText, Box, Users, Save, RotateCcw, List, ZoomIn, ZoomOut, Minus, Circle, Square, Maximize, Move, RotateCw, TrendingUp, TrendingDown, ArrowRight, ArrowUp, ArrowDown, ArrowUpRight, ArrowDownRight, Grid, Grid3X3, MoveHorizontal, ArrowUpDown, Database, ShieldAlert, ExternalLink, Package, Download, Play, Scaling, Trash2, Edit, FileSearch, MoreHorizontal, CheckCircle, Type, Video as VideoIcon } from 'lucide-react';
 import { PromptEditor } from '../PromptEditor';
 import { IMAGE_MODELS, TEXT_MODELS, VIDEO_MODELS, AUDIO_MODELS } from '../../services/modelConfig';
 import {
@@ -59,7 +59,8 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
     const isAlwaysOpen = (node.type === NodeType.STORYBOARD_VIDEO_GENERATOR && node.data.status === 'prompting') ||
         (node.type === NodeType.SORA_VIDEO_GENERATOR && node.data.taskGroups && node.data.taskGroups.length > 0) ||
         (node.type === NodeType.PROMPT_INPUT && !isEpisodeChildNode) ||
-        node.type === NodeType.IMAGE_GENERATOR;
+        node.type === NodeType.IMAGE_GENERATOR ||
+        node.type === NodeType.JIMENG_VIDEO_GENERATOR;
     const isPanelOpen = isAlwaysOpen || (isHovered || isInputFocused);
 
     // 获取当前画布缩放比例，用于反向缩放底部操作栏以保持按钮可点击
@@ -1180,7 +1181,7 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
     }
 
     let models: { l: string, v: string }[] = [];
-    if (node.type === NodeType.VIDEO_GENERATOR || (node.type as string) === NodeType.SORA_VIDEO_GENERATOR) {
+    if (node.type === NodeType.VIDEO_GENERATOR || (node.type as string) === NodeType.SORA_VIDEO_GENERATOR || (node.type as string) === NodeType.JIMENG_VIDEO_GENERATOR) {
         models = VIDEO_MODELS.map(m => ({ l: m.name, v: m.id }));
     } else if (node.type === NodeType.VIDEO_ANALYZER) {
         models = TEXT_MODELS.map(m => ({ l: m.name, v: m.id }));
@@ -1588,6 +1589,104 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
                         >
                             {isWorking ? <Loader2 className="animate-spin" size={14} /> : <Film size={14} />}
                             <span>拆分为影视分镜</span>
+                        </button>
+                    </div>
+                ) : node.type === NodeType.JIMENG_VIDEO_GENERATOR ? (
+                    // JIMENG 专属底部面板 (支持多模态参考)
+                    <div className="flex flex-col gap-2">
+                        {/* Prompt 输入区 */}
+                        <div
+                            className="relative group/input bg-black/10 rounded-[16px] border border-transparent transition-colors"
+                            onDragOver={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.classList.add('border-blue-500/50', 'bg-blue-500/10');
+                            }}
+                            onDragLeave={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.classList.remove('border-blue-500/50', 'bg-blue-500/10');
+                            }}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                e.currentTarget.classList.remove('border-blue-500/50', 'bg-blue-500/10');
+                                const files = Array.from(e.dataTransfer.files);
+                                if (files.length > 0) {
+                                    const currentFiles = Array.isArray(node.data.droppedFiles) ? node.data.droppedFiles : [];
+                                    onUpdate(node.id, { droppedFiles: [...currentFiles, ...files] });
+                                }
+                            }}
+                        >
+                            <textarea
+                                className="w-full bg-transparent text-xs text-slate-200 placeholder-slate-500/60 p-3 pb-8 focus:outline-none resize-none custom-scrollbar font-medium leading-relaxed"
+                                style={{ height: `${Math.min(inputHeight, 200)}px` }}
+                                placeholder="描述想要生成的视频，可拖拽图片、视频、音频到此处作为参考..."
+                                value={localPrompt}
+                                onChange={(e) => setLocalPrompt(e.target.value)}
+                                onBlur={() => { setIsInputFocused(false); commitPrompt(); }}
+                                onKeyDown={handleCmdEnter}
+                                onFocus={() => setIsInputFocused(true)}
+                                onMouseDown={e => e.stopPropagation()}
+                                onWheel={(e) => e.stopPropagation()}
+                                readOnly={isWorking}
+                            />
+
+                            {/* Reference Files Preview Area */}
+                            {node.data.droppedFiles && Array.isArray(node.data.droppedFiles) && node.data.droppedFiles.length > 0 && (
+                                <div className="absolute bottom-3 left-3 flex gap-2 overflow-x-auto custom-scrollbar max-w-[90%] pb-1">
+                                    {node.data.droppedFiles.map((f: File, i: number) => (
+                                        <div key={i} className="relative group/file shrink-0 w-8 h-8 rounded border border-white/20 bg-black/40 flex items-center justify-center overflow-hidden" title={f.name}>
+                                            {f.type.startsWith('image/') ? (
+                                                <img src={URL.createObjectURL(f)} alt="ref" className="w-full h-full object-cover" />
+                                            ) : f.type.startsWith('video/') ? (
+                                                <Film size={14} className="text-blue-400" />
+                                            ) : f.type.startsWith('audio/') ? (
+                                                <Music size={14} className="text-green-400" />
+                                            ) : (
+                                                <FileIcon size={14} className="text-slate-400" />
+                                            )}
+                                            <button
+                                                className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover/file:opacity-100 transition-opacity z-10"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const newFiles = [...(node.data.droppedFiles as File[])];
+                                                    newFiles.splice(i, 1);
+                                                    onUpdate(node.id, { droppedFiles: newFiles });
+                                                }}
+                                            >
+                                                <X size={8} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="absolute bottom-0 left-0 w-full h-3 cursor-row-resize flex items-center justify-center opacity-0 group-hover/input:opacity-100 transition-opacity" onMouseDown={handleInputResizeStart}><div className="w-8 h-1 rounded-full bg-white/10 group-hover/input:bg-white/20" /></div>
+                        </div>
+
+                        {/* 生成视频按钮 */}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onAction(node.id, 'generate-jimeng-video');
+                            }}
+                            disabled={isActionDisabled}
+                            className={`
+                                w-full flex items-center justify-center gap-2 px-4 py-2 mt-1 rounded-[10px] font-bold text-[10px] tracking-wide transition-all duration-300
+                                ${isWorking
+                                    ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:shadow-lg hover:shadow-blue-500/20 hover:scale-[1.02]'}
+                            `}
+                        >
+                            {isWorking ? (
+                                <>
+                                    <div className="w-3.5 h-3.5 border border-slate-500 border-t-transparent rounded-full animate-spin" />
+                                    <span>生成中...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles size={12} />
+                                    <span>Seedance 2.0 生成视频</span>
+                                </>
+                            )}
                         </button>
                     </div>
                 ) : node.type === NodeType.IMAGE_GENERATOR ? (

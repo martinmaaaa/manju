@@ -54,7 +54,8 @@ function getNodeDisplayName(type: NodeType): string {
         [NodeType.SORA_VIDEO_CHILD]: 'Sora 视频片段',
         [NodeType.STORYBOARD_VIDEO_GENERATOR]: '分镜视频生成',
         [NodeType.STORYBOARD_VIDEO_CHILD]: '分镜视频片段',
-        [NodeType.VIDEO_EDITOR]: '视频编辑器'
+        [NodeType.VIDEO_EDITOR]: '视频编辑器',
+        [NodeType.JIMENG_VIDEO_GENERATOR]: '即梦视频生成'
     };
     return names[type] || type;
 }

@@ -50,6 +50,7 @@ export enum NodeType {
   STORYBOARD_VIDEO_GENERATOR = 'STORYBOARD_VIDEO_GENERATOR',
   STORYBOARD_VIDEO_CHILD = 'STORYBOARD_VIDEO_CHILD',
   VIDEO_EDITOR = 'VIDEO_EDITOR',
+  JIMENG_VIDEO_GENERATOR = 'JIMENG_VIDEO_GENERATOR',
 }
 
 export enum NodeStatus {
@@ -338,6 +339,10 @@ export interface AppNode {
 
     // Generic
     outputKey?: string; // 输出键名
+
+    // Jimeng Video Generator Specifics
+    referenceFiles?: File[]; // Files uploaded via input
+    droppedFiles?: File[]; // Files dropped directly onto the node
 
     // Storyboard Video Generator (inline from StoryboardVideoGeneratorData)
     availableShots?: SplitStoryboardShot[];

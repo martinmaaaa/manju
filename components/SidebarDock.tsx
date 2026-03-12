@@ -51,7 +51,7 @@ interface SidebarDockProps {
 
 // ... (Helper Helpers UNCHANGED) ...
 const getNodeIcon = (t: string) => {
-    switch(t) {
+    switch (t) {
         case NodeType.PROMPT_INPUT: return Type;
         case NodeType.IMAGE_GENERATOR: return ImageIcon;
         case NodeType.VIDEO_GENERATOR: return Film;
@@ -70,6 +70,7 @@ const getNodeIcon = (t: string) => {
         case NodeType.DRAMA_REFINED: return Sparkles;
         case NodeType.STYLE_PRESET: return Palette;
         case NodeType.VIDEO_EDITOR: return Film;
+        case NodeType.JIMENG_VIDEO_GENERATOR: return Wand2;
         default: return Plus;
     }
 };
@@ -154,13 +155,13 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                         </div>
                         {/* Tabs */}
                         <div className="flex bg-black/20 p-1 rounded-lg">
-                            <button 
+                            <button
                                 onClick={() => setActiveHistoryTab('image')}
                                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-bold rounded-md transition-all ${activeHistoryTab === 'image' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                             >
                                 <ImageIcon size={12} /> 图片
                             </button>
-                            <button 
+                            <button
                                 onClick={() => setActiveHistoryTab('video')}
                                 className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-bold rounded-md transition-all ${activeHistoryTab === 'video' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                             >
@@ -177,8 +178,8 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                         ) : (
                             <div className="grid grid-cols-2 gap-2 p-1">
                                 {filteredAssets.map(a => (
-                                    <div 
-                                        key={a.id} 
+                                    <div
+                                        key={a.id}
                                         className="aspect-square rounded-xl overflow-hidden cursor-grab active:cursor-grabbing border border-white/5 hover:border-cyan-500/50 transition-colors group relative shadow-md bg-black/20"
                                         draggable={true}
                                         onDragStart={(e) => {
@@ -227,12 +228,12 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                         {workflows.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-10 text-slate-500 opacity-60 select-none">
                                 <FolderHeart size={48} strokeWidth={1} className="mb-3 opacity-50" />
-                                <span className="text-[10px] font-medium tracking-widest uppercase text-center">空空如也<br/>保存您的第一个工作流</span>
+                                <span className="text-[10px] font-medium tracking-widest uppercase text-center">空空如也<br />保存您的第一个工作流</span>
                             </div>
                         ) : (
                             workflows.map(wf => (
-                                <div 
-                                    key={wf.id} 
+                                <div
+                                    key={wf.id}
                                     className={`
                                         relative p-2 rounded-xl border bg-black/20 group transition-all duration-300 cursor-grab active:cursor-grabbing hover:bg-white/5
                                         ${selectedWorkflowId === wf.id ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : 'border-white/5 hover:border-white/20'}
@@ -244,10 +245,10 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                                     }}
                                     onClick={(e) => { e.stopPropagation(); onSelectWorkflow(wf.id); }}
                                     onDoubleClick={(e) => { e.stopPropagation(); setEditingWorkflowId(wf.id); }}
-                                    onContextMenu={(e) => { 
-                                        e.preventDefault(); 
-                                        e.stopPropagation(); 
-                                        setContextMenu({visible: true, x: e.clientX, y: e.clientY, id: wf.id, type: 'workflow'}); 
+                                    onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setContextMenu({ visible: true, x: e.clientX, y: e.clientY, id: wf.id, type: 'workflow' });
                                     }}
                                 >
                                     <div className="aspect-[2/1] bg-black/40 rounded-lg mb-2 overflow-hidden relative">
@@ -261,12 +262,12 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                                     </div>
                                     <div className="flex items-center justify-between px-1">
                                         {editingWorkflowId === wf.id ? (
-                                            <input 
+                                            <input
                                                 className="bg-black/50 border border-cyan-500/50 rounded px-1 text-xs text-white w-full outline-none"
                                                 defaultValue={wf.title}
                                                 autoFocus
                                                 onBlur={(e) => { onRenameWorkflow(wf.id, e.target.value); setEditingWorkflowId(null); }}
-                                                onKeyDown={(e) => { if(e.key === 'Enter') { onRenameWorkflow(wf.id, e.currentTarget.value); setEditingWorkflowId(null); } }}
+                                                onKeyDown={(e) => { if (e.key === 'Enter') { onRenameWorkflow(wf.id, e.currentTarget.value); setEditingWorkflowId(null); } }}
                                             />
                                         ) : (
                                             <span className="text-xs font-medium text-slate-300 truncate select-none group-hover:text-white transition-colors">{wf.title}</span>
@@ -291,7 +292,7 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                     </span>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-2">
-                    {[NodeType.IMAGE_GENERATOR, NodeType.SCRIPT_PLANNER, NodeType.SCRIPT_EPISODE, NodeType.CHARACTER_NODE, NodeType.STYLE_PRESET, NodeType.STORYBOARD_GENERATOR, NodeType.STORYBOARD_IMAGE, NodeType.STORYBOARD_SPLITTER, NodeType.SORA_VIDEO_GENERATOR, NodeType.STORYBOARD_VIDEO_GENERATOR, NodeType.DRAMA_ANALYZER, NodeType.VIDEO_EDITOR].map(t => {
+                    {[NodeType.IMAGE_GENERATOR, NodeType.SCRIPT_PLANNER, NodeType.SCRIPT_EPISODE, NodeType.CHARACTER_NODE, NodeType.STYLE_PRESET, NodeType.STORYBOARD_GENERATOR, NodeType.STORYBOARD_IMAGE, NodeType.STORYBOARD_SPLITTER, NodeType.SORA_VIDEO_GENERATOR, NodeType.JIMENG_VIDEO_GENERATOR, NodeType.STORYBOARD_VIDEO_GENERATOR, NodeType.DRAMA_ANALYZER, NodeType.VIDEO_EDITOR].map(t => {
                         const ItemIcon = getNodeIcon(t);
                         return (
                             <button
@@ -334,7 +335,7 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                     { id: 'undo', icon: RotateCcw, action: onUndo },
                 ].map(item => (
                     <div key={item.id} className="relative group">
-                        <button 
+                        <button
                             onMouseEnter={() => handleSidebarHover(item.id)}
                             onClick={() => item.action ? item.action() : setActivePanel(item.id as any)}
                             className={`relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${activePanel === item.id || item.active ? 'bg-white text-black shadow-lg' : 'hover:bg-white/10 text-slate-300 hover:text-white'}`}
@@ -349,11 +350,11 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                         )}
                     </div>
                 ))}
-                
+
                 {/* Spacer & Settings */}
                 <div className="w-8 h-px bg-white/10 my-1"></div>
-                
-                <button 
+
+                <button
                     onClick={onOpenSettings}
                     className="relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 hover:bg-white/10 text-slate-300 hover:text-white"
                 >
@@ -377,16 +378,16 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
 
             {/* Global Context Menu (Rendered outside the transformed panel to fix positioning) */}
             {contextMenu && (
-                <div 
+                <div
                     className="fixed z-[100] bg-[#2c2c2e] border border-white/10 rounded-lg shadow-2xl p-1 animate-in fade-in zoom-in-95 duration-200 min-w-[120px]"
                     style={{ top: contextMenu.y, left: contextMenu.x }}
                     onMouseDown={e => e.stopPropagation()}
                     onMouseLeave={() => setContextMenu(null)}
                 >
                     {contextMenu.type === 'history' && (
-                         <button className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/20 rounded-md flex items-center gap-2" onClick={() => { onDeleteAsset(contextMenu.id); setContextMenu(null); }}>
-                             <Trash2 size={12} /> 删除
-                         </button>
+                        <button className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/20 rounded-md flex items-center gap-2" onClick={() => { onDeleteAsset(contextMenu.id); setContextMenu(null); }}>
+                            <Trash2 size={12} /> 删除
+                        </button>
                     )}
                     {contextMenu.type === 'workflow' && (
                         <>

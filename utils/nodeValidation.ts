@@ -267,6 +267,20 @@ export const NODE_DEPENDENCY_RULES: Record<NodeType, {
     description: '将分镜数据转换为 Sora 2 视频，支持多镜头分组生成'
   },
 
+  // 即梦视频生成器 - 接收分镜图拆解输入,生成即梦视频
+  [NodeType.JIMENG_VIDEO_GENERATOR]: {
+    allowedInputs: [
+      NodeType.STORYBOARD_SPLITTER,
+      NodeType.PROMPT_INPUT
+    ],
+    allowedOutputs: [
+      NodeType.VIDEO_EDITOR  // Can output to video editor
+    ],
+    minInputs: 0,
+    maxInputs: 5,  // Can accept up to 5 splitter nodes
+    description: '使用即梦 Seedance 2.0 生成视频'
+  },
+
   // Sora 2 视频子节点 - 仅作为显示节点,由父节点自动创建
   [NodeType.SORA_VIDEO_CHILD]: {
     allowedInputs: [
@@ -599,6 +613,7 @@ function getNodeDisplayName(type: NodeType): string {
     [NodeType.STORYBOARD_IMAGE]: '分镜图设计',
     [NodeType.STORYBOARD_SPLITTER]: '分镜图拆解',
     [NodeType.SORA_VIDEO_GENERATOR]: 'Sora 2 视频',
+    [NodeType.JIMENG_VIDEO_GENERATOR]: '即梦视频生成',
     [NodeType.STORYBOARD_VIDEO_GENERATOR]: '分镜视频生成',
     [NodeType.STORYBOARD_VIDEO_CHILD]: '分镜视频结果',
     [NodeType.CHARACTER_NODE]: '角色设计',

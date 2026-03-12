@@ -2923,6 +2923,76 @@ Everything else must be purely visual with no text whatsoever.
                 });
 
 
+            } else if (node.type === NodeType.JIMENG_VIDEO_GENERATOR) {
+                // --- Jimeng Seedance 2.0 Video Generator Logic ---
+                if (promptOverride === 'generate-jimeng-video') {
+                    if (!prompt) throw new Error("请输入生图描述");
+
+                    handleNodeUpdate(id, {
+                        status: 'generating',
+                        progress: 0,
+                        isWorking: true
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
+
+                    try {
+                        const { jimengApi } = await import('../services/jimengApi');
+
+                        // Collect ALL files passed down from inputs
+                        const filesToUpload: File[] = [];
+
+                        // Look for standard file properties in inputs (e.g. from IMAGE_GENERATOR, AUDIO_INPUT etc)
+                        for (const inputNode of inputs) {
+                            if (!inputNode) continue;
+                            const nid = inputNode.data;
+                            if (nid.image) {
+                                // Convert base64 to File
+                                const fetchRes = await fetch(nid.image);
+                                const blob = await fetchRes.blob();
+                                filesToUpload.push(new File([blob], `ref-image-${inputNode.id}.png`, { type: 'image/png' }));
+                            }
+                            // Also handles any native files dragged onto the Jimeng node directly
+                            if (node.data.referenceFiles && Array.isArray(node.data.referenceFiles)) {
+                                filesToUpload.push(...node.data.referenceFiles);
+                            }
+                        }
+
+                        // Also append nodes native files drops
+                        if (node.data.droppedFiles && Array.isArray(node.data.droppedFiles)) {
+                            filesToUpload.push(...node.data.droppedFiles);
+                        }
+
+                        handleNodeUpdate(id, { progress: 20 });
+
+                        const result = await jimengApi.generateVideo({
+                            prompt,
+                            files: filesToUpload
+                        });
+
+                        if (result.success && result.videoUrl) {
+                            handleNodeUpdate(id, {
+                                status: 'completed',
+                                progress: 100,
+                                isWorking: false,
+                                videoUrl: result.videoUrl,
+                            });
+                            handleAssetGenerated('video', result.videoUrl, `即梦视频: ${prompt.substring(0, 10)}...`);
+                            setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        } else {
+                            throw new Error(result.error || "即梦接口返回失败");
+                        }
+                    } catch (error: any) {
+                        console.error('[JIMENG_VIDEO_GENERATOR] Error:', error);
+                        handleNodeUpdate(id, {
+                            status: 'prompting',
+                            error: error.message || '即梦生成失败',
+                            isWorking: false
+                        });
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                        throw error;
+                    }
+                }
+
             } else if (node.type === NodeType.VIDEO_ANALYZER) {
                 const vid = node.data.videoUri || inputs.find(n => n?.data.videoUri)?.data.videoUri;
                 if (!vid) throw new Error("未找到视频输入");

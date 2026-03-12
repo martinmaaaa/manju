@@ -6,6 +6,7 @@ import { LLMProviderType } from '../types';
 import { StorageSettingsPanel } from './StorageSettingsPanel';
 import { ModelPriorityTab } from './settings/ModelPriorityTab';
 import { SoraSettingsTab } from './settings/SoraSettingsTab';
+import { JimengSettingsTab } from './settings/JimengSettingsTab';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -19,7 +20,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(({ isOpen,
   const [isValidating, setIsValidating] = useState(false);
   const [validationStatus, setValidationStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<'basic' | 'models' | 'storage' | 'sora'>('basic');
+  const [activeTab, setActiveTab] = useState<'basic' | 'models' | 'storage' | 'sora' | 'jimeng'>('basic');
 
   // LLM 提供商配置
   const [llmProvider, setLlmProvider] = useState<LLMProviderType>('gemini');
@@ -199,17 +200,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(({ isOpen,
           {[
             { key: 'basic' as const, label: '基础设置', activeColor: 'text-cyan-400 border-cyan-400' },
             { key: 'models' as const, label: '模型优先级', activeColor: 'text-cyan-400 border-cyan-400' },
+            { key: 'jimeng' as const, label: '即梦 (Jimeng)', activeColor: 'text-blue-400 border-blue-400' },
             { key: 'sora' as const, label: 'Sora 2', activeColor: 'text-green-400 border-green-400' },
             { key: 'storage' as const, label: '存储设置', activeColor: 'text-cyan-400 border-cyan-400' },
           ].map(tab => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex-1 py-3 px-4 text-xs font-bold transition-all ${
-                activeTab === tab.key
+              className={`flex-1 py-3 px-4 text-xs font-bold transition-all ${activeTab === tab.key
                   ? `${tab.activeColor} border-b-2 bg-white/5`
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               {tab.label}
             </button>
@@ -233,11 +234,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(({ isOpen,
                       setValidationStatus('idle');
                       setErrorMessage('');
                     }}
-                    className={`p-4 rounded-xl border-2 transition-all ${
-                      llmProvider === 'gemini'
+                    className={`p-4 rounded-xl border-2 transition-all ${llmProvider === 'gemini'
                         ? 'border-cyan-500 bg-cyan-500/10'
                         : 'border-white/10 hover:border-white/20'
-                    }`}
+                      }`}
                   >
                     <div className="font-bold text-white">Gemini API</div>
                     <div className="text-xs text-slate-400 mt-1">Google 官方接口</div>
@@ -249,11 +249,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(({ isOpen,
                       setValidationStatus('idle');
                       setErrorMessage('');
                     }}
-                    className={`p-4 rounded-xl border-2 transition-all ${
-                      llmProvider === 'yunwu'
+                    className={`p-4 rounded-xl border-2 transition-all ${llmProvider === 'yunwu'
                         ? 'border-purple-500 bg-purple-500/10'
                         : 'border-white/10 hover:border-white/20'
-                    }`}
+                      }`}
                   >
                     <div className="font-bold text-white">云雾 API</div>
                     <div className="text-xs text-slate-400 mt-1">第三方接口</div>
@@ -265,11 +264,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(({ isOpen,
                       setValidationStatus('idle');
                       setErrorMessage('');
                     }}
-                    className={`p-4 rounded-xl border-2 transition-all ${
-                      llmProvider === 'custom'
+                    className={`p-4 rounded-xl border-2 transition-all ${llmProvider === 'custom'
                         ? 'border-orange-500 bg-orange-500/10'
                         : 'border-white/10 hover:border-white/20'
-                    }`}
+                      }`}
                   >
                     <div className="font-bold text-white">自定义 API</div>
                     <div className="text-xs text-slate-400 mt-1">自定义第三方接口</div>
@@ -424,6 +422,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(({ isOpen,
             <ModelPriorityTab onClose={onClose} />
           ) : activeTab === 'sora' ? (
             <SoraSettingsTab onClose={onClose} />
+          ) : activeTab === 'jimeng' ? (
+            <JimengSettingsTab />
           ) : (
             <StorageSettingsPanel
               getCurrentWorkspaceId={() => 'default'}

@@ -47,6 +47,7 @@ export function getNodeNameCN(type: NodeType): string {
     case NodeType.DRAMA_REFINED: return '剧目精炼';
     case NodeType.STYLE_PRESET: return '全局风格';
     case NodeType.VIDEO_EDITOR: return '视频编辑器';
+    case NodeType.JIMENG_VIDEO_GENERATOR: return '即梦视频生成';
     default: return type;
   }
 }
@@ -96,6 +97,8 @@ export function getNodeInfo(type: NodeType): { description: string; inputs: stri
       return { description: '设置全局视觉风格，影响所有生成节点', inputs: '无', outputs: '文字生图、文生视频、分镜图设计' };
     case NodeType.VIDEO_EDITOR:
       return { description: '将多个视频片段拼接、剪辑为完整作品', inputs: 'Sora 2 视频结果、分镜视频结果、灵感音乐', outputs: '无（最终产物）' };
+    case NodeType.JIMENG_VIDEO_GENERATOR:
+      return { description: '使用即梦 Seedance 2.0 自动生成视频，支持图片、视频、语音和文本四种参考形式', inputs: '创意描述、分镜图设计、分镜拆解', outputs: '视频编辑器' };
     default:
       return { description: '未知节点类型', inputs: '无', outputs: '无' };
   }
@@ -124,7 +127,8 @@ export function getNodeIcon(type: NodeType) {
     [NodeType.STYLE_PRESET]: Palette,
     [NodeType.STORYBOARD_VIDEO_GENERATOR]: Film,
     [NodeType.STORYBOARD_VIDEO_CHILD]: VideoIcon,
-    [NodeType.VIDEO_EDITOR]: Film
+    [NodeType.VIDEO_EDITOR]: Film,
+    [NodeType.JIMENG_VIDEO_GENERATOR]: Wand2
   };
 
   return icons[type] || Type;
@@ -154,7 +158,8 @@ export function getNodeColor(type: NodeType): string {
     [NodeType.STYLE_PRESET]: '#a855f7',
     [NodeType.STORYBOARD_VIDEO_GENERATOR]: '#a855f7',  // Purple color for storyboard video generator
     [NodeType.STORYBOARD_VIDEO_CHILD]: '#a855f7',
-    [NodeType.VIDEO_EDITOR]: '#ef4444'  // Red color for video editor
+    [NodeType.VIDEO_EDITOR]: '#ef4444',  // Red color for video editor
+    [NodeType.JIMENG_VIDEO_GENERATOR]: '#0ea5e9'  // Sky blue
   };
 
   return colors[type] || '#6366f1';
@@ -178,6 +183,7 @@ export function getApproxNodeHeight(node: AppNode): number {
   if (node.type === NodeType.CHARACTER_NODE) return CHARACTER_NODE_HEIGHT;
   if (node.type === NodeType.DRAMA_ANALYZER) return 600;
   if (node.type === NodeType.SORA_VIDEO_GENERATOR) return 700;
+  if (node.type === NodeType.JIMENG_VIDEO_GENERATOR) return 700;
   if (node.type === NodeType.SORA_VIDEO_CHILD) return 500;
   if (node.type === NodeType.SCRIPT_PLANNER && node.data.scriptOutline) return 500;
   if ([NodeType.VIDEO_ANALYZER, NodeType.IMAGE_EDITOR, NodeType.PROMPT_INPUT, NodeType.SCRIPT_PLANNER, NodeType.SCRIPT_EPISODE].includes(node.type)) return DEFAULT_FIXED_HEIGHT;
