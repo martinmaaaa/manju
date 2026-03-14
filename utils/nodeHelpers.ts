@@ -193,7 +193,8 @@ export function getApproxNodeHeight(node: AppNode): number {
   const ratio = node.data.aspectRatio || '16:9';
   const parts = ratio.split(':').map(Number);
   if (parts.length === 2 && parts[0] > 0 && parts[1] > 0) {
-    return (node.width || DEFAULT_NODE_WIDTH) * parts[1] / parts[0];
+    const extra = node.type === NodeType.VIDEO_GENERATOR && node.data.generationMode === 'CUT' ? 36 : 0;
+    return (node.width || DEFAULT_NODE_WIDTH) * parts[1] / parts[0] + extra;
   }
 
   return DEFAULT_FIXED_HEIGHT;

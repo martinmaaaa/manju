@@ -59,24 +59,33 @@ describe('getApproxNodeHeight', () => {
 
   it('returns base height for type when no explicit height', () => {
     const node = makeNode({ height: undefined });
-    expect(getApproxNodeHeight(node)).toBe(320); // PROMPT_INPUT base
+    expect(getApproxNodeHeight(node)).toBe(360);
   });
 
-  it('adds extra height for storyboard shots', () => {
-    const node = makeNode({
-      height: undefined,
-      data: { storyboardShots: [{ id: '1' }, { id: '2' }] },
-    });
-    expect(getApproxNodeHeight(node)).toBe(320 + 2 * 40);
-  });
-
-  it('adds extra height for generated characters', () => {
+  it('uses the configured fixed height for character nodes', () => {
     const node = makeNode({
       height: undefined,
       type: NodeType.CHARACTER_NODE,
       data: { generatedCharacters: [{ name: 'A' }, { name: 'B' }] },
     });
-    expect(getApproxNodeHeight(node)).toBe(520 + 2 * 60);
+    expect(getApproxNodeHeight(node)).toBe(600);
+  });
+
+  it('adds the CUT mode offset for video generator nodes', () => {
+    const node = makeNode({
+      height: undefined,
+      type: NodeType.VIDEO_GENERATOR,
+      data: { aspectRatio: '16:9', generationMode: 'CUT' },
+    });
+    expect(getApproxNodeHeight(node)).toBe(420 * 9 / 16 + 36);
+  });
+
+  it('uses the fixed jimeng node height', () => {
+    const node = makeNode({
+      height: undefined,
+      type: NodeType.JIMENG_VIDEO_GENERATOR,
+    });
+    expect(getApproxNodeHeight(node)).toBe(700);
   });
 });
 

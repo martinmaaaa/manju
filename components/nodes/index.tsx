@@ -16,7 +16,7 @@ import { StoryboardVideoNode, StoryboardVideoChildNode } from '../StoryboardVide
 import React, { memo, useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { IMAGE_MODELS, TEXT_MODELS, VIDEO_MODELS, AUDIO_MODELS } from '../../services/modelConfig';
 import { promptManager } from '../../services/promptManager';
-import { getNodeNameCN, getNodeInfo } from '../../utils/nodeHelpers';
+import { getApproxNodeHeight, getNodeNameCN, getNodeInfo } from '../../utils/nodeHelpers';
 import { getAllModelsConfig, getAllSubModelNames } from '../../services/modelConfigLoader';
 
 // Extracted modules
@@ -24,8 +24,7 @@ import {
   IMAGE_ASPECT_RATIOS, VIDEO_ASPECT_RATIOS, IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS,
   SHOT_TYPES, CAMERA_ANGLES, CAMERA_MOVEMENTS,
   IMAGE_COUNTS, VIDEO_COUNTS, GLASS_PANEL,
-  DEFAULT_NODE_WIDTH, DEFAULT_FIXED_HEIGHT, AUDIO_NODE_HEIGHT,
-  STORYBOARD_NODE_HEIGHT, CHARACTER_NODE_HEIGHT,
+  DEFAULT_NODE_WIDTH,
   STYLE_BLUR_ON, STYLE_BLUR_OFF,
   STYLE_MAX_HEIGHT_180, STYLE_MAX_HEIGHT_200, STYLE_MIN_HEIGHT_80,
   STYLE_HEIGHT_60, STYLE_HEIGHT_80,
@@ -589,23 +588,7 @@ const NodeComponent: React.FC<NodeProps> = ({
   };
   const { icon: NodeIcon } = getNodeConfig();
 
-  const getNodeHeight = () => {
-      if (node.height) return node.height;
-      if (node.type === NodeType.STORYBOARD_GENERATOR) return STORYBOARD_NODE_HEIGHT;
-      if (node.type === NodeType.STORYBOARD_IMAGE) return 600;
-      if (node.type === NodeType.CHARACTER_NODE) return CHARACTER_NODE_HEIGHT;
-      if (node.type === NodeType.DRAMA_ANALYZER) return 600;
-      if (node.type === NodeType.SORA_VIDEO_GENERATOR) return 700;
-      if (node.type === NodeType.SORA_VIDEO_CHILD) return 500;
-      if (node.type === NodeType.SCRIPT_PLANNER && node.data.scriptOutline) return 500;
-      if (['VIDEO_ANALYZER', 'IMAGE_EDITOR', 'PROMPT_INPUT', 'SCRIPT_PLANNER', 'SCRIPT_EPISODE'].includes(node.type)) return DEFAULT_FIXED_HEIGHT;
-      if (node.type === NodeType.AUDIO_GENERATOR) return AUDIO_NODE_HEIGHT;
-      const ratio = node.data.aspectRatio || '16:9';
-      const [w, h] = ratio.split(':').map(Number);
-      const extra = (node.type === NodeType.VIDEO_GENERATOR && generationMode === 'CUT') ? 36 : 0;
-      return ((node.width || DEFAULT_NODE_WIDTH) * h / w) + extra;
-  };
-  const nodeHeight = getNodeHeight();
+  const nodeHeight = getApproxNodeHeight(node);
   const nodeWidth = node.width || DEFAULT_NODE_WIDTH;
   const hasInputs = inputAssets && inputAssets.length > 0;
 
