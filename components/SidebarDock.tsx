@@ -1,81 +1,41 @@
-
-// ... existing imports
-import React, { useState, useRef, useEffect } from 'react';
-import {
-    Plus, RotateCcw, History, MessageSquare, FolderHeart, X,
-    ImageIcon, Video as VideoIcon, Film, Save, FolderPlus,
-    Edit, Trash2, Box, ScanFace, Brush, Type, Workflow as WorkflowIcon,
-    Clapperboard, Mic2, Settings, BookOpen, ScrollText, User, Search, Sparkles, Palette, Bug, LayoutGrid, Grid, Wand2
-} from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Plus, RotateCcw, History, FolderHeart, Edit, Trash2, Settings, User, Bug } from 'lucide-react';
 import { NodeType, Workflow } from '../types';
-import { getNodeNameCN } from '../utils/nodeHelpers';
+import { AddNodePanel } from './sidebar/AddNodePanel';
+import { HistoryPanel } from './sidebar/HistoryPanel';
+import { WorkflowPanel } from './sidebar/WorkflowPanel';
+import type { HistoryAssetItem, PanelId, SidebarContextMenuState } from './sidebar/types';
 
 interface SidebarDockProps {
     onAddNode: (type: NodeType) => void;
     onUndo: () => void;
     isChatOpen: boolean;
     onToggleChat: () => void;
-
-    // Smart Sequence (ex-MultiFrame)
     isMultiFrameOpen: boolean;
     onToggleMultiFrame: () => void;
-
-    // Sonic Studio (Music)
     isSonicStudioOpen?: boolean;
     onToggleSonicStudio?: () => void;
-
-    // Character Library
     isCharacterLibraryOpen?: boolean;
     onToggleCharacterLibrary?: () => void;
-
-    // Debug Panel
     isDebugOpen?: boolean;
     onToggleDebug?: () => void;
-
-    // History Props
-    assetHistory: any[];
-    onHistoryItemClick: (item: any) => void;
+    assetHistory: HistoryAssetItem[];
+    onHistoryItemClick: (item: HistoryAssetItem) => void;
     onDeleteAsset: (id: string) => void;
-
-    // Workflow Props
     workflows: Workflow[];
     selectedWorkflowId: string | null;
     onSelectWorkflow: (id: string | null) => void;
     onSaveWorkflow: () => void;
     onDeleteWorkflow: (id: string) => void;
     onRenameWorkflow: (id: string, title: string) => void;
-
-    // Settings
     onOpenSettings: () => void;
 }
 
-// ... (Helper Helpers UNCHANGED) ...
-const getNodeIcon = (t: string) => {
-    switch (t) {
-        case NodeType.PROMPT_INPUT: return Type;
-        case NodeType.IMAGE_GENERATOR: return ImageIcon;
-        case NodeType.VIDEO_GENERATOR: return Film;
-        case NodeType.AUDIO_GENERATOR: return Mic2;
-        case NodeType.VIDEO_ANALYZER: return ScanFace;
-        case NodeType.IMAGE_EDITOR: return Brush;
-        case NodeType.SCRIPT_PLANNER: return BookOpen;
-        case NodeType.SCRIPT_EPISODE: return ScrollText;
-        case NodeType.STORYBOARD_GENERATOR: return Clapperboard;
-        case NodeType.STORYBOARD_IMAGE: return LayoutGrid;
-        case NodeType.STORYBOARD_SPLITTER: return Grid;
-        case NodeType.SORA_VIDEO_GENERATOR: return Wand2;
-        case NodeType.STORYBOARD_VIDEO_GENERATOR: return Film;
-        case NodeType.CHARACTER_NODE: return User;
-        case NodeType.DRAMA_ANALYZER: return Search;
-        case NodeType.DRAMA_REFINED: return Sparkles;
-        case NodeType.STYLE_PRESET: return Palette;
-        case NodeType.VIDEO_EDITOR: return Film;
-        case NodeType.JIMENG_VIDEO_GENERATOR: return Wand2;
-        default: return Plus;
-    }
-};
+const SPRING = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
-const SPRING = "cubic-bezier(0.32, 0.72, 0, 1)";
+const PANEL_IDS: PanelId[] = ['add', 'history', 'workflow'];
+
+const isPanelId = (id: string): id is PanelId => PANEL_IDS.includes(id as PanelId);
 
 export const SidebarDock: React.FC<SidebarDockProps> = ({
     onAddNode,
@@ -99,250 +59,139 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
     onSaveWorkflow,
     onDeleteWorkflow,
     onRenameWorkflow,
-    onOpenSettings
+    onOpenSettings,
 }) => {
-    // ... (State logic UNCHANGED) ...
-    const [activePanel, setActivePanel] = useState<'history' | 'workflow' | 'add' | null>(null);
+    const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+    const [pinnedPanel, setPinnedPanel] = useState<PanelId | null>(null);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'image' | 'video'>('image');
     const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
-    const [contextMenu, setContextMenu] = useState<{ visible: boolean, x: number, y: number, id: string, type: 'workflow' | 'history' } | null>(null);
+    const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
     const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const visiblePanel = pinnedPanel ?? activePanel;
 
-    // Hover Handlers
-    const handleSidebarHover = (id: string) => {
-        if (['add', 'history', 'workflow'].includes(id)) {
-            if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
-            setActivePanel(id as any);
-        } else {
-            closeTimeoutRef.current = setTimeout(() => setActivePanel(null), 100);
+    const clearCloseTimeout = () => {
+        if (closeTimeoutRef.current) {
+            clearTimeout(closeTimeoutRef.current);
+            closeTimeoutRef.current = null;
         }
     };
 
+    const closePanel = () => {
+        clearCloseTimeout();
+        setActivePanel(null);
+        setPinnedPanel(null);
+    };
+
+    const handleSidebarHover = (id: string) => {
+        if (pinnedPanel) return;
+
+        if (isPanelId(id)) {
+            clearCloseTimeout();
+            setActivePanel(id);
+            return;
+        }
+
+        closeTimeoutRef.current = setTimeout(() => setActivePanel(null), 100);
+    };
+
     const handleSidebarLeave = () => {
+        if (pinnedPanel) return;
+        clearCloseTimeout();
         closeTimeoutRef.current = setTimeout(() => setActivePanel(null), 500);
     };
 
     const handlePanelEnter = () => {
-        if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+        clearCloseTimeout();
     };
 
     const handlePanelLeave = () => {
+        if (pinnedPanel) return;
+        clearCloseTimeout();
         closeTimeoutRef.current = setTimeout(() => setActivePanel(null), 500);
     };
 
-    // Close context menu on global click
+    const togglePinnedPanel = (panel: PanelId) => {
+        clearCloseTimeout();
+        const nextPinnedPanel = pinnedPanel === panel ? null : panel;
+        setPinnedPanel(nextPinnedPanel);
+        setActivePanel(nextPinnedPanel);
+    };
+
+    const handleAddNodeFromPanel = (type: NodeType) => {
+        onAddNode(type);
+        if (!pinnedPanel) {
+            setActivePanel(null);
+        }
+    };
+
     useEffect(() => {
         const handleClick = () => setContextMenu(null);
         window.addEventListener('click', handleClick);
         return () => window.removeEventListener('click', handleClick);
     }, []);
 
-    // ... (renderPanelContent logic for history and workflow UNCHANGED) ...
+    useEffect(() => () => clearCloseTimeout(), []);
+
     const renderPanelContent = () => {
-        if (activePanel === 'history') {
-            const filteredAssets = assetHistory.filter(a => {
-                if (activeHistoryTab === 'image') return a.type === 'image' || a.type.includes('image') || a.type.includes('image_generator');
-                if (activeHistoryTab === 'video') return a.type === 'video' || a.type.includes('video');
-                return false;
-            });
-
+        if (visiblePanel === 'history') {
             return (
-                <>
-                    <div className="p-4 border-b border-white/5 flex flex-col gap-3 bg-white/5">
-                        <div className="flex justify-between items-center">
-                            <button onClick={() => setActivePanel(null)}><X size={14} className="text-slate-500 hover:text-white" /></button>
-                            <span className="text-xs font-bold uppercase tracking-widest text-white/50">历史记录</span>
-                        </div>
-                        {/* Tabs */}
-                        <div className="flex bg-black/20 p-1 rounded-lg">
-                            <button
-                                onClick={() => setActiveHistoryTab('image')}
-                                className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-bold rounded-md transition-all ${activeHistoryTab === 'image' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-                            >
-                                <ImageIcon size={12} /> 图片
-                            </button>
-                            <button
-                                onClick={() => setActiveHistoryTab('video')}
-                                className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-[10px] font-bold rounded-md transition-all ${activeHistoryTab === 'video' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-                            >
-                                <VideoIcon size={12} /> 视频
-                            </button>
-                        </div>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-2 relative">
-                        {filteredAssets.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-10 text-slate-500 opacity-60 select-none">
-                                {activeHistoryTab === 'image' ? <ImageIcon size={48} strokeWidth={1} className="mb-3 opacity-50" /> : <Film size={48} strokeWidth={1} className="mb-3 opacity-50" />}
-                                <span className="text-[10px] font-medium tracking-widest uppercase">暂无{activeHistoryTab === 'image' ? '图片' : '视频'}</span>
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-2 gap-2 p-1">
-                                {filteredAssets.map(a => (
-                                    <div
-                                        key={a.id}
-                                        className="aspect-square rounded-xl overflow-hidden cursor-grab active:cursor-grabbing border border-white/5 hover:border-cyan-500/50 transition-colors group relative shadow-md bg-black/20"
-                                        draggable={true}
-                                        onDragStart={(e) => {
-                                            e.dataTransfer.setData('application/json', JSON.stringify(a));
-                                            e.dataTransfer.effectAllowed = 'copy';
-                                        }}
-                                        onClick={() => onHistoryItemClick(a)}
-                                        onContextMenu={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            setContextMenu({ visible: true, x: e.clientX, y: e.clientY, id: a.id, type: 'history' });
-                                        }}
-                                    >
-                                        {a.type.includes('image') ? (
-                                            <img src={a.src} alt="素材缩略图" loading="lazy" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" draggable={false} />
-                                        ) : (
-                                            <video src={a.src} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" draggable={false} />
-                                        )}
-                                        <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md text-[8px] font-bold text-white/70">
-                                            {a.type.includes('image') ? 'IMG' : 'MOV'}
-                                        </div>
-                                        <div className="absolute bottom-0 left-0 w-full p-1.5 bg-gradient-to-t from-black/80 to-transparent text-[9px] text-white/90 truncate font-medium">
-                                            {a.title || 'Untitled'}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </>
+                <HistoryPanel
+                    items={assetHistory}
+                    activeTab={activeHistoryTab}
+                    onTabChange={setActiveHistoryTab}
+                    onItemClick={onHistoryItemClick}
+                    onOpenContextMenu={setContextMenu}
+                    onClose={closePanel}
+                />
             );
         }
 
-        if (activePanel === 'workflow') {
+        if (visiblePanel === 'workflow') {
             return (
-                <>
-                    <div className="p-4 border-b border-white/5 flex justify-between items-center bg-white/5">
-                        <span className="text-xs font-bold uppercase tracking-widest text-white/50">
-                            我的工作流
-                        </span>
-                        <button onClick={onSaveWorkflow} className="p-1.5 bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500 hover:text-white rounded-md transition-colors" title="保存当前工作流">
-                            <Save size={14} />
-                        </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-3 custom-scrollbar space-y-3 relative">
-                        {workflows.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-10 text-slate-500 opacity-60 select-none">
-                                <FolderHeart size={48} strokeWidth={1} className="mb-3 opacity-50" />
-                                <span className="text-[10px] font-medium tracking-widest uppercase text-center">空空如也<br />保存您的第一个工作流</span>
-                            </div>
-                        ) : (
-                            workflows.map(wf => (
-                                <div
-                                    key={wf.id}
-                                    className={`
-                                        relative p-2 rounded-xl border bg-black/20 group transition-all duration-300 cursor-grab active:cursor-grabbing hover:bg-white/5
-                                        ${selectedWorkflowId === wf.id ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : 'border-white/5 hover:border-white/20'}
-                                    `}
-                                    draggable={true}
-                                    onDragStart={(e) => {
-                                        e.dataTransfer.setData('application/workflow-id', wf.id);
-                                        e.dataTransfer.effectAllowed = 'copy';
-                                    }}
-                                    onClick={(e) => { e.stopPropagation(); onSelectWorkflow(wf.id); }}
-                                    onDoubleClick={(e) => { e.stopPropagation(); setEditingWorkflowId(wf.id); }}
-                                    onContextMenu={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setContextMenu({ visible: true, x: e.clientX, y: e.clientY, id: wf.id, type: 'workflow' });
-                                    }}
-                                >
-                                    <div className="aspect-[2/1] bg-black/40 rounded-lg mb-2 overflow-hidden relative">
-                                        {wf.thumbnail ? (
-                                            <img src={wf.thumbnail} alt="工作流缩略图" loading="lazy" className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity" draggable={false} />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-slate-600">
-                                                <WorkflowIcon size={24} />
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center justify-between px-1">
-                                        {editingWorkflowId === wf.id ? (
-                                            <input
-                                                className="bg-black/50 border border-cyan-500/50 rounded px-1 text-xs text-white w-full outline-none"
-                                                defaultValue={wf.title}
-                                                autoFocus
-                                                onBlur={(e) => { onRenameWorkflow(wf.id, e.target.value); setEditingWorkflowId(null); }}
-                                                onKeyDown={(e) => { if (e.key === 'Enter') { onRenameWorkflow(wf.id, e.currentTarget.value); setEditingWorkflowId(null); } }}
-                                            />
-                                        ) : (
-                                            <span className="text-xs font-medium text-slate-300 truncate select-none group-hover:text-white transition-colors">{wf.title}</span>
-                                        )}
-                                        <span className="text-[9px] text-slate-600 font-mono">{wf.nodes.length} 节点</span>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </>
+                <WorkflowPanel
+                    workflows={workflows}
+                    selectedWorkflowId={selectedWorkflowId}
+                    editingWorkflowId={editingWorkflowId}
+                    onEditingWorkflowChange={setEditingWorkflowId}
+                    onSelectWorkflow={onSelectWorkflow}
+                    onSaveWorkflow={onSaveWorkflow}
+                    onRenameWorkflow={onRenameWorkflow}
+                    onOpenContextMenu={setContextMenu}
+                    onClose={closePanel}
+                />
             );
         }
 
-        // Default: Add Node
-        return (
-            <>
-                <div className="p-4 border-b border-white/5 flex justify-between items-center bg-white/5">
-                    <button onClick={() => setActivePanel(null)}><X size={14} className="text-slate-500 hover:text-white" /></button>
-                    <span className="text-xs font-bold uppercase tracking-widest text-white/50">
-                        添加节点
-                    </span>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-2">
-                    {[NodeType.IMAGE_GENERATOR, NodeType.SCRIPT_PLANNER, NodeType.SCRIPT_EPISODE, NodeType.CHARACTER_NODE, NodeType.STYLE_PRESET, NodeType.STORYBOARD_GENERATOR, NodeType.STORYBOARD_IMAGE, NodeType.STORYBOARD_SPLITTER, NodeType.SORA_VIDEO_GENERATOR, NodeType.JIMENG_VIDEO_GENERATOR, NodeType.STORYBOARD_VIDEO_GENERATOR, NodeType.DRAMA_ANALYZER, NodeType.VIDEO_EDITOR].map(t => {
-                        const ItemIcon = getNodeIcon(t);
-                        return (
-                            <button
-                                key={t}
-                                onClick={(e) => { e.stopPropagation(); onAddNode(t); setActivePanel(null); }}
-                                className="w-full text-left p-3 rounded-xl bg-white/5 hover:bg-white/10 flex items-center gap-3 text-sm text-slate-200 transition-colors border border-transparent hover:border-white/5 hover:shadow-lg"
-                            >
-                                <div className="p-2 bg-white/10 rounded-lg text-cyan-200 shadow-inner">
-                                    <ItemIcon size={16} />
-                                </div>
-                                <div className="flex flex-col">
-                                    <span className="font-medium text-xs">{getNodeNameCN(t)}</span>
-                                </div>
-                            </button>
-                        );
-                    })}
-                </div>
-            </>
-        );
+        return <AddNodePanel onAddNode={handleAddNodeFromPanel} onClose={closePanel} />;
     };
 
     return (
         <>
-            {/* Left Vertical Dock */}
             <div
                 className="fixed left-6 top-1/2 -translate-y-1/2 flex flex-col items-center gap-3 p-2 bg-gradient-to-br from-white/10 via-white/5 to-white/10 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1),0_8px_32px_0_rgba(0,0,0,0.37)] z-50 animate-in slide-in-from-left-10 duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] overflow-hidden"
                 onMouseLeave={handleSidebarLeave}
             >
-                {/* Glass shine effect */}
                 <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent pointer-events-none" />
                 {[
                     { id: 'add', icon: Plus },
                     { id: 'workflow', icon: FolderHeart },
-                    // { id: 'smart_sequence', icon: Clapperboard, action: onToggleMultiFrame, active: isMultiFrameOpen },  // 隐藏智能多帧
-                    // { id: 'sonic_studio', icon: Mic2, action: onToggleSonicStudio, active: isSonicStudioOpen, tooltip: '音频中心' },  // 隐藏音频中心
                     { id: 'character_library', icon: User, action: onToggleCharacterLibrary, active: isCharacterLibraryOpen, tooltip: '角色库' },
                     { id: 'history', icon: History },
-                    // { id: 'chat', icon: MessageSquare, action: onToggleChat, active: isChatOpen },  // 隐藏AI创意助手
                     { id: 'debug', icon: Bug, action: onToggleDebug, active: isDebugOpen, tooltip: 'API日志调试' },
                     { id: 'undo', icon: RotateCcw, action: onUndo },
-                ].map(item => (
+                ].map((item) => (
                     <div key={item.id} className="relative group">
                         <button
+                            type="button"
                             onMouseEnter={() => handleSidebarHover(item.id)}
-                            onClick={() => item.action ? item.action() : setActivePanel(item.id as any)}
-                            className={`relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${activePanel === item.id || item.active ? 'bg-white text-black shadow-lg' : 'hover:bg-white/10 text-slate-300 hover:text-white'}`}
+                            onClick={() => item.action ? item.action() : isPanelId(item.id) && togglePinnedPanel(item.id)}
+                            className={`relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${visiblePanel === item.id || item.active ? 'bg-white text-black shadow-lg' : 'hover:bg-white/10 text-slate-300 hover:text-white'}`}
                         >
                             <item.icon size={20} strokeWidth={2} />
+                            {pinnedPanel === item.id && (
+                                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_0_2px_rgba(15,23,42,0.85)]" />
+                            )}
                         </button>
-                        {/* Tooltip for Sidebar Icons */}
                         {(item.id === 'character_library' || item.id === 'debug') && (
                             <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-black/80 backdrop-blur-md rounded border border-white/10 text-[10px] text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                                 {item.tooltip || (item.id === 'debug' ? 'API日志调试' : '角色库')}
@@ -351,50 +200,67 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                     </div>
                 ))}
 
-                {/* Spacer & Settings */}
-                <div className="w-8 h-px bg-white/10 my-1"></div>
+                <div className="w-8 h-px bg-white/10 my-1" />
 
                 <button
+                    type="button"
                     onClick={onOpenSettings}
                     className="relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 hover:bg-white/10 text-slate-300 hover:text-white"
                 >
                     <Settings size={20} strokeWidth={2} />
                 </button>
-
             </div>
 
-            {/* Slide-out Panels */}
             <div
-                className={`fixed left-24 top-1/2 -translate-y-1/2 max-h-[75vh] h-auto w-72 bg-gradient-to-br from-white/10 via-white/5 to-white/10 backdrop-blur-3xl border border-white/20 rounded-2xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1),0_8px_32px_0_rgba(0,0,0,0.37)] transition-all duration-500 ease-[${SPRING}] z-[60] flex flex-col overflow-hidden ${activePanel ? 'translate-x-0 opacity-100' : '-translate-x-10 opacity-0 pointer-events-none scale-95'}`}
+                className={`fixed left-24 top-1/2 -translate-y-1/2 max-h-[75vh] h-auto w-72 bg-gradient-to-br from-white/10 via-white/5 to-white/10 backdrop-blur-3xl border border-white/20 rounded-2xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1),0_8px_32px_0_rgba(0,0,0,0.37)] transition-all duration-500 ease-[${SPRING}] z-[60] flex flex-col overflow-hidden ${visiblePanel ? 'translate-x-0 opacity-100' : '-translate-x-10 opacity-0 pointer-events-none scale-95'}`}
                 onMouseEnter={handlePanelEnter}
                 onMouseLeave={handlePanelLeave}
-                onMouseDown={(e) => e.stopPropagation()}
-                onWheel={(e) => e.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                onWheel={(event) => event.stopPropagation()}
             >
-                {/* Glass shine effect */}
                 <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent pointer-events-none" />
-                {activePanel && renderPanelContent()}
+                {visiblePanel && renderPanelContent()}
             </div>
 
-            {/* Global Context Menu (Rendered outside the transformed panel to fix positioning) */}
             {contextMenu && (
                 <div
                     className="fixed z-[100] bg-[#2c2c2e] border border-white/10 rounded-lg shadow-2xl p-1 animate-in fade-in zoom-in-95 duration-200 min-w-[120px]"
                     style={{ top: contextMenu.y, left: contextMenu.x }}
-                    onMouseDown={e => e.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
                     onMouseLeave={() => setContextMenu(null)}
                 >
                     {contextMenu.type === 'history' && (
-                        <button className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/20 rounded-md flex items-center gap-2" onClick={() => { onDeleteAsset(contextMenu.id); setContextMenu(null); }}>
+                        <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/20 rounded-md flex items-center gap-2"
+                            onClick={() => {
+                                onDeleteAsset(contextMenu.id);
+                                setContextMenu(null);
+                            }}
+                        >
                             <Trash2 size={12} /> 删除
                         </button>
                     )}
                     {contextMenu.type === 'workflow' && (
                         <>
-                            <button className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 rounded-md flex items-center gap-2" onClick={() => { setEditingWorkflowId(contextMenu.id); setContextMenu(null); }}>
+                            <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 rounded-md flex items-center gap-2"
+                                onClick={() => {
+                                    setEditingWorkflowId(contextMenu.id);
+                                    setContextMenu(null);
+                                }}
+                            >
                                 <Edit size={12} /> 重命名
                             </button>
-                            <button className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/20 rounded-md flex items-center gap-2" onClick={() => { onDeleteWorkflow(contextMenu.id); setContextMenu(null); }}>
+                            <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/20 rounded-md flex items-center gap-2"
+                                onClick={() => {
+                                    onDeleteWorkflow(contextMenu.id);
+                                    setContextMenu(null);
+                                }}
+                            >
                                 <Trash2 size={12} /> 删除
                             </button>
                         </>

@@ -56,12 +56,10 @@ export default defineConfig(({ mode }) => {
 
               // Editor components (lazy-loaded)
               if (id.includes('/components/VideoEditor') || id.includes('/components/StoryboardVideoNode') || id.includes('/components/StoryboardEditor') || id.includes('/components/StoryboardTimeline')) return 'editor-video';
-              if (id.includes('/components/ImageCropper') || id.includes('/components/SketchEditor')) return 'editor-image';
               if (id.includes('/components/SonicStudio')) return 'editor-audio';
               if (id.includes('/components/CharacterLibrary') || id.includes('/components/CharacterDetailModal')) return 'editor-character';
 
               // Panel components
-              if (id.includes('/components/SettingsPanel') || id.includes('/components/settings/') || id.includes('/components/ModelConfigPanel') || id.includes('/components/StorageSettingsPanel') || id.includes('/components/DebugPanel')) return 'panels-settings';
               if (id.includes('/components/SmartSequenceDock') || id.includes('/components/AssistantPanel') || id.includes('/components/ChatWindow') || id.includes('/components/SidebarDock') || id.includes('/components/Galaxy')) return 'panels-ui';
             },
           },

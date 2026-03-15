@@ -9,17 +9,26 @@
 import React from 'react';
 import { useLanguage } from '../src/i18n/LanguageContext';
 import { Galaxy } from './Galaxy';
+import { Clapperboard, ScrollText, Type } from 'lucide-react';
 
 interface WelcomeScreenProps {
   visible: boolean;
+  onCreatePromptInput: () => void;
+  onCreateScriptPlanner: () => void;
+  onCreateStoryboard: () => void;
 }
 
 /**
  * 欢迎屏幕组件
  * 在画布为空时显示
  */
-export const WelcomeScreen: React.FC<WelcomeScreenProps> = React.memo(({ visible }) => {
-  const { t } = useLanguage();
+export const WelcomeScreen: React.FC<WelcomeScreenProps> = React.memo(({
+  visible,
+  onCreatePromptInput,
+  onCreateScriptPlanner,
+  onCreateStoryboard,
+}) => {
+  const { language, t } = useLanguage();
 
   if (!visible) return null;
 
@@ -68,6 +77,35 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = React.memo(({ visible
           </span>
           <div className="h-px w-16 bg-gradient-to-l from-transparent via-cyan-500/50 to-transparent"></div>
         </div>
+
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3 pointer-events-auto">
+          <button
+            onClick={onCreatePromptInput}
+            className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 text-white shadow-xl hover:shadow-cyan-500/10 transition-all hover:scale-105"
+          >
+            <Type size={16} />
+            <span className="text-sm font-semibold">{t.nodes.promptInput}</span>
+          </button>
+          <button
+            onClick={onCreateScriptPlanner}
+            className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-cyan-500/15 hover:bg-cyan-500/20 border border-cyan-500/20 text-cyan-100 shadow-xl hover:shadow-cyan-500/20 transition-all hover:scale-105"
+          >
+            <ScrollText size={16} />
+            <span className="text-sm font-semibold">{t.nodes.scriptPlanner}</span>
+          </button>
+          <button
+            onClick={onCreateStoryboard}
+            className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 text-white shadow-xl hover:shadow-cyan-500/10 transition-all hover:scale-105"
+          >
+            <Clapperboard size={16} />
+            <span className="text-sm font-semibold">{t.nodes.storyboardGenerator}</span>
+          </button>
+        </div>
+
+        <p className="mt-4 max-w-2xl text-center text-sm text-slate-300/80 pointer-events-auto">
+          {t.actions.canvasHint}
+          {language === 'zh' ? '，也可以从左侧 + 添加更多节点，或拖入图片/视频素材。' : ', or use the + dock on the left and drop images/videos onto the canvas.'}
+        </p>
 
         <style>{`
           @keyframes glow {

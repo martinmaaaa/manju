@@ -28,6 +28,41 @@ import {
 let currentProjectId: string | null = null;
 let online = false;
 
+export type SyncStatusEvent = {
+  state: 'saving' | 'saved' | 'error';
+  target: 'node' | 'connection' | 'snapshot';
+  detail?: string;
+  timestamp: number;
+};
+
+const syncStatusListeners = new Set<(event: SyncStatusEvent) => void>();
+
+function emitSyncStatus(
+  state: SyncStatusEvent['state'],
+  target: SyncStatusEvent['target'],
+  detail?: string,
+) {
+  const event: SyncStatusEvent = {
+    state,
+    target,
+    detail,
+    timestamp: Date.now(),
+  };
+
+  for (const listener of syncStatusListeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.warn('[sync] Failed to notify sync listener', error);
+    }
+  }
+}
+
+export function subscribeToSyncStatus(listener: (event: SyncStatusEvent) => void): () => void {
+  syncStatusListeners.add(listener);
+  return () => syncStatusListeners.delete(listener);
+}
+
 // Debounce timers
 const positionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let batchPositionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -94,6 +129,8 @@ export function setOnlineStatus(status: boolean) {
 export function syncNodePosition(node: AppNode) {
   if (!isOnline()) return;
 
+  emitSyncStatus('saving', 'node');
+
   pendingPositionUpdates.set(node.id, {
     id: node.id,
     x: node.x,
@@ -115,7 +152,9 @@ async function flushPositionUpdates() {
 
   try {
     await apiBatchUpdate(batch);
-  } catch {
+    emitSyncStatus('saved', 'node');
+  } catch (error) {
+    emitSyncStatus('error', 'node', error instanceof Error ? error.message : 'Failed to sync node position');
     // Silently fail — IndexedDB still has the data
   }
 }
@@ -124,6 +163,8 @@ async function flushPositionUpdates() {
 
 export function syncNodeData(node: AppNode) {
   if (!isOnline()) return;
+
+  emitSyncStatus('saving', 'node');
 
   const existing = dataTimers.get(node.id);
   if (existing) clearTimeout(existing);
@@ -144,7 +185,9 @@ export function syncNodeData(node: AppNode) {
           data: node.data,
           inputs: node.inputs,
         });
-      } catch {
+        emitSyncStatus('saved', 'node');
+      } catch (error) {
+        emitSyncStatus('error', 'node', error instanceof Error ? error.message : 'Failed to sync node data');
         // silent
       }
     }, 300),
@@ -155,6 +198,7 @@ export function syncNodeData(node: AppNode) {
 
 export async function syncNodeAdd(node: AppNode) {
   if (!isOnline()) return;
+  emitSyncStatus('saving', 'node');
   try {
     await apiCreateNode({
       project_id: currentProjectId!,
@@ -168,16 +212,21 @@ export async function syncNodeAdd(node: AppNode) {
       data: node.data,
       inputs: node.inputs,
     });
-  } catch {
+    emitSyncStatus('saved', 'node');
+  } catch (error) {
+    emitSyncStatus('error', 'node', error instanceof Error ? error.message : 'Failed to create node');
     // silent
   }
 }
 
 export async function syncNodeRemove(nodeId: string) {
   if (!isOnline()) return;
+  emitSyncStatus('saving', 'node');
   try {
     await apiDeleteNode(nodeId);
-  } catch {
+    emitSyncStatus('saved', 'node');
+  } catch (error) {
+    emitSyncStatus('error', 'node', error instanceof Error ? error.message : 'Failed to delete node');
     // silent
   }
 }
@@ -186,6 +235,7 @@ export async function syncNodeRemove(nodeId: string) {
 
 export async function syncConnectionAdd(conn: Connection) {
   if (!isOnline()) return;
+  emitSyncStatus('saving', 'connection');
   try {
     await apiCreateConnection({
       project_id: currentProjectId!,
@@ -193,16 +243,21 @@ export async function syncConnectionAdd(conn: Connection) {
       from_node: conn.from,
       to_node: conn.to,
     });
-  } catch {
+    emitSyncStatus('saved', 'connection');
+  } catch (error) {
+    emitSyncStatus('error', 'connection', error instanceof Error ? error.message : 'Failed to create connection');
     // silent
   }
 }
 
 export async function syncConnectionRemove(connId: string) {
   if (!isOnline()) return;
+  emitSyncStatus('saving', 'connection');
   try {
     await apiDeleteConnection(connId);
-  } catch {
+    emitSyncStatus('saved', 'connection');
+  } catch (error) {
+    emitSyncStatus('error', 'connection', error instanceof Error ? error.message : 'Failed to delete connection');
     // silent
   }
 }
@@ -215,9 +270,12 @@ export async function syncFullSnapshot(
   groups: Group[],
 ) {
   if (!isOnline()) return;
+  emitSyncStatus('saving', 'snapshot');
   try {
     await saveProjectSnapshot(currentProjectId!, { nodes, connections, groups });
-  } catch {
+    emitSyncStatus('saved', 'snapshot');
+  } catch (error) {
+    emitSyncStatus('error', 'snapshot', error instanceof Error ? error.message : 'Failed to save snapshot');
     // silent
   }
 }

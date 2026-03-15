@@ -37,7 +37,7 @@ import { useWindowSize } from './hooks/useWindowSize';
 import { useUIStore } from './stores/ui.store';
 import { useEditorStore } from './stores/editor.store';
 import { getProjects, getProject, createProject, isApiAvailable } from './services/api';
-import { initSync, setSyncProjectId, getSyncProjectId, createStoreSubscription, syncFullSnapshot, setOnlineStatus } from './services/syncMiddleware';
+import { initSync, setSyncProjectId, getSyncProjectId, createStoreSubscription, syncFullSnapshot, setOnlineStatus, subscribeToSyncStatus } from './services/syncMiddleware';
 import { useNodeActions } from './handlers/useNodeActions';
 import { useWorkflowActions } from './handlers/useWorkflowActions';
 import { useKeyboardShortcuts } from './handlers/useKeyboardShortcuts';
@@ -56,7 +56,7 @@ const DebugPanel = lazy(() => import('./components/DebugPanel').then(m => ({ def
 import {
   Plus, Copy, Trash2, Type, Image as ImageIcon, Video as VideoIcon,
   ScanFace, Brush, MousePointerClick, LayoutTemplate, X, Film, Link, RefreshCw, Upload,
-  Minus, FolderHeart, Unplug, Sparkles, ChevronLeft, ChevronRight, Scan, Music, Mic2, Loader2, ScrollText, Clapperboard, User, BookOpen, Languages, HardDrive
+  Minus, FolderHeart, Unplug, Sparkles, ChevronLeft, ChevronRight, Scan, Music, Mic2, Loader2, ScrollText, Clapperboard, User, BookOpen, Languages, HardDrive, CheckCircle2, AlertCircle, Database
 } from 'lucide-react';
 import { CanvasWorkspace } from './components/CanvasWorkspace';
 import { NodeLayer } from './components/NodeLayer';
@@ -68,6 +68,7 @@ import type { InputAsset } from './components/nodes/types';
 const SPRING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const SNAP_THRESHOLD = 8; // Pixels for magnetic snap
 const COLLISION_PADDING = 24; // Spacing when nodes bounce off each other
+type SaveIndicatorState = 'idle' | 'saving' | 'saved' | 'error' | 'local';
 
 /**
  * 保存视频到服务器数据库
@@ -97,6 +98,9 @@ const getImageDimensions = (src: string): Promise<{ width: number, height: numbe
 
 export const App = () => {
   const { language, setLanguage, t } = useLanguage();
+  const [isRemoteSyncEnabled, setIsRemoteSyncEnabled] = useState(false);
+  const [saveIndicatorState, setSaveIndicatorState] = useState<SaveIndicatorState>('idle');
+  const [saveIndicatorError, setSaveIndicatorError] = useState<string | null>(null);
 
   // ========== Hooks: 画布状态管理 ==========
   const canvas = useCanvasState();
@@ -208,6 +212,9 @@ export const App = () => {
   } | null>(null);
 
   const selectionRectRef = useRef<any>(null);
+  const saveIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const localSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasHydratedCanvasRef = useRef(false);
 
   const dragGroupRef = useRef<{
     id: string,
@@ -217,6 +224,27 @@ export const App = () => {
     mouseStartY: number,
     childNodes: { id: string, startX: number, startY: number }[]
   } | null>(null);
+
+  const clearSaveIndicatorTimers = useCallback(() => {
+    if (saveIndicatorTimerRef.current) {
+      clearTimeout(saveIndicatorTimerRef.current);
+      saveIndicatorTimerRef.current = null;
+    }
+    if (localSaveTimerRef.current) {
+      clearTimeout(localSaveTimerRef.current);
+      localSaveTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleIdleSaveIndicator = useCallback((state: Exclude<SaveIndicatorState, 'idle' | 'saving'>, duration: number) => {
+    clearSaveIndicatorTimers();
+    setSaveIndicatorState(state);
+    saveIndicatorTimerRef.current = setTimeout(() => {
+      setSaveIndicatorState('idle');
+      setSaveIndicatorError(null);
+      saveIndicatorTimerRef.current = null;
+    }, duration);
+  }, [clearSaveIndicatorTimers]);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -247,6 +275,7 @@ export const App = () => {
         // 初始化同步状态
         const apiOnline = await initSync();
         setOnlineStatus(apiOnline);
+        setIsRemoteSyncEnabled(apiOnline);
 
         const projectsRes = await getProjects();
         let projectId: string | null = null;
@@ -298,8 +327,21 @@ export const App = () => {
     checkStorageConfig();
   }, []);
 
+  useEffect(() => {
+    if (currentView !== 'canvas') {
+      hasHydratedCanvasRef.current = false;
+      clearSaveIndicatorTimers();
+      setSaveIndicatorState('idle');
+      setSaveIndicatorError(null);
+    }
+  }, [clearSaveIndicatorTimers, currentView]);
+
   const handleProjectSelect = async (projectId: string) => {
     setIsLoaded(false);
+    hasHydratedCanvasRef.current = false;
+    clearSaveIndicatorTimers();
+    setSaveIndicatorState('idle');
+    setSaveIndicatorError(null);
     try {
       setSyncProjectId(projectId);
       const projectRes = await getProject(projectId);
@@ -343,6 +385,10 @@ export const App = () => {
 
   const handleBackToProjects = () => {
     saveHistory(); // Optional: Save state before leaving
+    hasHydratedCanvasRef.current = false;
+    clearSaveIndicatorTimers();
+    setSaveIndicatorState('idle');
+    setSaveIndicatorError(null);
     // Clear canvas data
     setNodes([]);
     setConnections([]);
@@ -566,6 +612,58 @@ export const App = () => {
     const unsubscribe = createStoreSubscription(useEditorStore);
     return () => unsubscribe();
   }, [isLoaded]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToSyncStatus((event) => {
+      if (currentView !== 'canvas') return;
+
+      if (event.state === 'saving') {
+        clearSaveIndicatorTimers();
+        setSaveIndicatorState('saving');
+        setSaveIndicatorError(null);
+        return;
+      }
+
+      if (event.state === 'saved') {
+        setSaveIndicatorError(null);
+        scheduleIdleSaveIndicator('saved', 1800);
+        return;
+      }
+
+      setSaveIndicatorError(event.detail || null);
+      scheduleIdleSaveIndicator('error', 5000);
+    });
+
+    return () => unsubscribe();
+  }, [clearSaveIndicatorTimers, currentView, scheduleIdleSaveIndicator]);
+
+  useEffect(() => {
+    if (!isLoaded || currentView !== 'canvas') return;
+
+    if (!hasHydratedCanvasRef.current) {
+      hasHydratedCanvasRef.current = true;
+      return;
+    }
+
+    if (isRemoteSyncEnabled) return;
+
+    clearSaveIndicatorTimers();
+    setSaveIndicatorState('saving');
+    setSaveIndicatorError(null);
+    localSaveTimerRef.current = setTimeout(() => {
+      localSaveTimerRef.current = null;
+      scheduleIdleSaveIndicator('local', 1600);
+    }, 250);
+  }, [
+    clearSaveIndicatorTimers,
+    connections,
+    currentView,
+    groups,
+    isLoaded,
+    isRemoteSyncEnabled,
+    nodes,
+    scheduleIdleSaveIndicator,
+  ]);
 
   const getNodeNameCN = (type: string) => {
     switch (type) {
@@ -791,6 +889,68 @@ export const App = () => {
     }
     handleAssetGenerated(type, result, prompt || 'Sketch Output');
   };
+
+  const saveIndicatorMeta = (() => {
+    if (saveIndicatorState === 'saving') {
+      return {
+        label: language === 'zh' ? (isRemoteSyncEnabled ? '正在同步到数据库…' : '正在保存到本地…') : (isRemoteSyncEnabled ? 'Syncing to database…' : 'Saving locally…'),
+        icon: Loader2,
+        iconClassName: 'animate-spin',
+        className: isRemoteSyncEnabled
+          ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-200'
+          : 'bg-white/10 border-white/15 text-slate-200',
+        title: language === 'zh' ? '当前更改正在保存' : 'Changes are being saved',
+      };
+    }
+
+    if (saveIndicatorState === 'saved') {
+      return {
+        label: language === 'zh' ? '已同步到数据库' : 'Synced to database',
+        icon: CheckCircle2,
+        iconClassName: '',
+        className: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200',
+        title: language === 'zh' ? '项目更改已写入数据库' : 'Changes have been written to the database',
+      };
+    }
+
+    if (saveIndicatorState === 'local') {
+      return {
+        label: language === 'zh' ? '已保存到本地' : 'Saved locally',
+        icon: HardDrive,
+        iconClassName: '',
+        className: 'bg-white/10 border-white/15 text-slate-200',
+        title: language === 'zh' ? '当前处于本地自动保存模式' : 'Local autosave mode is active',
+      };
+    }
+
+    if (saveIndicatorState === 'error') {
+      return {
+        label: language === 'zh' ? '同步失败，已保留本地编辑' : 'Sync failed, local edits preserved',
+        icon: AlertCircle,
+        iconClassName: '',
+        className: 'bg-rose-500/15 border-rose-500/30 text-rose-200',
+        title: saveIndicatorError || (language === 'zh' ? '数据库同步失败，请稍后重试' : 'Database sync failed, please try again later'),
+      };
+    }
+
+    if (isRemoteSyncEnabled) {
+      return {
+        label: language === 'zh' ? '数据库已连接' : 'Database connected',
+        icon: Database,
+        iconClassName: '',
+        className: 'bg-white/10 border-white/15 text-slate-200',
+        title: language === 'zh' ? '当前项目会自动同步到数据库' : 'Project changes will sync to the database automatically',
+      };
+    }
+
+    return {
+      label: language === 'zh' ? '本地自动保存' : 'Local autosave',
+      icon: HardDrive,
+      iconClassName: '',
+      className: 'bg-white/10 border-white/15 text-slate-200',
+      title: language === 'zh' ? '当前项目保存在本地浏览器/文件存储中' : 'Project changes are saved locally in the browser/file storage',
+    };
+  })();
 
   const handleMultiFrameGenerate = async (frames: SmartSequenceItem[]): Promise<string> => {
     const { compileMultiFramePrompt, generateVideo } = await import('./services/geminiService');
@@ -1619,7 +1779,12 @@ export const App = () => {
         <div ref={canvas.gridBgRef} className="absolute inset-0 pointer-events-none opacity-[0.06]" style={{ backgroundImage: 'radial-gradient(circle, #aaa 1px, transparent 1px)', backgroundSize: `${32 * canvas.scale}px ${32 * canvas.scale}px`, backgroundPosition: `${canvas.pan.x}px ${canvas.pan.y}px` }} />
 
         {/* Welcome Screen Component */}
-        <WelcomeScreen visible={nodes.length === 0} />
+        <WelcomeScreen
+          visible={nodes.length === 0}
+          onCreatePromptInput={() => addNode(NodeType.PROMPT_INPUT)}
+          onCreateScriptPlanner={() => addNode(NodeType.SCRIPT_PLANNER)}
+          onCreateStoryboard={() => addNode(NodeType.STORYBOARD_GENERATOR)}
+        />
 
         {/* Canvas Logo with Back Button */}
         <div className="absolute top-4 left-4 z-40 flex items-center gap-4">
@@ -1966,6 +2131,13 @@ export const App = () => {
 
       {/* Language Toggle Button */}
       <div className="absolute top-8 right-8 z-50 animate-in fade-in slide-in-from-top-4 duration-700 flex flex-col gap-2 items-end">
+        <div
+          className={`flex items-center gap-2 px-4 py-2 backdrop-blur-2xl border rounded-full shadow-2xl transition-all ${saveIndicatorMeta.className}`}
+          title={saveIndicatorMeta.title}
+        >
+          <saveIndicatorMeta.icon size={16} className={saveIndicatorMeta.iconClassName} />
+          <span className="text-xs font-medium">{saveIndicatorMeta.label}</span>
+        </div>
         {storageReconnectNeeded && (
           <button
             onClick={async () => {

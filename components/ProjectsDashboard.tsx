@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getProjects, createProject, deleteProject, ProjectSummary } from '../services/api';
-import { useLanguage } from '../src/i18n/LanguageContext';
-import { FolderHeart, Plus, Trash2, Clock, Loader2, Play, Settings } from 'lucide-react';
+import { FolderHeart, Plus, Trash2, Clock, Loader2, Play, Settings, CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 interface ProjectsDashboardProps {
     onSelectProject: (projectId: string) => void;
@@ -9,11 +8,36 @@ interface ProjectsDashboardProps {
 }
 
 export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectProject, onOpenSettings }) => {
-    const { t } = useLanguage();
     const [projects, setProjects] = useState<ProjectSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+    const [projectToDelete, setProjectToDelete] = useState<ProjectSummary | null>(null);
     const [newProjectName, setNewProjectName] = useState('');
+    const [toast, setToast] = useState<{
+        id: number;
+        type: 'success' | 'error';
+        message: string;
+    } | null>(null);
+
+    const showToast = (type: 'success' | 'error', message: string) => {
+        setToast({
+            id: Date.now(),
+            type,
+            message,
+        });
+    };
+
+    useEffect(() => {
+        if (!toast) return;
+
+        const timer = setTimeout(() => {
+            setToast((current) => (current?.id === toast.id ? null : current));
+        }, 3000);
+
+        return () => clearTimeout(timer);
+    }, [toast]);
 
     const loadProjects = async () => {
         setLoading(true);
@@ -24,6 +48,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
             }
         } catch (e) {
             console.error('Failed to load projects', e);
+            showToast('error', '加载项目列表失败，请稍后重试');
         } finally {
             setLoading(false);
         }
@@ -33,40 +58,83 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
         loadProjects();
     }, []);
 
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+
+            if (isCreating && !isSubmitting) {
+                setIsCreating(false);
+            }
+
+            if (projectToDelete && deletingProjectId !== projectToDelete.id) {
+                setProjectToDelete(null);
+            }
+        };
+
+        if (!isCreating && !projectToDelete) return;
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [deletingProjectId, isCreating, isSubmitting, projectToDelete]);
+
     const handleCreateProject = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newProjectName.trim()) return;
+        const trimmedProjectName = newProjectName.trim();
+        if (!trimmedProjectName || isSubmitting) return;
 
         try {
-            console.log("正在创建项目:", newProjectName.trim());
-            const res = await createProject(newProjectName.trim());
+            setIsSubmitting(true);
+            console.log("正在创建项目:", trimmedProjectName);
+            const res = await createProject(trimmedProjectName);
             console.log("创建项目结果:", res);
             if (res.success && res.data) {
-                setProjects([res.data, ...projects]);
+                setProjects((currentProjects) => [res.data!, ...currentProjects]);
                 setNewProjectName('');
                 setIsCreating(false);
+                showToast('success', `项目“${res.data.title || trimmedProjectName}”已创建`);
             } else {
                 console.error('创建项目失败:', res);
-                alert(`创建项目失败: ${res.error || '未知错误'}`);
+                showToast('error', `创建项目失败：${res.error || '未知错误'}`);
             }
         } catch (e: any) {
             console.error('Failed to create project exception:', e);
-            alert(`创建项目发生异常: ${e.message || '请重试'}`);
+            showToast('error', `创建项目发生异常：${e.message || '请重试'}`);
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
-    const handleDeleteProject = async (e: React.MouseEvent, id: string) => {
+    const handleRequestDeleteProject = (e: React.MouseEvent, project: ProjectSummary) => {
         e.stopPropagation();
-        if (!confirm('确定要删除这个项目吗？相关的画布数据也将被一并删除。')) return;
+        if (deletingProjectId) return;
+        setProjectToDelete(project);
+    };
+
+    const closeDeleteDialog = () => {
+        if (projectToDelete && deletingProjectId === projectToDelete.id) return;
+        setProjectToDelete(null);
+    };
+
+    const confirmDeleteProject = async () => {
+        if (!projectToDelete || deletingProjectId) return;
+
+        const deletingProject = projectToDelete;
 
         try {
-            const res = await deleteProject(id);
+            setDeletingProjectId(deletingProject.id);
+            const res = await deleteProject(deletingProject.id);
             if (res.success) {
-                setProjects(projects.filter(p => p.id !== id));
+                setProjects((currentProjects) => currentProjects.filter((project) => project.id !== deletingProject.id));
+                setProjectToDelete(null);
+                showToast('success', `项目“${deletingProject.title || '未命名项目'}”已删除`);
+            } else {
+                showToast('error', `删除项目失败：${res.error || '请重试'}`);
             }
         } catch (e) {
             console.error('Failed to delete project', e);
-            alert('删除项目失败，请重试');
+            showToast('error', '删除项目失败，请重试');
+        } finally {
+            setDeletingProjectId(null);
         }
     };
 
@@ -93,6 +161,31 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
 
     return (
         <div className="w-full h-full flex flex-col bg-[#0a0a0c] text-white overflow-hidden">
+            <div className="fixed top-6 right-6 z-[70] pointer-events-none">
+                {toast && (
+                    <div
+                        className={`pointer-events-auto flex items-start gap-3 min-w-[280px] max-w-[360px] px-4 py-3 rounded-2xl border shadow-2xl backdrop-blur-xl animate-in slide-in-from-top-2 fade-in duration-200 ${
+                            toast.type === 'success'
+                                ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-50'
+                                : 'bg-red-500/10 border-red-400/30 text-red-50'
+                        }`}
+                    >
+                        <div className={`mt-0.5 ${toast.type === 'success' ? 'text-emerald-300' : 'text-red-300'}`}>
+                            {toast.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                        </div>
+                        <div className="flex-1 text-sm leading-6">{toast.message}</div>
+                        <button
+                            type="button"
+                            onClick={() => setToast(null)}
+                            className="text-white/50 hover:text-white transition-colors"
+                            aria-label="关闭提示"
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                )}
+            </div>
+
             {/* 顶部导航区 */}
             <div className="flex-none p-8 flex justify-between items-center border-b border-white/5 bg-white/5 backdrop-blur-md z-10">
                 <div className="flex items-center gap-4">
@@ -122,8 +215,17 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
 
             {/* 创建项目的弹窗 */}
             {isCreating && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                    <div className="bg-[#1c1c1e] p-8 rounded-3xl border border-white/10 shadow-2xl w-96 max-w-[90vw] animate-in zoom-in-95 duration-200">
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                    onClick={() => {
+                        if (isSubmitting) return;
+                        setIsCreating(false);
+                    }}
+                >
+                    <div
+                        className="bg-[#1c1c1e] p-8 rounded-3xl border border-white/10 shadow-2xl w-96 max-w-[90vw] animate-in zoom-in-95 duration-200"
+                        onClick={(event) => event.stopPropagation()}
+                    >
                         <h2 className="text-xl font-bold mb-6 text-white">创建新项目</h2>
                         <form onSubmit={handleCreateProject}>
                             <input
@@ -132,25 +234,88 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
                                 placeholder="输入项目名称..."
                                 value={newProjectName}
                                 onChange={(e) => setNewProjectName(e.target.value)}
+                                disabled={isSubmitting}
                                 className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 mb-6 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all text-white placeholder-slate-500"
                             />
                             <div className="flex justify-end gap-3">
                                 <button
                                     type="button"
-                                    onClick={() => setIsCreating(false)}
-                                    className="px-5 py-2.5 rounded-xl hover:bg-white/5 text-slate-300 transition-colors"
+                                    onClick={() => {
+                                        if (isSubmitting) return;
+                                        setIsCreating(false);
+                                    }}
+                                    disabled={isSubmitting}
+                                    className="px-5 py-2.5 rounded-xl hover:bg-white/5 text-slate-300 disabled:text-slate-500 transition-colors"
                                 >
                                     取消
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={!newProjectName.trim()}
-                                    className="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400 text-slate-900 rounded-xl font-bold transition-all"
+                                    disabled={!newProjectName.trim() || isSubmitting}
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-400 text-slate-900 rounded-xl font-bold transition-all"
                                 >
-                                    创建
+                                    {isSubmitting && <Loader2 size={16} className="animate-spin" />}
+                                    {isSubmitting ? '创建中...' : '创建'}
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {projectToDelete && (
+                <div
+                    className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                    onClick={closeDeleteDialog}
+                >
+                    <div
+                        className="bg-[#1c1c1e] p-8 rounded-3xl border border-white/10 shadow-2xl w-[420px] max-w-[92vw] animate-in zoom-in-95 duration-200"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between gap-4 mb-6">
+                            <div>
+                                <h2 className="text-xl font-bold text-white">删除项目？</h2>
+                                <p className="mt-2 text-sm text-slate-400 leading-6">
+                                    删除后，项目配置、画布节点和关联数据都会一起移除，此操作无法撤销。
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={closeDeleteDialog}
+                                disabled={deletingProjectId === projectToDelete.id}
+                                className="text-slate-500 hover:text-white disabled:text-slate-700 transition-colors"
+                                aria-label="关闭删除确认"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="rounded-2xl border border-red-400/10 bg-red-500/5 px-4 py-4 mb-6">
+                            <div className="text-xs uppercase tracking-[0.2em] text-red-300/80 mb-2">待删除项目</div>
+                            <div className="text-base font-semibold text-white break-all">
+                                {projectToDelete.title || '未命名项目'}
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={closeDeleteDialog}
+                                disabled={deletingProjectId === projectToDelete.id}
+                                className="px-5 py-2.5 rounded-xl hover:bg-white/5 text-slate-300 disabled:text-slate-500 transition-colors"
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmDeleteProject}
+                                disabled={deletingProjectId === projectToDelete.id}
+                                className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-500 hover:bg-red-400 disabled:bg-slate-700 disabled:text-slate-400 text-white rounded-xl font-bold transition-all"
+                            >
+                                {deletingProjectId === projectToDelete.id && <Loader2 size={16} className="animate-spin" />}
+                                {deletingProjectId === projectToDelete.id ? '删除中...' : '确认删除'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -207,11 +372,16 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
                                         </div>
 
                                         <button
-                                            onClick={(e) => handleDeleteProject(e, project.id)}
-                                            className="p-2 -mr-2 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                                            onClick={(e) => handleRequestDeleteProject(e, project)}
+                                            disabled={deletingProjectId === project.id}
+                                            className="p-2 -mr-2 text-slate-500 hover:text-red-400 hover:bg-red-400/10 disabled:text-slate-600 disabled:hover:bg-transparent rounded-lg opacity-0 group-hover:opacity-100 transition-all"
                                             title="删除项目"
                                         >
-                                            <Trash2 size={16} />
+                                            {deletingProjectId === project.id ? (
+                                                <Loader2 size={16} className="animate-spin" />
+                                            ) : (
+                                                <Trash2 size={16} />
+                                            )}
                                         </button>
                                     </div>
                                 </div>
