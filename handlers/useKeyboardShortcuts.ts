@@ -27,7 +27,6 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
     selectedNodeIds, setSelectedNodeIds,
     selectedGroupId, setSelectedGroupId,
     clipboard, setClipboard,
-    selectedWorkflowId,
   } = useEditorStore();
 
   useEffect(() => {
@@ -46,5 +45,5 @@ export function useKeyboardShortcuts(params: UseKeyboardShortcutsParams) {
     const handleKeyUpSpace = (e: KeyboardEvent) => { if (e.code === 'Space') { document.body.classList.remove('cursor-grab-override'); } };
     window.addEventListener('keydown', handleKeyDown); window.addEventListener('keydown', handleKeyDownSpace); window.addEventListener('keyup', handleKeyUpSpace);
     return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keydown', handleKeyDownSpace); window.removeEventListener('keyup', handleKeyUpSpace); };
-  }, [selectedWorkflowId, selectedNodeIds, selectedGroupId, deleteNodes, undo, saveHistory, clipboard, zoomCanvas]);
+  }, [selectedNodeIds, selectedGroupId, deleteNodes, undo, saveHistory, clipboard, zoomCanvas]);
 }

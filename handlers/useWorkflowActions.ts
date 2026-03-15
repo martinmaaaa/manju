@@ -1,12 +1,8 @@
 /**
- * useWorkflowActions - 工作流操作 Hook
- *
- * @developer 光波 (a@ggbo.com)
- * @copyright Copyright (c) 2025 光波. All rights reserved.
- * @description 从 App.tsx 提取的工作流保存/加载/删除/重命名逻辑
+ * useWorkflowActions - 兼容旧命名的画布快照操作 Hook
  */
 
-import { AppNode, Connection, Group, Workflow } from '../types';
+import type { CanvasSnapshot } from '../types';
 import { useEditorStore } from '../stores/editor.store';
 import { getApproxNodeHeight } from '../utils/nodeHelpers';
 
@@ -14,49 +10,90 @@ interface UseWorkflowActionsParams {
   saveHistory: () => void;
 }
 
-export function useWorkflowActions(params: UseWorkflowActionsParams) {
+export function useCanvasSnapshotActions(params: UseWorkflowActionsParams) {
   const { saveHistory } = params;
   const {
     nodes, setNodes,
     connections, setConnections,
     groups, setGroups,
-    workflows, setWorkflows,
-    selectedWorkflowId, setSelectedWorkflowId,
+    canvasSnapshots, setCanvasSnapshots,
+    selectedCanvasSnapshotId, setSelectedCanvasSnapshotId,
   } = useEditorStore();
 
-  const saveCurrentAsWorkflow = () => {
-      const thumbnailNode = nodes.find(n => n.data.image);
-      const thumbnail = thumbnailNode?.data.image || '';
-      const newWf: Workflow = {
-          id: `wf-${Date.now()}`,
-          title: `工作流 ${new Date().toLocaleDateString()}`,
-          thumbnail,
-          nodes: structuredClone(nodes),
-          connections: structuredClone(connections),
-          groups: structuredClone(groups)
-      };
-      setWorkflows(prev => [newWf, ...prev]);
+  const saveCurrentAsCanvasSnapshot = () => {
+    const thumbnailNode = nodes.find(node => node.data.image);
+    const thumbnail = thumbnailNode?.data.image || '';
+    const newSnapshot: CanvasSnapshot = {
+      id: `snapshot-${Date.now()}`,
+      title: `画布快照 ${new Date().toLocaleDateString()}`,
+      thumbnail,
+      nodes: structuredClone(nodes),
+      connections: structuredClone(connections),
+      groups: structuredClone(groups),
+    };
+
+    setCanvasSnapshots(previous => [newSnapshot, ...previous]);
   };
 
-  const saveGroupAsWorkflow = (groupId: string) => {
-      const group = groups.find(g => g.id === groupId);
-      if (!group) return;
-      const nodesInGroup = nodes.filter(n => { const w = n.width || 420; const h = n.height || getApproxNodeHeight(n); const cx = n.x + w/2; const cy = n.y + h/2; return cx > group.x && cx < group.x + group.width && cy > group.y && cy < group.y + group.height; });
-      const nodeIds = new Set(nodesInGroup.map(n => n.id));
-      const connectionsInGroup = connections.filter(c => nodeIds.has(c.from) && nodeIds.has(c.to));
-      const thumbNode = nodesInGroup.find(n => n.data.image);
-      const thumbnail = thumbNode ? thumbNode.data.image : '';
-      const newWf: Workflow = { id: `wf-${Date.now()}`, title: group.title || '未命名工作流', thumbnail: thumbnail || '', nodes: structuredClone(nodesInGroup), connections: structuredClone(connectionsInGroup), groups: [structuredClone(group)] };
-      setWorkflows(prev => [newWf, ...prev]);
+  const saveGroupAsCanvasSnapshot = (groupId: string) => {
+    const group = groups.find(item => item.id === groupId);
+    if (!group) return;
+
+    const nodesInGroup = nodes.filter(node => {
+      const width = node.width || 420;
+      const height = node.height || getApproxNodeHeight(node);
+      const centerX = node.x + width / 2;
+      const centerY = node.y + height / 2;
+      return centerX > group.x && centerX < group.x + group.width && centerY > group.y && centerY < group.y + group.height;
+    });
+
+    const nodeIds = new Set(nodesInGroup.map(node => node.id));
+    const connectionsInGroup = connections.filter(connection => nodeIds.has(connection.from) && nodeIds.has(connection.to));
+    const thumbnailNode = nodesInGroup.find(node => node.data.image);
+
+    const newSnapshot: CanvasSnapshot = {
+      id: `snapshot-${Date.now()}`,
+      title: group.title || '未命名画布快照',
+      thumbnail: thumbnailNode?.data.image || '',
+      nodes: structuredClone(nodesInGroup),
+      connections: structuredClone(connectionsInGroup),
+      groups: [structuredClone(group)],
+    };
+
+    setCanvasSnapshots(previous => [newSnapshot, ...previous]);
   };
 
-  const loadWorkflow = (id: string) => {
-      const wf = workflows.find(w => w.id === id);
-      if (wf) { saveHistory(); setNodes(structuredClone(wf.nodes)); setConnections(structuredClone(wf.connections)); setGroups(structuredClone(wf.groups)); setSelectedWorkflowId(id); }
+  const loadCanvasSnapshot = (id: string) => {
+    const snapshot = canvasSnapshots.find(item => item.id === id);
+    if (!snapshot) return;
+
+    saveHistory();
+    setNodes(structuredClone(snapshot.nodes));
+    setConnections(structuredClone(snapshot.connections));
+    setGroups(structuredClone(snapshot.groups));
+    setSelectedCanvasSnapshotId(id);
   };
 
-  const deleteWorkflow = (id: string) => { setWorkflows(prev => prev.filter(w => w.id !== id)); if (selectedWorkflowId === id) setSelectedWorkflowId(null); };
-  const renameWorkflow = (id: string, newTitle: string) => { setWorkflows(prev => prev.map(w => w.id === id ? { ...w, title: newTitle } : w)); };
+  const deleteCanvasSnapshot = (id: string) => {
+    setCanvasSnapshots(previous => previous.filter(snapshot => snapshot.id !== id));
+    if (selectedCanvasSnapshotId === id) {
+      setSelectedCanvasSnapshotId(null);
+    }
+  };
 
-  return { saveCurrentAsWorkflow, saveGroupAsWorkflow, loadWorkflow, deleteWorkflow, renameWorkflow };
+  const renameCanvasSnapshot = (id: string, newTitle: string) => {
+    setCanvasSnapshots(previous =>
+      previous.map(snapshot => snapshot.id === id ? { ...snapshot, title: newTitle } : snapshot),
+    );
+  };
+
+  return {
+    saveCurrentAsCanvasSnapshot,
+    saveGroupAsCanvasSnapshot,
+    loadCanvasSnapshot,
+    deleteCanvasSnapshot,
+    renameCanvasSnapshot,
+  };
 }
+
+export const useWorkflowActions = useCanvasSnapshotActions;

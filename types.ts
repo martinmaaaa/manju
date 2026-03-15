@@ -429,7 +429,7 @@ export interface ContextMenuState {
   id?: string;
 }
 
-export interface Workflow {
+export interface CanvasSnapshot {
   id: string;
   title: string;
   thumbnail: string;
@@ -437,6 +437,8 @@ export interface Workflow {
   connections: Connection[];
   groups: Group[];
 }
+
+export type Workflow = CanvasSnapshot;
 
 // New Smart Sequence Types
 export interface SmartSequenceItem {

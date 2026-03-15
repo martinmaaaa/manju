@@ -1,4 +1,4 @@
-export type PanelId = 'history' | 'workflow' | 'add';
+export type PanelId = 'history' | 'snapshot' | 'add';
 
 export type HistoryTab = 'image' | 'video';
 
@@ -15,5 +15,5 @@ export interface SidebarContextMenuState {
     x: number;
     y: number;
     id: string;
-    type: 'workflow' | 'history';
+    type: 'snapshot' | 'history';
 }

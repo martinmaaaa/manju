@@ -14,7 +14,7 @@ import { Node } from './components/Node';
 import { SidebarDock } from './components/SidebarDock';
 import { GENERIC_CANVAS_NODE_TYPES } from './components/sidebar/nodeCatalog';
 import { ModelFallbackNotification } from './components/ModelFallbackNotification';
-import { AppNode, NodeType, NodeStatus, Connection, ContextMenuState, Group, Workflow, SmartSequenceItem, CharacterProfile, SoraTaskGroup } from './types';
+import { AppNode, NodeType, NodeStatus, Connection, ContextMenuState, Group, CanvasSnapshot, SmartSequenceItem, CharacterProfile, SoraTaskGroup } from './types';
 // AI 服务层：动态导入（首次调用时加载，减少首屏 ~107KB gzip ~36KB）
 // 详见 ./services/lazyServices.ts
 import { saveToStorage, loadFromStorage } from './services/storage_old';
@@ -40,9 +40,9 @@ import { useEditorStore } from './stores/editor.store';
 import { getProjects, getProject, createProject, updateProject, isApiAvailable, type ProjectDetail } from './services/api';
 import { initSync, setSyncProjectId, getSyncProjectId, createStoreSubscription, syncFullSnapshot, setOnlineStatus, subscribeToSyncStatus } from './services/syncMiddleware';
 import { useNodeActions } from './handlers/useNodeActions';
-import { useWorkflowActions } from './handlers/useWorkflowActions';
+import { useCanvasSnapshotActions } from './handlers/useWorkflowActions';
 import { useKeyboardShortcuts } from './handlers/useKeyboardShortcuts';
-import { PipelineView } from './components/PipelineView';
+import { WorkflowCenter } from './components/workflow/WorkflowCenter';
 import { BRAND_LOGO_ALT, BRAND_NAME, BRAND_WORKSPACE_NAME } from './src/branding';
 import {
   buildPipelineGraph,
@@ -52,6 +52,9 @@ import {
   resolveProjectEntryView,
   type PipelineTemplateId,
 } from './services/workflowTemplates';
+import { WORKFLOW_TEMPLATES } from './services/workflow/registry';
+import { createEpisodeInstance, createWorkflowInstance, getEpisodeInstances, normalizeWorkflowProjectState, withWorkflowProjectState } from './services/workflow/runtime/projectState';
+import type { WorkflowProjectState, WorkflowTemplateId } from './services/workflow/domain/types';
 
 // Lazy load large components
 const VideoEditor = lazy(() => import('./components/VideoEditor').then(m => ({ default: m.VideoEditor })));
@@ -144,9 +147,9 @@ export const App = () => {
   } = useUIStore();
 
   const {
-    workflows, setWorkflows,
+    canvasSnapshots, setCanvasSnapshots,
     assetHistory, setAssetHistory,
-    selectedWorkflowId, setSelectedWorkflowId,
+    selectedCanvasSnapshotId, setSelectedCanvasSnapshotId,
     isLoaded, setIsLoaded,
     nodes, setNodes,
     connections, setConnections,
@@ -229,6 +232,7 @@ export const App = () => {
   const saveIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasHydratedCanvasRef = useRef(false);
+  const workflowProjectState = normalizeWorkflowProjectState(activeProject?.settings);
 
   const dragGroupRef = useRef<{
     id: string,
@@ -238,6 +242,15 @@ export const App = () => {
     mouseStartY: number,
     childNodes: { id: string, startX: number, startY: number }[]
   } | null>(null);
+
+  const mergeProjectSettings = useCallback((
+    settings: Record<string, unknown> | null | undefined,
+    patch?: Record<string, unknown>,
+  ): Record<string, unknown> => ({
+    ...(settings && typeof settings === 'object' ? settings : {}),
+    ...normalizeProjectSettings(settings),
+    ...(patch || {}),
+  }), []);
 
   const clearSaveIndicatorTimers = useCallback(() => {
     if (saveIndicatorTimerRef.current) {
@@ -259,6 +272,27 @@ export const App = () => {
       saveIndicatorTimerRef.current = null;
     }, duration);
   }, [clearSaveIndicatorTimers]);
+
+  const persistProjectSettings = useCallback(async (nextSettings: Record<string, unknown>) => {
+    if (!activeProject) return;
+
+    setActiveProject(previous => previous ? { ...previous, settings: nextSettings } : previous);
+
+    try {
+      const response = await updateProject(activeProject.id, { settings: nextSettings });
+      if (response.success && response.data) {
+        setActiveProject(previous => previous ? {
+          ...previous,
+          settings: mergeProjectSettings({
+            ...nextSettings,
+            ...(response.data.settings && typeof response.data.settings === 'object' ? response.data.settings : {}),
+          }),
+        } : previous);
+      }
+    } catch (error) {
+      console.warn('[App] Failed to persist project settings', error);
+    }
+  }, [activeProject, mergeProjectSettings]);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -382,12 +416,15 @@ export const App = () => {
         setGroups(dbGroups || []);
         setActiveProject({
           ...projectRes.data,
-          settings: normalizeProjectSettings(projectRes.data.settings),
+          settings: mergeProjectSettings(projectRes.data.settings),
         });
 
         // 仍然加载 assets 和 workflows 从 IndexedDB（这些不在 PostgreSQL 中）
         const sAssets = await loadFromStorage<any[]>('assets'); if (sAssets) setAssetHistory(sAssets);
-        const sWfs = await loadFromStorage<Workflow[]>('workflows'); if (sWfs) setWorkflows(sWfs);
+        const sCanvasSnapshots =
+          await loadFromStorage<CanvasSnapshot[]>('canvasSnapshots')
+          || await loadFromStorage<CanvasSnapshot[]>('workflows');
+        if (sCanvasSnapshots) setCanvasSnapshots(sCanvasSnapshots);
 
         setCurrentView(resolveProjectEntryView(projectRes.data.settings, mappedNodes.length > 0));
       } else {
@@ -615,7 +652,8 @@ export const App = () => {
   useEffect(() => {
     if (!isLoaded) return;
     saveToStorage('assets', assetHistory);
-    saveToStorage('workflows', workflows);
+    saveToStorage('canvasSnapshots', canvasSnapshots);
+    saveToStorage('workflows', canvasSnapshots);
 
     const projectId = getSyncProjectId();
     if (projectId) {
@@ -623,7 +661,7 @@ export const App = () => {
       saveToStorage(`connections_${projectId}`, connections);
       saveToStorage(`groups_${projectId}`, groups);
     }
-  }, [assetHistory, workflows, nodes, connections, groups, isLoaded]);
+  }, [assetHistory, canvasSnapshots, nodes, connections, groups, isLoaded]);
 
   // PostgreSQL 自动同步：订阅 store 变更
   useEffect(() => {
@@ -789,23 +827,22 @@ export const App = () => {
   const handleSelectPipelineTemplate = useCallback(async (templateId: PipelineTemplateId) => {
     if (!activeProject) return;
 
-    const nextSettings = {
-      ...normalizeProjectSettings(activeProject.settings),
+    const nextSettings = mergeProjectSettings(activeProject.settings, {
       editorMode: 'pipeline' as const,
       pipelineTemplateId: templateId,
-    };
+    });
 
     setActiveProject(prev => prev ? { ...prev, settings: nextSettings } : prev);
 
     try {
       const response = await updateProject(activeProject.id, { settings: nextSettings });
       if (response.success && response.data) {
-        setActiveProject(prev => prev ? { ...prev, settings: normalizeProjectSettings(response.data.settings) } : prev);
+        setActiveProject(prev => prev ? { ...prev, settings: mergeProjectSettings(response.data.settings) } : prev);
       }
     } catch (error) {
       console.warn('[App] Failed to update pipeline template', error);
     }
-  }, [activeProject]);
+  }, [activeProject, mergeProjectSettings]);
 
   const handleInitializePipeline = useCallback(async () => {
     if (!activeProject || isInitializingPipeline) return;
@@ -820,7 +857,7 @@ export const App = () => {
       setConnections(graph.connections);
       setGroups(graph.groups);
       setSelectedNodeIds([]);
-      setSelectedWorkflowId(null);
+      setSelectedCanvasSnapshotId(null);
       setSelectedGroupId(null);
     } finally {
       setIsInitializingPipeline(false);
@@ -835,7 +872,89 @@ export const App = () => {
     setNodes,
     setSelectedGroupId,
     setSelectedNodeIds,
-    setSelectedWorkflowId,
+    setSelectedCanvasSnapshotId,
+  ]);
+
+  const handleCreateWorkflow = useCallback(async (templateId: WorkflowTemplateId) => {
+    if (!activeProject) return;
+
+    const template = WORKFLOW_TEMPLATES.find(item => item.id === templateId);
+    if (!template) return;
+
+    const workflowInstance = createWorkflowInstance(
+      templateId,
+      template.scope === 'series' ? `${activeProject.title} · ${template.name}` : template.name,
+    );
+
+    const nextWorkflowState: WorkflowProjectState = {
+      ...workflowProjectState,
+      instances: [workflowInstance, ...workflowProjectState.instances],
+      activeSeriesId: workflowInstance.scope === 'series' ? workflowInstance.id : workflowProjectState.activeSeriesId,
+      activeEpisodeId: workflowInstance.scope === 'episode' ? workflowInstance.id : workflowProjectState.activeEpisodeId,
+    };
+
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleAddEpisodeWorkflow = useCallback(async (seriesInstanceId: string) => {
+    if (!activeProject) return;
+
+    const nextEpisode = createEpisodeInstance(workflowProjectState, seriesInstanceId);
+    const nextWorkflowState: WorkflowProjectState = {
+      ...workflowProjectState,
+      instances: workflowProjectState.instances.map(instance => (
+        instance.id === seriesInstanceId
+          ? { ...instance, updatedAt: new Date().toISOString() }
+          : instance
+      )),
+      activeSeriesId: seriesInstanceId,
+      activeEpisodeId: nextEpisode.id,
+    };
+
+    nextWorkflowState.instances = [nextEpisode, ...nextWorkflowState.instances];
+
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleMaterializeWorkflow = useCallback((workflowInstanceId: string) => {
+    const workflowInstance = workflowProjectState.instances.find(instance => instance.id === workflowInstanceId);
+    if (!workflowInstance) return;
+
+    const templateId = workflowInstance.metadata?.canvasMaterializationTemplateId as PipelineTemplateId | undefined;
+    if (!templateId) {
+      setCurrentView('canvas');
+      return;
+    }
+
+    saveHistory();
+    const graph = buildPipelineGraph(templateId);
+    setNodes(graph.nodes);
+    setConnections(graph.connections);
+    setGroups(graph.groups);
+    setSelectedNodeIds([]);
+    setSelectedCanvasSnapshotId(null);
+    setSelectedGroupId(null);
+    setCurrentView('canvas');
+  }, [
+    saveHistory,
+    setConnections,
+    setCurrentView,
+    setGroups,
+    setNodes,
+    setSelectedCanvasSnapshotId,
+    setSelectedGroupId,
+    setSelectedNodeIds,
+    workflowProjectState.instances,
   ]);
 
   // 防抖版本的历史保存（1秒内多次调用只保存一次）
@@ -1788,8 +1907,8 @@ export const App = () => {
     handleAssetGenerated,
   });
 
-  // --- Workflow Actions (extracted to handlers/useWorkflowActions.ts) ---
-  const { saveCurrentAsWorkflow, saveGroupAsWorkflow, loadWorkflow, deleteWorkflow, renameWorkflow } = useWorkflowActions({
+  // --- Canvas Snapshot Actions ---
+  const { saveCurrentAsCanvasSnapshot, saveGroupAsCanvasSnapshot, loadCanvasSnapshot, deleteCanvasSnapshot, renameCanvasSnapshot } = useCanvasSnapshotActions({
     saveHistory,
   });
 
@@ -1809,23 +1928,23 @@ export const App = () => {
     const dropX = (e.clientX - canvas.pan.x) / canvas.scale;
     const dropY = (e.clientY - canvas.pan.y) / canvas.scale;
     const assetData = e.dataTransfer.getData('application/json');
-    const workflowId = e.dataTransfer.getData('application/workflow-id');
+    const canvasSnapshotId = e.dataTransfer.getData('application/canvas-snapshot-id');
 
-    if (workflowId && workflows) {
-      const wf = workflows.find(w => w.id === workflowId);
-      if (wf) {
+    if (canvasSnapshotId && canvasSnapshots) {
+      const canvasSnapshot = canvasSnapshots.find(snapshot => snapshot.id === canvasSnapshotId);
+      if (canvasSnapshot) {
         saveHistory();
-        const minX = Math.min(...wf.nodes.map(n => n.x));
-        const minY = Math.min(...wf.nodes.map(n => n.y));
-        const width = Math.max(...wf.nodes.map(n => n.x + (n.width || 420))) - minX;
-        const height = Math.max(...wf.nodes.map(n => n.y + 320)) - minY;
+        const minX = Math.min(...canvasSnapshot.nodes.map(n => n.x));
+        const minY = Math.min(...canvasSnapshot.nodes.map(n => n.y));
+        const width = Math.max(...canvasSnapshot.nodes.map(n => n.x + (n.width || 420))) - minX;
+        const height = Math.max(...canvasSnapshot.nodes.map(n => n.y + 320)) - minY;
         const offsetX = dropX - (minX + width / 2);
         const offsetY = dropY - (minY + height / 2);
         const idMap = new Map<string, string>();
-        const newNodes = wf.nodes.map(n => { const newId = `n-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`; idMap.set(n.id, newId); return { ...n, id: newId, x: n.x + offsetX, y: n.y + offsetY, status: NodeStatus.IDLE, inputs: [] }; });
-        newNodes.forEach((n, i) => { const original = wf.nodes[i]; n.inputs = original.inputs.map(oldId => idMap.get(oldId)).filter(Boolean) as string[]; });
-        const newConnections = wf.connections.map(c => ({ from: idMap.get(c.from)!, to: idMap.get(c.to)! })).filter(c => c.from && c.to);
-        const newGroups = (wf.groups || []).map(g => ({ ...g, id: `g-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, x: g.x + offsetX, y: g.y + offsetY }));
+        const newNodes = canvasSnapshot.nodes.map(n => { const newId = `n-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`; idMap.set(n.id, newId); return { ...n, id: newId, x: n.x + offsetX, y: n.y + offsetY, status: NodeStatus.IDLE, inputs: [] }; });
+        newNodes.forEach((n, i) => { const original = canvasSnapshot.nodes[i]; n.inputs = original.inputs.map(oldId => idMap.get(oldId)).filter(Boolean) as string[]; });
+        const newConnections = canvasSnapshot.connections.map(c => ({ from: idMap.get(c.from)!, to: idMap.get(c.to)! })).filter(c => c.from && c.to);
+        const newGroups = (canvasSnapshot.groups || []).map(g => ({ ...g, id: `g-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, x: g.x + offsetX, y: g.y + offsetY }));
         setNodes(prev => [...prev, ...newNodes]); setConnections(prev => [...prev, ...newConnections]); setGroups(prev => [...prev, ...newGroups]);
       }
       return;
@@ -1873,20 +1992,18 @@ export const App = () => {
   }
 
   if (currentView === 'pipeline') {
-    const pipelineSettings = normalizeProjectSettings(activeProject?.settings);
-
     return (
       <div className="w-screen h-screen">
-        <PipelineView
+        <WorkflowCenter
           projectTitle={activeProject?.title || BRAND_WORKSPACE_NAME}
-          templateId={pipelineSettings.pipelineTemplateId}
-          nodes={nodes}
-          isInitializing={isInitializingPipeline}
+          workflowState={workflowProjectState}
+          templates={WORKFLOW_TEMPLATES}
           onBackToProjects={handleBackToProjects}
           onOpenCanvas={() => setCurrentView('canvas')}
           onOpenSettings={() => setIsSettingsOpen(true)}
-          onInitializePipeline={handleInitializePipeline}
-          onSelectTemplate={handleSelectPipelineTemplate}
+          onCreateWorkflow={handleCreateWorkflow}
+          onAddEpisode={handleAddEpisodeWorkflow}
+          onMaterializeWorkflow={handleMaterializeWorkflow}
         />
         <SettingsPanel
           isOpen={isSettingsOpen}
@@ -2138,7 +2255,7 @@ export const App = () => {
               break;
 
             case 'saveGroup':
-              saveGroupAsWorkflow(data);
+              saveGroupAsCanvasSnapshot(data);
               break;
 
             case 'deleteGroup':
@@ -2252,12 +2369,12 @@ export const App = () => {
         assetHistory={assetHistory}
         onHistoryItemClick={(item) => { const type = item.type.includes('image') ? NodeType.IMAGE_GENERATOR : NodeType.VIDEO_GENERATOR; const data = item.type === 'image' ? { image: item.src } : { videoUri: item.src }; addNode(type, undefined, undefined, data); }}
         onDeleteAsset={(id) => setAssetHistory(prev => prev.filter(a => a.id !== id))}
-        workflows={workflows}
-        selectedWorkflowId={selectedWorkflowId}
-        onSelectWorkflow={loadWorkflow}
-        onSaveWorkflow={saveCurrentAsWorkflow}
-        onDeleteWorkflow={deleteWorkflow}
-        onRenameWorkflow={renameWorkflow}
+        canvasSnapshots={canvasSnapshots}
+        selectedCanvasSnapshotId={selectedCanvasSnapshotId}
+        onSelectCanvasSnapshot={loadCanvasSnapshot}
+        onSaveCanvasSnapshot={saveCurrentAsCanvasSnapshot}
+        onDeleteCanvasSnapshot={deleteCanvasSnapshot}
+        onRenameCanvasSnapshot={renameCanvasSnapshot}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
 

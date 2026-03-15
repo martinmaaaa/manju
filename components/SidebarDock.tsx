@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, RotateCcw, History, FolderHeart, Edit, Trash2, Settings } from 'lucide-react';
-import { NodeType, Workflow } from '../types';
+import { CanvasSnapshot, NodeType } from '../types';
 import { AddNodePanel } from './sidebar/AddNodePanel';
 import { HistoryPanel } from './sidebar/HistoryPanel';
-import { WorkflowPanel } from './sidebar/WorkflowPanel';
+import { CanvasSnapshotsPanel } from './sidebar/CanvasSnapshotsPanel';
 import type { HistoryAssetItem, PanelId, SidebarContextMenuState } from './sidebar/types';
 
 interface SidebarDockProps {
@@ -23,17 +23,17 @@ interface SidebarDockProps {
     assetHistory: HistoryAssetItem[];
     onHistoryItemClick: (item: HistoryAssetItem) => void;
     onDeleteAsset: (id: string) => void;
-    workflows: Workflow[];
-    selectedWorkflowId: string | null;
-    onSelectWorkflow: (id: string | null) => void;
-    onSaveWorkflow: () => void;
-    onDeleteWorkflow: (id: string) => void;
-    onRenameWorkflow: (id: string, title: string) => void;
+    canvasSnapshots: CanvasSnapshot[];
+    selectedCanvasSnapshotId: string | null;
+    onSelectCanvasSnapshot: (id: string | null) => void;
+    onSaveCanvasSnapshot: () => void;
+    onDeleteCanvasSnapshot: (id: string) => void;
+    onRenameCanvasSnapshot: (id: string, title: string) => void;
     onOpenSettings: () => void;
 }
 
 const SPRING = 'cubic-bezier(0.32, 0.72, 0, 1)';
-const PANEL_IDS: PanelId[] = ['add', 'history', 'workflow'];
+const PANEL_IDS: PanelId[] = ['add', 'history', 'snapshot'];
 
 const isPanelId = (id: string): id is PanelId => PANEL_IDS.includes(id as PanelId);
 
@@ -44,18 +44,18 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
     assetHistory,
     onHistoryItemClick,
     onDeleteAsset,
-    workflows,
-    selectedWorkflowId,
-    onSelectWorkflow,
-    onSaveWorkflow,
-    onDeleteWorkflow,
-    onRenameWorkflow,
+    canvasSnapshots,
+    selectedCanvasSnapshotId,
+    onSelectCanvasSnapshot,
+    onSaveCanvasSnapshot,
+    onDeleteCanvasSnapshot,
+    onRenameCanvasSnapshot,
     onOpenSettings,
 }) => {
     const [activePanel, setActivePanel] = useState<PanelId | null>(null);
     const [pinnedPanel, setPinnedPanel] = useState<PanelId | null>(null);
     const [activeHistoryTab, setActiveHistoryTab] = useState<'image' | 'video'>('image');
-    const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
+    const [editingCanvasSnapshotId, setEditingCanvasSnapshotId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
     const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const visiblePanel = pinnedPanel ?? activePanel;
@@ -144,16 +144,16 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
             );
         }
 
-        if (visiblePanel === 'workflow') {
+        if (visiblePanel === 'snapshot') {
             return (
-                <WorkflowPanel
-                    workflows={workflows}
-                    selectedWorkflowId={selectedWorkflowId}
-                    editingWorkflowId={editingWorkflowId}
-                    onEditingWorkflowChange={setEditingWorkflowId}
-                    onSelectWorkflow={onSelectWorkflow}
-                    onSaveWorkflow={onSaveWorkflow}
-                    onRenameWorkflow={onRenameWorkflow}
+                <CanvasSnapshotsPanel
+                    canvasSnapshots={canvasSnapshots}
+                    selectedCanvasSnapshotId={selectedCanvasSnapshotId}
+                    editingCanvasSnapshotId={editingCanvasSnapshotId}
+                    onEditingCanvasSnapshotChange={setEditingCanvasSnapshotId}
+                    onSelectCanvasSnapshot={onSelectCanvasSnapshot}
+                    onSaveCanvasSnapshot={onSaveCanvasSnapshot}
+                    onRenameCanvasSnapshot={onRenameCanvasSnapshot}
                     onOpenContextMenu={setContextMenu}
                     onClose={closePanel}
                 />
@@ -177,7 +177,7 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
             >
                 <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent pointer-events-none" />
                 {[
-                    { id: 'workflow', icon: FolderHeart },
+                    { id: 'snapshot', icon: FolderHeart },
                     { id: 'add', icon: Plus },
                     { id: 'history', icon: History },
                     { id: 'undo', icon: RotateCcw, action: onUndo },
@@ -238,13 +238,13 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                             <Trash2 size={12} /> 删除
                         </button>
                     )}
-                    {contextMenu.type === 'workflow' && (
+                    {contextMenu.type === 'snapshot' && (
                         <>
                             <button
                                 type="button"
                                 className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 rounded-md flex items-center gap-2"
                                 onClick={() => {
-                                    setEditingWorkflowId(contextMenu.id);
+                                    setEditingCanvasSnapshotId(contextMenu.id);
                                     setContextMenu(null);
                                 }}
                             >
@@ -254,7 +254,7 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                                 type="button"
                                 className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/20 rounded-md flex items-center gap-2"
                                 onClick={() => {
-                                    onDeleteWorkflow(contextMenu.id);
+                                    onDeleteCanvasSnapshot(contextMenu.id);
                                     setContextMenu(null);
                                 }}
                             >

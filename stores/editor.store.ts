@@ -6,18 +6,18 @@
  */
 
 import { create } from 'zustand';
-import type { AppNode, Connection, Group, Workflow } from '../types';
+import type { AppNode, CanvasSnapshot, Connection, Group } from '../types';
 
 interface EditorState {
   // Core data
   nodes: AppNode[];
   connections: Connection[];
   groups: Group[];
-  workflows: Workflow[];
+  canvasSnapshots: CanvasSnapshot[];
   assetHistory: any[];
 
   // Selection & workflow
-  selectedWorkflowId: string | null;
+  selectedCanvasSnapshotId: string | null;
   isLoaded: boolean;
   clipboard: AppNode | null;
   selectedNodeIds: string[];
@@ -44,11 +44,11 @@ interface EditorState {
   updateNode: (id: string, data: Partial<AppNode['data']>) => void;
   setConnections: (connections: Connection[] | ((prev: Connection[]) => Connection[])) => void;
   setGroups: (groups: Group[] | ((prev: Group[]) => Group[])) => void;
-  setWorkflows: (workflows: Workflow[] | ((prev: Workflow[]) => Workflow[])) => void;
+  setCanvasSnapshots: (canvasSnapshots: CanvasSnapshot[] | ((prev: CanvasSnapshot[]) => CanvasSnapshot[])) => void;
   setAssetHistory: (assetHistory: any[] | ((prev: any[]) => any[])) => void;
 
   // Actions - selection & workflow
-  setSelectedWorkflowId: (v: string | null) => void;
+  setSelectedCanvasSnapshotId: (v: string | null) => void;
   setIsLoaded: (v: boolean) => void;
   setClipboard: (v: AppNode | null) => void;
   setSelectedNodeIds: (v: string[] | ((prev: string[]) => string[])) => void;
@@ -76,11 +76,11 @@ export const useEditorStore = create<EditorState>((set) => ({
   nodes: [],
   connections: [],
   groups: [],
-  workflows: [],
+  canvasSnapshots: [],
   assetHistory: [],
 
   // Initial values - selection & workflow
-  selectedWorkflowId: null,
+  selectedCanvasSnapshotId: null,
   isLoaded: false,
   clipboard: null,
   selectedNodeIds: [],
@@ -118,15 +118,15 @@ export const useEditorStore = create<EditorState>((set) => ({
   setGroups: (groups) => set((state) => ({
     groups: typeof groups === 'function' ? groups(state.groups) : groups,
   })),
-  setWorkflows: (workflows) => set((state) => ({
-    workflows: typeof workflows === 'function' ? workflows(state.workflows) : workflows,
+  setCanvasSnapshots: (canvasSnapshots) => set((state) => ({
+    canvasSnapshots: typeof canvasSnapshots === 'function' ? canvasSnapshots(state.canvasSnapshots) : canvasSnapshots,
   })),
   setAssetHistory: (assetHistory) => set((state) => ({
     assetHistory: typeof assetHistory === 'function' ? assetHistory(state.assetHistory) : assetHistory,
   })),
 
   // Actions - selection & workflow
-  setSelectedWorkflowId: (v) => set({ selectedWorkflowId: v }),
+  setSelectedCanvasSnapshotId: (v) => set({ selectedCanvasSnapshotId: v }),
   setIsLoaded: (v) => set({ isLoaded: v }),
   setClipboard: (v) => set({ clipboard: v }),
   setSelectedNodeIds: (v) => set((state) => ({
