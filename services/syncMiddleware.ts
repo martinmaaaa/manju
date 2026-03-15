@@ -34,6 +34,40 @@ let batchPositionTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingPositionUpdates = new Map<string, { id: string; x: number; y: number; width?: number; height?: number }>();
 const dataTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+function createConnectionId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID().replace(/-/g, '');
+  }
+
+  return `conn_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function ensureConnectionIds(connections: Connection[]): Connection[] {
+  let changed = false;
+
+  const normalized = connections.map((connection) => {
+    if (connection.id) {
+      return connection;
+    }
+
+    changed = true;
+    return {
+      ...connection,
+      id: createConnectionId(),
+    };
+  });
+
+  return changed ? normalized : connections;
+}
+
+function inputsChanged(prev: string[] = [], next: string[] = []): boolean {
+  if (prev.length !== next.length) {
+    return true;
+  }
+
+  return prev.some((inputId, index) => inputId !== next[index]);
+}
+
 export function setSyncProjectId(id: string | null) {
   currentProjectId = id;
 }
@@ -214,7 +248,13 @@ export function diffNodes(
       if (old.x !== node.x || old.y !== node.y || old.width !== node.width || old.height !== node.height) {
         positionChanged.push(node);
       }
-      if (old.data !== node.data || old.title !== node.title || old.status !== node.status) {
+      if (
+        old.type !== node.type
+        || old.data !== node.data
+        || old.title !== node.title
+        || old.status !== node.status
+        || inputsChanged(old.inputs, node.inputs)
+      ) {
         dataChanged.push(node);
       }
     }
@@ -251,9 +291,25 @@ export function diffConnections(
  */
 export function createStoreSubscription(store: {
   getState: () => { nodes: AppNode[]; connections: Connection[]; groups: Group[] };
+  setState: (partial: Partial<{ nodes: AppNode[]; connections: Connection[]; groups: Group[] }>) => void;
   subscribe: (listener: (state: any, prevState: any) => void) => () => void;
 }): () => void {
+  const initialState = store.getState();
+  const normalizedInitialConnections = ensureConnectionIds(initialState.connections);
+  if (normalizedInitialConnections !== initialState.connections) {
+    store.setState({ connections: normalizedInitialConnections });
+  }
+
   return store.subscribe((state, prevState) => {
+    let nextConnections = state.connections;
+    if (state.connections !== prevState.connections) {
+      const normalizedConnections = ensureConnectionIds(state.connections);
+      if (normalizedConnections !== state.connections) {
+        store.setState({ connections: normalizedConnections });
+        nextConnections = normalizedConnections;
+      }
+    }
+
     if (!isOnline()) return;
 
     // Diff nodes
@@ -269,10 +325,10 @@ export function createStoreSubscription(store: {
     }
 
     // Diff connections
-    if (state.connections !== prevState.connections) {
+    if (nextConnections !== prevState.connections) {
       const { added, removed } = diffConnections(
         prevState.connections,
-        state.connections,
+        nextConnections,
       );
       for (const conn of added) syncConnectionAdd(conn);
       for (const conn of removed) {

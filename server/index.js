@@ -69,10 +69,17 @@ async function requireDatabase(res) {
 }
 
 app.get('/api/health', async (_req, res) => {
-    const dbReady = await ensureDatabaseReady();
-    res.status(dbReady ? 200 : 503).json({
-        success: dbReady,
+    let dbReady = false;
+    try {
+        dbReady = await ensureDatabaseReady();
+    } catch {
+        dbReady = false;
+    }
+
+    res.status(200).json({
+        success: true,
         data: {
+            server: true,
             database: dbReady,
             databaseHost: getResolvedDatabaseUrl().replace(/:[^:@/]+@/, ':****@'),
         },

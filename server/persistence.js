@@ -21,6 +21,14 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function appendUniqueValue(values, value) {
+  return values.includes(value) ? values : [...values, value];
+}
+
+function removeValue(values, value) {
+  return values.filter((item) => item !== value);
+}
+
 function mapProjectSummary(row) {
   return {
     id: row.id,
@@ -91,6 +99,60 @@ async function getNodeRow(client, id) {
   );
 
   return result.rows[0] ?? null;
+}
+
+async function setNodeInputs(client, nodeId, inputs) {
+  await client.query(
+    `UPDATE nodes
+     SET inputs = $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [nodeId, JSON.stringify(inputs)],
+  );
+}
+
+async function addInputToNode(client, nodeId, inputNodeId) {
+  const node = await getNodeRow(client, nodeId);
+  if (!node) {
+    return;
+  }
+
+  const currentInputs = asArray(node.inputs);
+  const nextInputs = appendUniqueValue(currentInputs, inputNodeId);
+  if (nextInputs.length === currentInputs.length) {
+    return;
+  }
+
+  await setNodeInputs(client, nodeId, nextInputs);
+}
+
+async function removeInputFromNode(client, nodeId, inputNodeId) {
+  const node = await getNodeRow(client, nodeId);
+  if (!node) {
+    return;
+  }
+
+  const currentInputs = asArray(node.inputs);
+  const nextInputs = removeValue(currentInputs, inputNodeId);
+  if (nextInputs.length === currentInputs.length) {
+    return;
+  }
+
+  await setNodeInputs(client, nodeId, nextInputs);
+}
+
+async function removeInputFromProjectNodes(client, projectId, inputNodeId) {
+  const result = await client.query(
+    `SELECT id
+     FROM nodes
+     WHERE project_id = $1
+       AND inputs @> $2::jsonb`,
+    [projectId, JSON.stringify([inputNodeId])],
+  );
+
+  for (const row of result.rows) {
+    await removeInputFromNode(client, row.id, inputNodeId);
+  }
 }
 
 export async function listProjects() {
@@ -359,34 +421,57 @@ export async function deleteNodeById(id) {
       id,
     ]);
     await client.query('DELETE FROM nodes WHERE id = $1', [id]);
+    await removeInputFromProjectNodes(client, existing.project_id, id);
     await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [existing.project_id]);
   });
 }
 
 export async function createConnectionForProject(payload) {
-  const pool = getPool();
-  const id = payload.id ?? createEntityId();
-  const result = await pool.query(
-    `INSERT INTO connections (id, project_id, from_node, to_node)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, project_id, from_node, to_node, created_at`,
-    [id, payload.project_id, payload.from_node, payload.to_node],
-  );
+  return withTransaction(async (client) => {
+    const existingConnection = await client.query(
+      `SELECT id, project_id, from_node, to_node, created_at
+       FROM connections
+       WHERE project_id = $1
+         AND from_node = $2
+         AND to_node = $3
+       LIMIT 1`,
+      [payload.project_id, payload.from_node, payload.to_node],
+    );
 
-  await pool.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [payload.project_id]);
+    if (existingConnection.rows[0]) {
+      await addInputToNode(client, payload.to_node, payload.from_node);
+      await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [payload.project_id]);
+      return mapConnection(existingConnection.rows[0]);
+    }
 
-  return mapConnection(result.rows[0]);
+    const id = payload.id ?? createEntityId();
+    const result = await client.query(
+      `INSERT INTO connections (id, project_id, from_node, to_node)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, project_id, from_node, to_node, created_at`,
+      [id, payload.project_id, payload.from_node, payload.to_node],
+    );
+
+    await addInputToNode(client, payload.to_node, payload.from_node);
+    await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [payload.project_id]);
+
+    return mapConnection(result.rows[0]);
+  });
 }
 
 export async function deleteConnectionById(id) {
   await withTransaction(async (client) => {
-    const result = await client.query('SELECT id, project_id FROM connections WHERE id = $1', [id]);
+    const result = await client.query(
+      'SELECT id, project_id, from_node, to_node FROM connections WHERE id = $1',
+      [id],
+    );
     const existing = result.rows[0];
     if (!existing) {
       return;
     }
 
     await client.query('DELETE FROM connections WHERE id = $1', [id]);
+    await removeInputFromNode(client, existing.to_node, existing.from_node);
     await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [existing.project_id]);
   });
 }
