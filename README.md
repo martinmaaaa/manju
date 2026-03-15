@@ -70,6 +70,35 @@ npm run dev
 
 访问 http://localhost:5173 即可使用。
 
+### 本地数据库模式（Docker + PostgreSQL）
+
+项目现在支持把项目数据落到本地 Docker 里的 PostgreSQL，便于后续迁移到线上数据库平台。
+
+```bash
+# 1) 启动本地 PostgreSQL（默认映射到 localhost:5433）
+docker compose -f docker-compose.db.yml up -d
+
+# 2) 安装服务端依赖
+npm --prefix server install
+
+# 3) 启动本地 API
+npm run server:dev
+
+# 4) 另开一个终端启动前端
+npm run dev
+```
+
+默认配置：
+
+- 前端 API 地址：`http://localhost:3001/api`
+- 数据库连接串：`postgresql://postgres:postgres@localhost:5433/aiyou`
+- 健康检查：`http://localhost:3001/api/health`
+
+如果需要自定义，请参考：
+
+- 根目录环境变量模板：`.env.example`
+- 服务端环境变量模板：`server/.env.example`
+
 ### 配置 API Key
 
 首次使用需要配置 AI 模型的 API Key：
@@ -102,6 +131,11 @@ hahahome/
 ### Vercel（在线版）
 
 项目已配置 `vercel.json`，连接 GitHub 后可一键部署。
+
+如果你要把“项目/节点/连线”这些数据也上线保存，需要同时部署 `server/` 这个 Node API，并配置：
+
+- 前端：`VITE_API_BASE=https://你的后端域名/api`
+- 后端：`DATABASE_URL=你的线上 PostgreSQL 连接串`
 
 ### Tauri（桌面版）
 

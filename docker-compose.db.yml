@@ -1,0 +1,16 @@
+services:
+  aiyou-postgres:
+    image: postgres:15-alpine
+    container_name: aiyou-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aiyou
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - aiyou-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  aiyou-postgres-data:
