@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, RotateCcw, History, FolderHeart, Edit, Trash2, Settings, User, Bug } from 'lucide-react';
+import { Plus, RotateCcw, History, FolderHeart, Edit, Trash2, Settings } from 'lucide-react';
 import { NodeType, Workflow } from '../types';
 import { AddNodePanel } from './sidebar/AddNodePanel';
 import { HistoryPanel } from './sidebar/HistoryPanel';
@@ -8,6 +8,7 @@ import type { HistoryAssetItem, PanelId, SidebarContextMenuState } from './sideb
 
 interface SidebarDockProps {
     onAddNode: (type: NodeType) => void;
+    onUploadFiles?: () => void;
     onUndo: () => void;
     isChatOpen: boolean;
     onToggleChat: () => void;
@@ -32,24 +33,14 @@ interface SidebarDockProps {
 }
 
 const SPRING = 'cubic-bezier(0.32, 0.72, 0, 1)';
-
 const PANEL_IDS: PanelId[] = ['add', 'history', 'workflow'];
 
 const isPanelId = (id: string): id is PanelId => PANEL_IDS.includes(id as PanelId);
 
 export const SidebarDock: React.FC<SidebarDockProps> = ({
     onAddNode,
+    onUploadFiles,
     onUndo,
-    isChatOpen,
-    onToggleChat,
-    isMultiFrameOpen,
-    onToggleMultiFrame,
-    isSonicStudioOpen,
-    onToggleSonicStudio,
-    isCharacterLibraryOpen,
-    onToggleCharacterLibrary,
-    isDebugOpen,
-    onToggleDebug,
     assetHistory,
     onHistoryItemClick,
     onDeleteAsset,
@@ -124,6 +115,13 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
         }
     };
 
+    const handleUploadFromPanel = () => {
+        onUploadFiles?.();
+        if (!pinnedPanel) {
+            setActivePanel(null);
+        }
+    };
+
     useEffect(() => {
         const handleClick = () => setContextMenu(null);
         window.addEventListener('click', handleClick);
@@ -162,7 +160,13 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
             );
         }
 
-        return <AddNodePanel onAddNode={handleAddNodeFromPanel} onClose={closePanel} />;
+        return (
+            <AddNodePanel
+                onAddNode={handleAddNodeFromPanel}
+                onUploadFiles={handleUploadFromPanel}
+                onClose={closePanel}
+            />
+        );
     };
 
     return (
@@ -173,11 +177,9 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
             >
                 <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent pointer-events-none" />
                 {[
-                    { id: 'add', icon: Plus },
                     { id: 'workflow', icon: FolderHeart },
-                    { id: 'character_library', icon: User, action: onToggleCharacterLibrary, active: isCharacterLibraryOpen, tooltip: '角色库' },
+                    { id: 'add', icon: Plus },
                     { id: 'history', icon: History },
-                    { id: 'debug', icon: Bug, action: onToggleDebug, active: isDebugOpen, tooltip: 'API日志调试' },
                     { id: 'undo', icon: RotateCcw, action: onUndo },
                 ].map((item) => (
                     <div key={item.id} className="relative group">
@@ -185,18 +187,13 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                             type="button"
                             onMouseEnter={() => handleSidebarHover(item.id)}
                             onClick={() => item.action ? item.action() : isPanelId(item.id) && togglePinnedPanel(item.id)}
-                            className={`relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${visiblePanel === item.id || item.active ? 'bg-white text-black shadow-lg' : 'hover:bg-white/10 text-slate-300 hover:text-white'}`}
+                            className={`relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${visiblePanel === item.id ? 'bg-white text-black shadow-lg' : 'hover:bg-white/10 text-slate-300 hover:text-white'}`}
                         >
                             <item.icon size={20} strokeWidth={2} />
                             {pinnedPanel === item.id && (
                                 <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_0_2px_rgba(15,23,42,0.85)]" />
                             )}
                         </button>
-                        {(item.id === 'character_library' || item.id === 'debug') && (
-                            <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-black/80 backdrop-blur-md rounded border border-white/10 text-[10px] text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                                {item.tooltip || (item.id === 'debug' ? 'API日志调试' : '角色库')}
-                            </div>
-                        )}
                     </div>
                 ))}
 

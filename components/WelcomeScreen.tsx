@@ -1,32 +1,21 @@
-/**
- * AIYOU 漫剧生成平台 - 欢迎屏幕组件
- *
- * @developer 光波 (a@ggbo.com)
- * @copyright Copyright (c) 2025 光波. All rights reserved.
- */
-
-// components/WelcomeScreen.tsx
 import React from 'react';
 import { useLanguage } from '../src/i18n/LanguageContext';
 import { Galaxy } from './Galaxy';
-import { Clapperboard, ScrollText, Type } from 'lucide-react';
+import { Film, ImageIcon, Type } from 'lucide-react';
+import { BRAND_LOGO_ALT, BRAND_WELCOME_SUBTITLE, BRAND_WELCOME_TITLE } from '../src/branding';
 
 interface WelcomeScreenProps {
   visible: boolean;
   onCreatePromptInput: () => void;
-  onCreateScriptPlanner: () => void;
-  onCreateStoryboard: () => void;
+  onCreateImageGenerator: () => void;
+  onCreateVideoGenerator: () => void;
 }
 
-/**
- * 欢迎屏幕组件
- * 在画布为空时显示
- */
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = React.memo(({
   visible,
   onCreatePromptInput,
-  onCreateScriptPlanner,
-  onCreateStoryboard,
+  onCreateImageGenerator,
+  onCreateVideoGenerator,
 }) => {
   const { language, t } = useLanguage();
 
@@ -38,7 +27,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = React.memo(({
         visible ? 'opacity-100 scale-100' : 'opacity-0 scale-105'
       }`}
     >
-      {/* 背景星空 */}
       <div className="absolute inset-0 -z-10 overflow-hidden">
         <Galaxy
           focal={[0.5, 0.5]}
@@ -60,22 +48,21 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = React.memo(({
         />
       </div>
 
-      {/* 标题 */}
       <div className="flex flex-col items-center justify-center mb-10 select-none animate-in fade-in slide-in-from-bottom-8 duration-1000">
         <div className="relative mb-8">
           <img
             src="/logo.png"
-            alt="AIYOU Logo"
+            alt={BRAND_LOGO_ALT}
             className="h-40 md:h-52 object-contain drop-shadow-2xl"
           />
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="h-px w-16 bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent"></div>
+          <div className="h-px w-16 bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent" />
           <span className="text-xl md:text-2xl font-bold tracking-[0.3em] text-white animate-[glow_2s_ease-in-out_infinite]">
-            {t.welcome}
+            {BRAND_WELCOME_TITLE}
           </span>
-          <div className="h-px w-16 bg-gradient-to-l from-transparent via-cyan-500/50 to-transparent"></div>
+          <div className="h-px w-16 bg-gradient-to-l from-transparent via-cyan-500/50 to-transparent" />
         </div>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3 pointer-events-auto">
@@ -84,27 +71,33 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = React.memo(({
             className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 text-white shadow-xl hover:shadow-cyan-500/10 transition-all hover:scale-105"
           >
             <Type size={16} />
-            <span className="text-sm font-semibold">{t.nodes.promptInput}</span>
+            <span className="text-sm font-semibold">文本</span>
           </button>
           <button
-            onClick={onCreateScriptPlanner}
+            onClick={onCreateImageGenerator}
             className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-cyan-500/15 hover:bg-cyan-500/20 border border-cyan-500/20 text-cyan-100 shadow-xl hover:shadow-cyan-500/20 transition-all hover:scale-105"
           >
-            <ScrollText size={16} />
-            <span className="text-sm font-semibold">{t.nodes.scriptPlanner}</span>
+            <ImageIcon size={16} />
+            <span className="text-sm font-semibold">图片</span>
           </button>
           <button
-            onClick={onCreateStoryboard}
+            onClick={onCreateVideoGenerator}
             className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 text-white shadow-xl hover:shadow-cyan-500/10 transition-all hover:scale-105"
           >
-            <Clapperboard size={16} />
-            <span className="text-sm font-semibold">{t.nodes.storyboardGenerator}</span>
+            <Film size={16} />
+            <span className="text-sm font-semibold">视频</span>
           </button>
         </div>
 
         <p className="mt-4 max-w-2xl text-center text-sm text-slate-300/80 pointer-events-auto">
+          {BRAND_WELCOME_SUBTITLE}
+        </p>
+
+        <p className="mt-3 max-w-2xl text-center text-sm text-slate-400/80 pointer-events-auto">
           {t.actions.canvasHint}
-          {language === 'zh' ? '，也可以从左侧 + 添加更多节点，或拖入图片/视频素材。' : ', or use the + dock on the left and drop images/videos onto the canvas.'}
+          {language === 'zh'
+            ? '，漫剧工作流已收口到“工作流”模块，画布仅保留通用创作能力。'
+            : ', and the drama workflow now lives in Workflow while canvas keeps only generic creation tools.'}
         </p>
 
         <style>{`

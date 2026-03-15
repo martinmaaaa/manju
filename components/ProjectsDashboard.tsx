@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { getProjects, createProject, deleteProject, ProjectSummary } from '../services/api';
 import { FolderHeart, Plus, Trash2, Clock, Loader2, Play, Settings, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { BRAND_LOGO_ALT, BRAND_TAGLINE, BRAND_WORKSPACE_NAME } from '../src/branding';
+import { DEFAULT_PROJECT_SETTINGS } from '../services/workflowTemplates';
 
 interface ProjectsDashboardProps {
     onSelectProject: (projectId: string) => void;
@@ -85,7 +87,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
         try {
             setIsSubmitting(true);
             console.log("正在创建项目:", trimmedProjectName);
-            const res = await createProject(trimmedProjectName);
+            const res = await createProject(trimmedProjectName, DEFAULT_PROJECT_SETTINGS);
             console.log("创建项目结果:", res);
             if (res.success && res.data) {
                 setProjects((currentProjects) => [res.data!, ...currentProjects]);
@@ -189,10 +191,13 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({ onSelectPr
             {/* 顶部导航区 */}
             <div className="flex-none p-8 flex justify-between items-center border-b border-white/5 bg-white/5 backdrop-blur-md z-10">
                 <div className="flex items-center gap-4">
-                    <img src="/logo.png" alt="AIYOU Logo" className="h-12 object-contain" />
-                    <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-                        我的项目
-                    </h1>
+                    <img src="/logo.png" alt={BRAND_LOGO_ALT} className="h-12 object-contain" />
+                    <div>
+                        <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
+                            {BRAND_WORKSPACE_NAME}
+                        </h1>
+                        <p className="mt-1 text-xs text-slate-400">{BRAND_TAGLINE}</p>
+                    </div>
                 </div>
                 <div className="flex items-center gap-3">
                     <button

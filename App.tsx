@@ -12,6 +12,7 @@ import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 
 import { useLanguage } from './src/i18n/LanguageContext';
 import { Node } from './components/Node';
 import { SidebarDock } from './components/SidebarDock';
+import { GENERIC_CANVAS_NODE_TYPES } from './components/sidebar/nodeCatalog';
 import { ModelFallbackNotification } from './components/ModelFallbackNotification';
 import { AppNode, NodeType, NodeStatus, Connection, ContextMenuState, Group, Workflow, SmartSequenceItem, CharacterProfile, SoraTaskGroup } from './types';
 // AI 服务层：动态导入（首次调用时加载，减少首屏 ~107KB gzip ~36KB）
@@ -36,11 +37,21 @@ import { useViewportCulling } from './hooks/useViewportCulling';
 import { useWindowSize } from './hooks/useWindowSize';
 import { useUIStore } from './stores/ui.store';
 import { useEditorStore } from './stores/editor.store';
-import { getProjects, getProject, createProject, isApiAvailable } from './services/api';
+import { getProjects, getProject, createProject, updateProject, isApiAvailable, type ProjectDetail } from './services/api';
 import { initSync, setSyncProjectId, getSyncProjectId, createStoreSubscription, syncFullSnapshot, setOnlineStatus, subscribeToSyncStatus } from './services/syncMiddleware';
 import { useNodeActions } from './handlers/useNodeActions';
 import { useWorkflowActions } from './handlers/useWorkflowActions';
 import { useKeyboardShortcuts } from './handlers/useKeyboardShortcuts';
+import { PipelineView } from './components/PipelineView';
+import { BRAND_LOGO_ALT, BRAND_NAME, BRAND_WORKSPACE_NAME } from './src/branding';
+import {
+  buildPipelineGraph,
+  DEFAULT_PROJECT_SETTINGS,
+  hasPipelineNodes,
+  normalizeProjectSettings,
+  resolveProjectEntryView,
+  type PipelineTemplateId,
+} from './services/workflowTemplates';
 
 // Lazy load large components
 const VideoEditor = lazy(() => import('./components/VideoEditor').then(m => ({ default: m.VideoEditor })));
@@ -101,6 +112,8 @@ export const App = () => {
   const [isRemoteSyncEnabled, setIsRemoteSyncEnabled] = useState(false);
   const [saveIndicatorState, setSaveIndicatorState] = useState<SaveIndicatorState>('idle');
   const [saveIndicatorError, setSaveIndicatorError] = useState<string | null>(null);
+  const [activeProject, setActiveProject] = useState<ProjectDetail | null>(null);
+  const [isInitializingPipeline, setIsInitializingPipeline] = useState(false);
 
   // ========== Hooks: 画布状态管理 ==========
   const canvas = useCanvasState();
@@ -181,6 +194,7 @@ export const App = () => {
   // 避免传递整个nodes数组导致所有节点重渲染
   const nodeQuery = useRef(createNodeQuery(nodesRef));
   const rafRef = useRef<number | null>(null);
+  const importAssetInputRef = useRef<HTMLInputElement>(null);
   const replaceVideoInputRef = useRef<HTMLInputElement>(null);
   const replaceImageInputRef = useRef<HTMLInputElement>(null);
   const replacementTargetRef = useRef<string | null>(null);
@@ -285,7 +299,7 @@ export const App = () => {
           return;
         } else {
           // 没有项目，创建默认项目并进入
-          const createRes = await createProject('默认项目');
+          const createRes = await createProject(`${BRAND_NAME} 项目`, DEFAULT_PROJECT_SETTINGS);
           if (createRes.success && createRes.data) {
             projectId = createRes.data.id;
           }
@@ -366,12 +380,16 @@ export const App = () => {
         setNodes(mappedNodes);
         setConnections(mappedConns);
         setGroups(dbGroups || []);
+        setActiveProject({
+          ...projectRes.data,
+          settings: normalizeProjectSettings(projectRes.data.settings),
+        });
 
         // 仍然加载 assets 和 workflows 从 IndexedDB（这些不在 PostgreSQL 中）
         const sAssets = await loadFromStorage<any[]>('assets'); if (sAssets) setAssetHistory(sAssets);
         const sWfs = await loadFromStorage<Workflow[]>('workflows'); if (sWfs) setWorkflows(sWfs);
 
-        setCurrentView('canvas');
+        setCurrentView(resolveProjectEntryView(projectRes.data.settings, mappedNodes.length > 0));
       } else {
         alert('无法加载项目数据');
       }
@@ -393,6 +411,7 @@ export const App = () => {
     setNodes([]);
     setConnections([]);
     setGroups([]);
+    setActiveProject(null);
     setSyncProjectId(null);
     setCurrentView('projects');
   };
@@ -763,6 +782,62 @@ export const App = () => {
     }
   }, [historyManager]);
 
+  const handleOpenPipeline = useCallback(() => {
+    setCurrentView('pipeline');
+  }, [setCurrentView]);
+
+  const handleSelectPipelineTemplate = useCallback(async (templateId: PipelineTemplateId) => {
+    if (!activeProject) return;
+
+    const nextSettings = {
+      ...normalizeProjectSettings(activeProject.settings),
+      editorMode: 'pipeline' as const,
+      pipelineTemplateId: templateId,
+    };
+
+    setActiveProject(prev => prev ? { ...prev, settings: nextSettings } : prev);
+
+    try {
+      const response = await updateProject(activeProject.id, { settings: nextSettings });
+      if (response.success && response.data) {
+        setActiveProject(prev => prev ? { ...prev, settings: normalizeProjectSettings(response.data.settings) } : prev);
+      }
+    } catch (error) {
+      console.warn('[App] Failed to update pipeline template', error);
+    }
+  }, [activeProject]);
+
+  const handleInitializePipeline = useCallback(async () => {
+    if (!activeProject || isInitializingPipeline) return;
+    if (nodes.length > 0) return;
+
+    setIsInitializingPipeline(true);
+    try {
+      saveHistory();
+      const settings = normalizeProjectSettings(activeProject.settings);
+      const graph = buildPipelineGraph(settings.pipelineTemplateId);
+      setNodes(graph.nodes);
+      setConnections(graph.connections);
+      setGroups(graph.groups);
+      setSelectedNodeIds([]);
+      setSelectedWorkflowId(null);
+      setSelectedGroupId(null);
+    } finally {
+      setIsInitializingPipeline(false);
+    }
+  }, [
+    activeProject,
+    isInitializingPipeline,
+    nodes.length,
+    saveHistory,
+    setConnections,
+    setGroups,
+    setNodes,
+    setSelectedGroupId,
+    setSelectedNodeIds,
+    setSelectedWorkflowId,
+  ]);
+
   // 防抖版本的历史保存（1秒内多次调用只保存一次）
   const debouncedSaveHistoryRef = useRef<NodeJS.Timeout | null>(null);
   const debouncedSaveHistory = useCallback(() => {
@@ -877,6 +952,66 @@ export const App = () => {
       return [{ id: `a-${Date.now()}`, type, src, title, timestamp: Date.now() }, ...h];
     });
   }, []);
+
+  const importFilesToCanvas = useCallback((files: File[], baseX?: number, baseY?: number) => {
+    const validFiles = files.filter(file => file.type.startsWith('image/') || file.type.startsWith('video/'));
+
+    if (validFiles.length === 0) {
+      return;
+    }
+
+    const columns = 3;
+    const gap = 40;
+    const cardWidth = 420;
+    const cardHeight = 450;
+    const startX = baseX ?? ((-canvas.pan.x + window.innerWidth / 2) / canvas.scale - 210);
+    const startY = baseY ?? ((-canvas.pan.y + window.innerHeight / 2) / canvas.scale - 180);
+
+    validFiles.forEach((file, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      const xPos = startX + (column * (cardWidth + gap));
+      const yPos = startY + (row * cardHeight);
+      const reader = new FileReader();
+
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+
+        if (file.type.startsWith('image/')) {
+          addNode(NodeType.IMAGE_GENERATOR, xPos, yPos, {
+            image: result,
+            prompt: file.name,
+            status: NodeStatus.SUCCESS,
+          });
+          return;
+        }
+
+        if (file.type.startsWith('video/')) {
+          addNode(NodeType.VIDEO_GENERATOR, xPos, yPos, {
+            videoUri: result,
+            prompt: file.name,
+            status: NodeStatus.SUCCESS,
+          });
+        }
+      };
+
+      reader.readAsDataURL(file);
+    });
+  }, [addNode, canvas.pan.x, canvas.pan.y, canvas.scale]);
+
+  const openAssetUploadPicker = useCallback(() => {
+    importAssetInputRef.current?.click();
+  }, []);
+
+  const handleAssetImport = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+
+    if (files.length > 0) {
+      importFilesToCanvas(files);
+    }
+
+    event.target.value = '';
+  }, [importFilesToCanvas]);
 
   const handleSketchResult = (type: 'image' | 'video', result: string, prompt: string) => {
     const centerX = (-canvas.pan.x + window.innerWidth / 2) / canvas.scale - 210;
@@ -1709,35 +1844,8 @@ export const App = () => {
     // Updated Multi-File Logic (9-Grid Support)
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files) as File[];
-      const validFiles = files.filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
-
-      if (validFiles.length > 0) {
-        const COLS = 3;
-        const GAP = 40;
-        const BASE_WIDTH = 420;
-        const BASE_HEIGHT = 450;
-
-        const startX = dropX - 210;
-        const startY = dropY - 180;
-
-        validFiles.forEach((file, index) => {
-          const col = index % COLS;
-          const row = Math.floor(index / COLS);
-
-          const xPos = startX + (col * (BASE_WIDTH + GAP));
-          const yPos = startY + (row * BASE_HEIGHT);
-
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const res = event.target?.result as string;
-            if (file.type.startsWith('image/')) {
-              addNode(NodeType.IMAGE_GENERATOR, xPos, yPos, { image: res, prompt: file.name, status: NodeStatus.SUCCESS });
-            } else if (file.type.startsWith('video/')) {
-              addNode(NodeType.VIDEO_GENERATOR, xPos, yPos, { videoUri: res, prompt: file.name, status: NodeStatus.SUCCESS });
-            }
-          };
-          reader.readAsDataURL(file);
-        });
+      if (files.length > 0) {
+        importFilesToCanvas(files, dropX - 210, dropY - 180);
       }
     }
   };
@@ -1755,6 +1863,30 @@ export const App = () => {
         <ProjectsDashboard
           onSelectProject={handleProjectSelect}
           onOpenSettings={() => setIsSettingsOpen(true)}
+        />
+        <SettingsPanel
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+        />
+      </div>
+    );
+  }
+
+  if (currentView === 'pipeline') {
+    const pipelineSettings = normalizeProjectSettings(activeProject?.settings);
+
+    return (
+      <div className="w-screen h-screen">
+        <PipelineView
+          projectTitle={activeProject?.title || BRAND_WORKSPACE_NAME}
+          templateId={pipelineSettings.pipelineTemplateId}
+          nodes={nodes}
+          isInitializing={isInitializingPipeline}
+          onBackToProjects={handleBackToProjects}
+          onOpenCanvas={() => setCurrentView('canvas')}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onInitializePipeline={handleInitializePipeline}
+          onSelectTemplate={handleSelectPipelineTemplate}
         />
         <SettingsPanel
           isOpen={isSettingsOpen}
@@ -1782,8 +1914,8 @@ export const App = () => {
         <WelcomeScreen
           visible={nodes.length === 0}
           onCreatePromptInput={() => addNode(NodeType.PROMPT_INPUT)}
-          onCreateScriptPlanner={() => addNode(NodeType.SCRIPT_PLANNER)}
-          onCreateStoryboard={() => addNode(NodeType.STORYBOARD_GENERATOR)}
+          onCreateImageGenerator={() => addNode(NodeType.IMAGE_GENERATOR)}
+          onCreateVideoGenerator={() => addNode(NodeType.VIDEO_GENERATOR)}
         />
 
         {/* Canvas Logo with Back Button */}
@@ -1794,17 +1926,28 @@ export const App = () => {
             title="返回项目列表"
           >
             <ChevronLeft size={16} />
-            <span className="text-sm font-medium">我的项目</span>
+            <span className="text-sm font-medium">{BRAND_WORKSPACE_NAME}</span>
           </button>
+          {(hasPipelineNodes(nodes) || activeProject?.settings?.editorMode === 'pipeline') && (
+            <button
+              onClick={handleOpenPipeline}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-500/15 backdrop-blur-2xl border border-cyan-500/25 rounded-full shadow-2xl text-cyan-50 hover:bg-cyan-500/20 transition-all hover:scale-105"
+              title="查看固定工作流"
+            >
+              <ChevronRight size={16} />
+              <span className="text-sm font-medium">固定流程</span>
+            </button>
+          )}
           {nodes.length > 0 && (
             <img
               src="/logo.png"
-              alt="AIYOU Logo"
+              alt={BRAND_LOGO_ALT}
               className="h-12 md:h-14 object-contain opacity-80 hover:opacity-100 transition-opacity pointer-events-none select-none"
             />
           )}
         </div>
 
+        <input type="file" ref={importAssetInputRef} className="hidden" accept="image/*,video/*" multiple onChange={handleAssetImport} />
         <input type="file" ref={replaceVideoInputRef} className="hidden" accept="video/*" onChange={(e) => handleReplaceFile(e, 'video')} />
         <input type="file" ref={replaceImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleReplaceFile(e, 'image')} />
 
@@ -1887,17 +2030,7 @@ export const App = () => {
         nodeData={nodes.find(n => n.id === contextMenu?.id)?.data}
         nodeType={nodes.find(n => n.id === contextMenu?.id)?.type}
         selectedNodeIds={selectedNodeIds}
-        nodeTypes={[
-          NodeType.SCRIPT_PLANNER,
-          NodeType.SCRIPT_EPISODE,
-          NodeType.CHARACTER_NODE,
-          NodeType.STYLE_PRESET,
-          NodeType.STORYBOARD_GENERATOR,
-          NodeType.STORYBOARD_IMAGE,
-          NodeType.STORYBOARD_SPLITTER,
-          NodeType.SORA_VIDEO_GENERATOR,
-          NodeType.DRAMA_ANALYZER
-        ]}
+        nodeTypes={GENERIC_CANVAS_NODE_TYPES}
         onClose={() => setContextMenu(null)}
         onAction={(action, data) => {
           switch (action) {
@@ -2104,6 +2237,7 @@ export const App = () => {
 
       <SidebarDock
         onAddNode={addNode}
+        onUploadFiles={openAssetUploadPicker}
         onUndo={undo}
         isChatOpen={isChatOpen}
         onToggleChat={() => setIsChatOpen(!isChatOpen)}

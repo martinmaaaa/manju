@@ -41,6 +41,26 @@ CREATE TABLE IF NOT EXISTS connections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_connections_project_id ON connections(project_id);
+
+CREATE TABLE IF NOT EXISTS jimeng_jobs (
+  id TEXT PRIMARY KEY,
+  prompt TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'QUEUED',
+  phase TEXT NOT NULL DEFAULT 'QUEUED',
+  progress INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  result_video_url TEXT,
+  reference_files JSONB NOT NULL DEFAULT '[]'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_jimeng_jobs_status_created_at
+  ON jimeng_jobs(status, created_at);
 `;
 
 let poolInstance = null;

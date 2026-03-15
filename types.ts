@@ -343,6 +343,11 @@ export interface AppNode {
     // Jimeng Video Generator Specifics
     referenceFiles?: File[]; // Files uploaded via input
     droppedFiles?: File[]; // Files dropped directly onto the node
+    jimengReferenceError?: string;
+    jimengJobId?: string;
+    jimengJobStatus?: string;
+    jimengJobPhase?: string;
+    jimengJobUpdatedAt?: string;
 
     // Storyboard Video Generator (inline from StoryboardVideoGeneratorData)
     availableShots?: SplitStoryboardShot[];
@@ -375,6 +380,7 @@ export interface AppNode {
 
     // Status/loading
     isLoading?: boolean;
+    isWorking?: boolean;
     isCached?: boolean;
     cacheLocation?: string;
     isRemovingSensitiveWords?: boolean;
@@ -391,6 +397,12 @@ export interface AppNode {
     isEpisodeChild?: boolean;
     status?: string;
     shotIndex?: number;
+
+    // Pipeline workflow metadata
+    pipelineStage?: 'script' | 'character' | 'storyboard' | 'prompt' | 'video';
+    pipelineKey?: string;
+    pipelineTemplateId?: string;
+    pipelineRole?: string;
   };
   inputs: string[]; // IDs of nodes this node connects FROM
 }

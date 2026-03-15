@@ -1,8 +1,0 @@
-2026/03/02-00:57:22.325 9638 Creating DB C:\Users\marti\Desktop\aiyou\playwright-user-data\Default\Local Storage\leveldb since it was missing.
-2026/03/02-00:57:22.358 9638 Reusing MANIFEST C:\Users\marti\Desktop\aiyou\playwright-user-data\Default\Local Storage\leveldb/MANIFEST-000001
-2026/03/02-00:57:45.322 9140 Level-0 table #5: started
-2026/03/02-00:57:45.330 9140 Level-0 table #5: 132272 bytes OK
-2026/03/02-00:57:45.335 9140 Delete type=0 #3
-2026/03/02-00:58:16.670 9140 Level-0 table #7: started
-2026/03/02-00:58:16.676 9140 Level-0 table #7: 36696 bytes OK
-2026/03/02-00:58:16.684 9140 Delete type=0 #4

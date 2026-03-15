@@ -10,7 +10,7 @@
 
 import React, { useState } from 'react';
 import { NodeType, NodeStatus, StoryboardShot, CharacterProfile } from '../../types';
-import { Plus, Maximize2, Minimize2, Image as ImageIcon, Music, RefreshCw, Layers, LayoutGrid, AlertCircle, Wand2, X, Clock, Eye, Film, Scissors, CheckCircle2, ChevronRight, MessageSquare, Monitor, FileText, ChevronDown, Check, Settings, EyeOff, Lock, User, Palette, Film as FilmIcon, Youtube, Wand, Clapperboard, Layers as LayersIcon, SplitSquareVertical, Upload, Link, Loader2, Sparkles, FileIcon, MousePointerClick, Crop as CropIcon, ChevronUp, ChevronLeft, GripHorizontal, Copy, Pause, Volume2, Mic2, BookOpen, ScrollText, Box, Users, Save, RotateCcw, List, ZoomIn, ZoomOut, Minus, Circle, Square, Maximize, Move, RotateCw, TrendingUp, TrendingDown, ArrowRight, ArrowUp, ArrowDown, ArrowUpRight, ArrowDownRight, Grid, Grid3X3, MoveHorizontal, ArrowUpDown, Database, ShieldAlert, ExternalLink, Package, Download, Play, Scaling, Trash2, Edit, FileSearch, MoreHorizontal, CheckCircle, Type, Video as VideoIcon } from 'lucide-react';
+import { Plus, Maximize2, Minimize2, Image as ImageIcon, RefreshCw, Layers, LayoutGrid, AlertCircle, Wand2, X, Clock, Eye, Film, Scissors, CheckCircle2, ChevronRight, MessageSquare, Monitor, FileText, ChevronDown, Check, Settings, EyeOff, Lock, User, Palette, Film as FilmIcon, Youtube, Wand, Clapperboard, Layers as LayersIcon, SplitSquareVertical, Upload, Link, Loader2, Sparkles, MousePointerClick, Crop as CropIcon, ChevronUp, ChevronLeft, GripHorizontal, Copy, Pause, Volume2, Mic2, BookOpen, ScrollText, Box, Users, Save, RotateCcw, List, ZoomIn, ZoomOut, Minus, Circle, Square, Maximize, Move, RotateCw, TrendingUp, TrendingDown, ArrowRight, ArrowUp, ArrowDown, ArrowUpRight, ArrowDownRight, Grid, Grid3X3, MoveHorizontal, ArrowUpDown, Database, ShieldAlert, ExternalLink, Package, Download, Play, Scaling, Trash2, Edit, FileSearch, MoreHorizontal, CheckCircle, Type, Video as VideoIcon } from 'lucide-react';
 import { PromptEditor } from '../PromptEditor';
 import { IMAGE_MODELS, TEXT_MODELS, VIDEO_MODELS, AUDIO_MODELS } from '../../services/modelConfig';
 import {
@@ -23,6 +23,7 @@ import {
 } from './constants';
 import { InputThumbnails } from './helpers';
 import type { BottomPanelContext } from './types';
+import { getJimengReferenceValidationMessage, validateJimengReferenceFiles } from '../../utils/jimengFiles';
 
 export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
     const {
@@ -45,6 +46,19 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
         isActionProcessing,
         isOpen: _isOpenProp, hasInputs, onInputReorder, nodeWidth, nodeHeight, isSelected,
     } = ctx;
+
+    const jimengDroppedFiles = node.type === NodeType.JIMENG_VIDEO_GENERATOR && Array.isArray(node.data.droppedFiles)
+        ? node.data.droppedFiles
+        : [];
+    const jimengReferenceValidation = node.type === NodeType.JIMENG_VIDEO_GENERATOR
+        ? validateJimengReferenceFiles(jimengDroppedFiles)
+        : { acceptedFiles: [], rejectedFiles: [], overflowFiles: [] };
+    const jimengReferenceHint = node.type === NodeType.JIMENG_VIDEO_GENERATOR
+        ? (node.data.jimengReferenceError || getJimengReferenceValidationMessage(jimengReferenceValidation))
+        : '';
+    const jimengJobSummary = node.type === NodeType.JIMENG_VIDEO_GENERATOR && node.data.jimengJobStatus
+        ? `${node.data.jimengJobStatus}${node.data.jimengJobPhase ? ` · ${node.data.jimengJobPhase}` : ''}`
+        : '';
 
     // DRAMA_REFINED node doesn't need bottom panel (display only)
     if (node.type === NodeType.DRAMA_REFINED) {
@@ -85,6 +99,26 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
                             onChange={(e) => onUpdate(node.id, { dramaName: e.target.value })}
                             onMouseDown={e => e.stopPropagation()}
                         />
+                        {false && (
+                            <>
+                        <div className="flex items-center justify-between px-1">
+                            <div className="text-[10px] text-slate-500">
+                                鍗虫ⅵ褰撳墠椤甸潰浠呮敮鎸?2 寮犲浘鐗囧弬鑰冿紙棣栧笢 / 灏惧笢锛?
+                            </div>
+                            <div className="text-[10px] text-slate-600">
+                                {jimengReferenceValidation.acceptedFiles.length}/2
+                            </div>
+                        </div>
+
+                        {jimengReferenceHint && (
+                            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300">
+                                <AlertCircle size={12} className="shrink-0" />
+                                <span>{jimengReferenceHint}</span>
+                            </div>
+                        )}
+                            </>
+                        )}
+
                         <button
                             onClick={handleActionClick}
                             disabled={isWorking || !node.data.dramaName?.trim()}
@@ -1611,7 +1645,11 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
                                 const files = Array.from(e.dataTransfer.files);
                                 if (files.length > 0) {
                                     const currentFiles = Array.isArray(node.data.droppedFiles) ? node.data.droppedFiles : [];
-                                    onUpdate(node.id, { droppedFiles: [...currentFiles, ...files] });
+                                    const nextValidation = validateJimengReferenceFiles([...currentFiles, ...files]);
+                                    onUpdate(node.id, {
+                                        droppedFiles: nextValidation.acceptedFiles,
+                                        jimengReferenceError: getJimengReferenceValidationMessage(nextValidation) || undefined,
+                                    });
                                 }
                             }}
                         >
@@ -1630,26 +1668,21 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
                             />
 
                             {/* Reference Files Preview Area */}
-                            {node.data.droppedFiles && Array.isArray(node.data.droppedFiles) && node.data.droppedFiles.length > 0 && (
+                            {jimengReferenceValidation.acceptedFiles.length > 0 && (
                                 <div className="absolute bottom-3 left-3 flex gap-2 overflow-x-auto custom-scrollbar max-w-[90%] pb-1">
-                                    {node.data.droppedFiles.map((f: File, i: number) => (
+                                    {jimengReferenceValidation.acceptedFiles.map((f: File, i: number) => (
                                         <div key={i} className="relative group/file shrink-0 w-8 h-8 rounded border border-white/20 bg-black/40 flex items-center justify-center overflow-hidden" title={f.name}>
-                                            {f.type.startsWith('image/') ? (
-                                                <img src={URL.createObjectURL(f)} alt="ref" className="w-full h-full object-cover" />
-                                            ) : f.type.startsWith('video/') ? (
-                                                <Film size={14} className="text-blue-400" />
-                                            ) : f.type.startsWith('audio/') ? (
-                                                <Music size={14} className="text-green-400" />
-                                            ) : (
-                                                <FileIcon size={14} className="text-slate-400" />
-                                            )}
+                                            <img src={URL.createObjectURL(f)} alt="ref" className="w-full h-full object-cover" />
                                             <button
                                                 className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover/file:opacity-100 transition-opacity z-10"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    const newFiles = [...(node.data.droppedFiles as File[])];
+                                                    const newFiles = [...jimengReferenceValidation.acceptedFiles];
                                                     newFiles.splice(i, 1);
-                                                    onUpdate(node.id, { droppedFiles: newFiles });
+                                                    onUpdate(node.id, {
+                                                        droppedFiles: newFiles,
+                                                        jimengReferenceError: undefined,
+                                                    });
                                                 }}
                                             >
                                                 <X size={8} />
@@ -1663,6 +1696,29 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
                         </div>
 
                         {/* 生成视频按钮 */}
+                        <div className="flex items-center justify-between px-1">
+                            <div className="text-[10px] text-slate-500">
+                                鍗虫ⅵ褰撳墠椤甸潰浠呮敮鎸?2 寮犲浘鐗囧弬鑰冿紙棣栧笢 / 灏惧笢锛?
+                            </div>
+                            <div className="text-[10px] text-slate-600">
+                                {jimengReferenceValidation.acceptedFiles.length}/2
+                            </div>
+                        </div>
+
+                        {jimengReferenceHint && (
+                            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300">
+                                <AlertCircle size={12} className="shrink-0" />
+                                <span>{jimengReferenceHint}</span>
+                            </div>
+                        )}
+
+                        {jimengJobSummary && (
+                            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-[10px] text-cyan-300">
+                                {isWorking ? <Loader2 size={12} className="shrink-0 animate-spin" /> : <Clock size={12} className="shrink-0" />}
+                                <span>{jimengJobSummary}</span>
+                            </div>
+                        )}
+
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();

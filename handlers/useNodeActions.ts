@@ -14,6 +14,7 @@ import { getGridConfig, STORYBOARD_RESOLUTIONS } from '../services/storyboardCon
 import { saveImageNodeOutput, saveVideoNodeOutput, saveAudioNodeOutput, saveStoryboardGridOutput } from '../utils/storageHelper';
 import { checkImageNodeCache, checkVideoNodeCache, checkAudioNodeCache } from '../utils/cacheChecker';
 import { createNodeQuery } from '../hooks/usePerformanceOptimization';
+import { getJimengReferenceValidationMessage, validateJimengReferenceFiles } from '../utils/jimengFiles';
 
 interface UseNodeActionsParams {
     nodesRef: React.MutableRefObject<AppNode[]>;
@@ -2924,6 +2925,124 @@ Everything else must be purely visual with no text whatsoever.
 
 
             } else if (node.type === NodeType.JIMENG_VIDEO_GENERATOR) {
+                if (promptOverride === 'generate-jimeng-video') {
+                    if (!prompt) {
+                        throw new Error('请输入即梦视频提示词');
+                    }
+
+                    handleNodeUpdate(id, {
+                        status: 'queued',
+                        progress: 0,
+                        isWorking: true,
+                        error: undefined,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
+
+                    try {
+                        const { jimengApi } = await import('../services/jimengApi');
+
+                        const filesToUpload: File[] = [];
+                        const directReferenceFiles = Array.isArray(node.data.referenceFiles) ? node.data.referenceFiles : [];
+                        const droppedFiles = Array.isArray(node.data.droppedFiles) ? node.data.droppedFiles : [];
+
+                        for (const inputNode of inputs) {
+                            if (!inputNode) continue;
+                            const inputData = inputNode.data;
+                            if (inputData.image) {
+                                const fetchRes = await fetch(inputData.image);
+                                const blob = await fetchRes.blob();
+                                filesToUpload.push(new File([blob], `ref-image-${inputNode.id}.png`, { type: 'image/png' }));
+                            }
+                        }
+
+                        filesToUpload.push(...directReferenceFiles, ...droppedFiles);
+
+                        const referenceValidation = validateJimengReferenceFiles(filesToUpload);
+                        const referenceError = getJimengReferenceValidationMessage(referenceValidation);
+                        if (referenceError) {
+                            throw new Error(referenceError);
+                        }
+
+                        handleNodeUpdate(id, {
+                            progress: 10,
+                            jimengReferenceError: undefined,
+                        });
+
+                        const created = await jimengApi.createVideoJob({
+                            prompt,
+                            files: referenceValidation.acceptedFiles,
+                        });
+
+                        if (!created.success || !created.job) {
+                            throw new Error(created.error || '创建即梦任务失败');
+                        }
+
+                        const abortController = new AbortController();
+                        abortControllersRef.current.set(id, abortController);
+
+                        handleNodeUpdate(id, {
+                            status: created.job.status.toLowerCase(),
+                            progress: created.job.progress,
+                            jimengJobId: created.job.id,
+                            jimengJobStatus: created.job.status,
+                            jimengJobPhase: created.job.phase,
+                            jimengJobUpdatedAt: created.job.updated_at,
+                        });
+
+                        const result = await jimengApi.waitForJobCompletion(created.job.id, {
+                            signal: abortController.signal,
+                            onUpdate: async (job) => {
+                                handleNodeUpdate(id, {
+                                    status: job.status.toLowerCase(),
+                                    progress: job.progress,
+                                    error: job.error,
+                                    isWorking: job.status !== 'SUCCEEDED' && job.status !== 'FAILED',
+                                    jimengJobId: job.id,
+                                    jimengJobStatus: job.status,
+                                    jimengJobPhase: job.phase,
+                                    jimengJobUpdatedAt: job.updated_at,
+                                });
+                            },
+                        });
+
+                        abortControllersRef.current.delete(id);
+
+                        if (!result.success || !result.job) {
+                            throw new Error(result.error || '获取即梦任务结果失败');
+                        }
+
+                        if (result.job.status !== 'SUCCEEDED' || !result.job.videoUrl) {
+                            throw new Error(result.job.error || '即梦任务未成功完成');
+                        }
+
+                        handleNodeUpdate(id, {
+                            status: 'completed',
+                            progress: 100,
+                            isWorking: false,
+                            error: undefined,
+                            videoUrl: result.job.videoUrl,
+                            jimengJobId: result.job.id,
+                            jimengJobStatus: result.job.status,
+                            jimengJobPhase: result.job.phase,
+                            jimengJobUpdatedAt: result.job.updated_at,
+                        });
+                        handleAssetGenerated('video', result.job.videoUrl, `即梦视频: ${prompt.substring(0, 10)}...`);
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
+                    } catch (error: any) {
+                        console.error('[JIMENG_VIDEO_GENERATOR] Error:', error);
+                        abortControllersRef.current.delete(id);
+                        handleNodeUpdate(id, {
+                            status: 'failed',
+                            error: error.message || '即梦生成失败',
+                            jimengReferenceError: error.message || '即梦生成失败',
+                            isWorking: false,
+                        });
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                        throw error;
+                    }
+                }
+
                 // --- Jimeng Seedance 2.0 Video Generator Logic ---
                 if (promptOverride === 'generate-jimeng-video') {
                     if (!prompt) throw new Error("请输入生图描述");
@@ -2938,8 +3057,9 @@ Everything else must be purely visual with no text whatsoever.
                     try {
                         const { jimengApi } = await import('../services/jimengApi');
 
-                        // Collect ALL files passed down from inputs
                         const filesToUpload: File[] = [];
+                        const directReferenceFiles = Array.isArray(node.data.referenceFiles) ? node.data.referenceFiles : [];
+                        const droppedFiles = Array.isArray(node.data.droppedFiles) ? node.data.droppedFiles : [];
 
                         // Look for standard file properties in inputs (e.g. from IMAGE_GENERATOR, AUDIO_INPUT etc)
                         for (const inputNode of inputs) {
@@ -2951,22 +3071,24 @@ Everything else must be purely visual with no text whatsoever.
                                 const blob = await fetchRes.blob();
                                 filesToUpload.push(new File([blob], `ref-image-${inputNode.id}.png`, { type: 'image/png' }));
                             }
-                            // Also handles any native files dragged onto the Jimeng node directly
-                            if (node.data.referenceFiles && Array.isArray(node.data.referenceFiles)) {
-                                filesToUpload.push(...node.data.referenceFiles);
-                            }
                         }
 
-                        // Also append nodes native files drops
-                        if (node.data.droppedFiles && Array.isArray(node.data.droppedFiles)) {
-                            filesToUpload.push(...node.data.droppedFiles);
+                        filesToUpload.push(...directReferenceFiles, ...droppedFiles);
+
+                        const referenceValidation = validateJimengReferenceFiles(filesToUpload);
+                        const referenceError = getJimengReferenceValidationMessage(referenceValidation);
+                        if (referenceError) {
+                            throw new Error(referenceError);
                         }
 
-                        handleNodeUpdate(id, { progress: 20 });
+                        handleNodeUpdate(id, {
+                            progress: 20,
+                            jimengReferenceError: undefined
+                        });
 
                         const result = await jimengApi.generateVideo({
                             prompt,
-                            files: filesToUpload
+                            files: referenceValidation.acceptedFiles
                         });
 
                         if (result.success && result.videoUrl) {
@@ -2986,6 +3108,7 @@ Everything else must be purely visual with no text whatsoever.
                         handleNodeUpdate(id, {
                             status: 'prompting',
                             error: error.message || '即梦生成失败',
+                            jimengReferenceError: error.message || '即梦生成失败',
                             isWorking: false
                         });
                         setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));

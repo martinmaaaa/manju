@@ -11,7 +11,7 @@ import type { VideoSource } from '../components/VideoEditor';
 
 interface UIState {
   // Application View
-  currentView: 'projects' | 'canvas';
+  currentView: 'projects' | 'pipeline' | 'canvas';
 
   // Modal states
   isChatOpen: boolean;
@@ -39,7 +39,7 @@ interface UIState {
   imageToCrop: string | null;
 
   // Actions
-  setCurrentView: (v: 'projects' | 'canvas') => void;
+  setCurrentView: (v: 'projects' | 'pipeline' | 'canvas') => void;
   setIsChatOpen: (v: boolean) => void;
   setIsSketchEditorOpen: (v: boolean) => void;
   setIsMultiFrameOpen: (v: boolean) => void;

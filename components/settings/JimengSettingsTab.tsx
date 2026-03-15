@@ -1,20 +1,26 @@
 import React, { useState } from 'react';
-import { QrCode, CheckCircle, Smartphone, ExternalLink, Loader2 } from 'lucide-react';
+import { CheckCircle, ExternalLink, Loader2, QrCode, Smartphone } from 'lucide-react';
 import { jimengApi } from '../../services/jimengApi';
 
 export const JimengSettingsTab: React.FC = () => {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [loginStatus, setLoginStatus] = useState<'idle' | 'success' | 'error'>('idle');
+    const [loginMessage, setLoginMessage] = useState('');
 
     const handleLogin = async () => {
         setIsLoggingIn(true);
         setLoginStatus('idle');
-        const success = await jimengApi.login();
-        if (success) {
+        setLoginMessage('');
+
+        const result = await jimengApi.login();
+        if (result.success) {
             setLoginStatus('success');
+            setLoginMessage('即梦登录状态已就绪。');
         } else {
             setLoginStatus('error');
+            setLoginMessage(result.error || '登录未完成或已取消。');
         }
+
         setIsLoggingIn(false);
     };
 
@@ -22,16 +28,13 @@ export const JimengSettingsTab: React.FC = () => {
         <div className="p-8 space-y-6">
             <div className="space-y-4">
                 <div>
-                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                        即梦 (Jimeng) 账号授权
-                    </h3>
+                    <h3 className="text-lg font-bold text-white">即梦账号连接</h3>
                     <p className="text-sm text-slate-400 mt-1">
-                        为了访问 Seedance 2.0 并支持多模态参考上传，系统会在本地环境中通过安全隔离的无头浏览器对接即梦官网。
+                        系统会在你的本地环境里通过浏览器自动化连接即梦网页，使用你自己的登录态提交视频任务。
                     </p>
                 </div>
 
                 <div className="p-6 bg-white/5 border border-white/10 rounded-2xl space-y-4 relative overflow-hidden">
-                    {/* 装饰 */}
                     <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
                         <QrCode size={120} />
                     </div>
@@ -42,15 +45,14 @@ export const JimengSettingsTab: React.FC = () => {
                                 <Smartphone size={24} />
                             </div>
                             <div>
-                                <h4 className="font-bold text-white text-base">安全扫码登录</h4>
+                                <h4 className="font-bold text-white text-base">扫码登录</h4>
                                 <p className="text-xs text-slate-400 mt-1 leading-relaxed max-w-[80%]">
-                                    点击下方按钮，系统将弹出一个真实的浏览器窗口打开即梦官网。
-                                    请使用抖音/即梦 App 扫码登录。登录成功后关闭浏览器，登录状态将自动永久保存在您的本地设备上。
+                                    点击下方按钮后，会打开一个真实浏览器窗口进入即梦官网。扫码成功后，登录状态会保存在本地浏览器配置中。
                                 </p>
                             </div>
                         </div>
 
-                        <div className="pt-4 flex items-center justify-between">
+                        <div className="pt-4 flex items-center justify-between gap-4">
                             <button
                                 onClick={handleLogin}
                                 disabled={isLoggingIn}
@@ -70,25 +72,33 @@ export const JimengSettingsTab: React.FC = () => {
                             </button>
 
                             {loginStatus === 'success' && (
-                                <div className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm font-medium animate-in fade-in zoom-in">
+                                <div className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm font-medium">
                                     <CheckCircle size={16} />
-                                    <span>授权成功，已就绪</span>
+                                    <span>{loginMessage}</span>
                                 </div>
                             )}
+
                             {loginStatus === 'error' && (
-                                <div className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm font-medium animate-in fade-in zoom-in">
-                                    <span>授权异常或已取消</span>
+                                <div className="px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm font-medium">
+                                    {loginMessage}
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
 
+                <div className="p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-xl space-y-2">
+                    <p className="text-xs text-cyan-300 leading-relaxed">
+                        现在即梦节点已经切到异步任务模式：前端提交任务后，会立刻拿到任务编号，由本地 sidecar 后台轮询结果。
+                    </p>
+                    <p className="text-xs text-cyan-300 leading-relaxed">
+                        如果即梦账号排队较久，节点会持续显示任务状态，而不是像之前那样卡死在一次同步请求里。
+                    </p>
+                </div>
+
                 <div className="p-4 bg-orange-500/10 border border-orange-500/20 rounded-xl">
-                    <p className="text-xs text-orange-400 leading-relaxed">
-                        <strong>免责声明：</strong>
-                        本功能通过本地自动化脚本对接即梦官网，仅供个人学习或提效使用。
-                        所有数据均直接发送至官方接口，绝不会上传至任何第三方服务器，账号安全性由完整的本地沙箱保障。
+                    <p className="text-xs text-orange-300 leading-relaxed">
+                        注意：该能力依赖你自己的即梦登录状态、账号权限、排队与审核规则。自动化提交不会绕过平台的额度、风控或会员限制。
                     </p>
                 </div>
             </div>

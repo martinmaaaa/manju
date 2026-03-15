@@ -16,25 +16,77 @@ import {
     Search,
     Sparkles,
     Palette,
+    Upload,
     type LucideIcon,
 } from 'lucide-react';
 import { NodeType } from '../../types';
 
-export const ADDABLE_NODE_TYPES: NodeType[] = [
-    NodeType.IMAGE_GENERATOR,
-    NodeType.SCRIPT_PLANNER,
-    NodeType.SCRIPT_EPISODE,
-    NodeType.CHARACTER_NODE,
-    NodeType.STYLE_PRESET,
-    NodeType.STORYBOARD_GENERATOR,
-    NodeType.STORYBOARD_IMAGE,
-    NodeType.STORYBOARD_SPLITTER,
-    NodeType.SORA_VIDEO_GENERATOR,
-    NodeType.JIMENG_VIDEO_GENERATOR,
-    NodeType.STORYBOARD_VIDEO_GENERATOR,
-    NodeType.DRAMA_ANALYZER,
-    NodeType.VIDEO_EDITOR,
+export type CanvasWorkflowMenuKind = 'workflow' | 'resource';
+
+export interface CanvasWorkflowMenuItem {
+    id: string;
+    title: string;
+    description: string;
+    kind: CanvasWorkflowMenuKind;
+    icon: LucideIcon;
+    type?: NodeType;
+    beta?: boolean;
+}
+
+export const GENERIC_CANVAS_WORKFLOW_ITEMS: CanvasWorkflowMenuItem[] = [
+    {
+        id: 'text',
+        title: '文本',
+        description: '脚本、广告词、品牌文案',
+        kind: 'workflow',
+        icon: Type,
+        type: NodeType.PROMPT_INPUT,
+    },
+    {
+        id: 'image',
+        title: '图片',
+        description: '创意图、参考图、氛围图',
+        kind: 'workflow',
+        icon: ImageIcon,
+        type: NodeType.IMAGE_GENERATOR,
+    },
+    {
+        id: 'video',
+        title: '视频',
+        description: '通用视频生成与素材拼接',
+        kind: 'workflow',
+        icon: Film,
+        type: NodeType.VIDEO_GENERATOR,
+    },
+    {
+        id: 'audio',
+        title: '音频',
+        description: '配乐、音效、语音草稿',
+        kind: 'workflow',
+        icon: Mic2,
+        type: NodeType.AUDIO_GENERATOR,
+        beta: true,
+    },
+    {
+        id: 'image-editor',
+        title: '图片编辑器',
+        description: '裁切、修图、重绘与二次加工',
+        kind: 'workflow',
+        icon: Brush,
+        type: NodeType.IMAGE_EDITOR,
+    },
+    {
+        id: 'upload',
+        title: '上传',
+        description: '导入本地图片或视频素材',
+        kind: 'resource',
+        icon: Upload,
+    },
 ];
+
+export const GENERIC_CANVAS_NODE_TYPES: NodeType[] = GENERIC_CANVAS_WORKFLOW_ITEMS
+    .filter((item): item is CanvasWorkflowMenuItem & { type: NodeType } => Boolean(item.type))
+    .map((item) => item.type);
 
 export const getNodeIcon = (type: string): LucideIcon => {
     switch (type) {

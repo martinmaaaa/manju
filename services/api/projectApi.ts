@@ -161,11 +161,14 @@ export async function getProject(id: string): Promise<ApiResponse<ProjectDetail>
   };
 }
 
-export async function createProject(title: string): Promise<ApiResponse<ProjectSummary>> {
+export async function createProject(
+  title: string,
+  settings: Record<string, unknown> = {},
+): Promise<ApiResponse<ProjectSummary>> {
   if (await checkOnline()) {
     const res = await apiRequest<ProjectSummary>('/projects', {
       method: 'POST',
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, settings }),
     });
     if (res.success) return res;
     console.warn("Online createProject failed, falling back to local storage:", res.error);
@@ -174,7 +177,7 @@ export async function createProject(title: string): Promise<ApiResponse<ProjectS
   const newProject: ProjectSummary = {
     id: `proj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     title,
-    settings: {},
+    settings,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };

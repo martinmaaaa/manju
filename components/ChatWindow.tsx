@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import { X, Bot, Eraser, Copy, CornerDownLeft, Loader2, Sparkles } from 'lucide-react';
+import { BRAND_ASSISTANT_NAME, BRAND_NAME } from '../src/branding';
 
 interface Message {
   role: 'user' | 'model';
@@ -184,7 +185,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         </div>
         <div className="flex items-center gap-2.5">
           <div className="flex flex-col items-end">
-            <span className="text-xs font-bold text-slate-200 tracking-wide">AI 创意助手</span>
+            <span className="text-xs font-bold text-slate-200 tracking-wide">{BRAND_ASSISTANT_NAME}</span>
             <span className="text-[10px] text-slate-500 font-medium">提示词优化 & 灵感生成</span>
           </div>
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-cyan-500/20 to-blue-500/20 flex items-center justify-center border border-white/10 shadow-inner">
@@ -201,7 +202,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 
                 {/* Role Label */}
                 <div className="flex items-center gap-2 px-1">
-                    {m.role === 'model' && <span className="text-[10px] font-bold text-cyan-500/80 uppercase tracking-wider">AIYOU</span>}
+                    {m.role === 'model' && <span className="text-[10px] font-bold text-cyan-500/80 tracking-wider">{BRAND_NAME}</span>}
                     {m.role === 'user' && <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">You</span>}
                 </div>
 

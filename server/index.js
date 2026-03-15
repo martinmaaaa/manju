@@ -6,6 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import jimengService from './services/jimengService.js';
+import { enqueueJimengJob, getJimengJobStatus, initializeJimengJobWorker } from './services/jimengJobManager.js';
 import { ensureDatabaseReady, getResolvedDatabaseUrl, initDatabase, markDatabaseUnavailable } from './db.js';
 import {
     batchUpdateNodesById,
@@ -68,6 +69,14 @@ async function requireDatabase(res) {
     return ready;
 }
 
+function removeUploadedFiles(files = []) {
+    for (const file of files) {
+        if (file?.path && fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+        }
+    }
+}
+
 app.get('/api/health', async (_req, res) => {
     let dbReady = false;
     try {
@@ -110,7 +119,7 @@ app.post('/api/projects', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Project title is required.' });
         }
 
-        const project = await createProject(title);
+        const project = await createProject(title, req.body?.settings || {});
         res.status(201).json({ success: true, data: project });
     } catch (error) {
         markDatabaseUnavailable();
@@ -257,7 +266,15 @@ app.delete('/api/connections/:id', async (req, res) => {
 app.get('/api/jimeng/login', async (req, res) => {
     try {
         const success = await jimengService.login();
-        res.json({ success });
+        if (success) {
+            res.json({ success: true });
+            return;
+        }
+
+        res.status(400).json({
+            success: false,
+            error: '即梦登录未完成，未检测到可用的生成页面。',
+        });
     } catch (error) {
         console.error('Login error:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -265,41 +282,70 @@ app.get('/api/jimeng/login', async (req, res) => {
 });
 
 // API to generate Seedance 2.0 video
-app.post('/api/jimeng/generate/seedance2', upload.array('files'), async (req, res) => {
+async function handleJimengJobCreation(req, res) {
+    if (!(await requireDatabase(res))) return;
+
+    const files = req.files || [];
+    const uploadedFiles = files.map((file) => ({
+        path: file.path,
+        mimetype: file.mimetype,
+        originalname: file.originalname,
+        size: file.size,
+    }));
+
     try {
-        const prompt = req.body.prompt;
-        const files = req.files || [];
-        const filePaths = files.map(f => f.path);
-
-        // Call Jimeng Playwright Automation
-        const result = await jimengService.generateVideo(prompt, filePaths);
-
-        // Clean up uploaded files after generation
-        for (const filePath of filePaths) {
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
+        const prompt = String(req.body.prompt || '').trim();
+        if (!prompt) {
+            removeUploadedFiles(uploadedFiles);
+            return res.status(400).json({ success: false, error: 'Prompt is required.' });
         }
 
-        if (result.success) {
-            res.json({ success: true, videoUrl: result.videoUrl });
-        } else {
-            res.status(400).json({ success: false, error: result.error });
-        }
+        const job = await enqueueJimengJob({
+            prompt,
+            referenceFiles: uploadedFiles,
+            metadata: {
+                provider: 'jimeng',
+                model: 'seedance2',
+            },
+        });
+
+        res.status(202).json({ success: true, data: job });
     } catch (error) {
         console.error('Generate error:', error);
+        removeUploadedFiles(uploadedFiles);
+        res.status(500).json({ success: false, error: error.message });
+    }
+}
+
+app.post('/api/jimeng/generate/seedance2', upload.array('files'), handleJimengJobCreation);
+app.post('/api/jimeng/jobs/seedance2', upload.array('files'), handleJimengJobCreation);
+
+app.get('/api/jimeng/jobs/:id', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+
+    try {
+        const job = await getJimengJobStatus(req.params.id);
+        if (!job) {
+            return res.status(404).json({ success: false, error: 'Jimeng job not found.' });
+        }
+
+        res.json({ success: true, data: job });
+    } catch (error) {
+        console.error('Jimeng job status error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
 app.listen(port, () => {
-    console.log(`HahaHome Sidecar Server running at http://localhost:${port}`);
+console.log(`Tianti Sidecar Server running at http://localhost:${port}`);
 });
 
 initDatabase()
     .then(() => {
         console.log('[db] PostgreSQL schema is ready');
+        return initializeJimengJobWorker();
     })
     .catch((error) => {
-        console.warn('[db] PostgreSQL init skipped:', error.message);
+        const message = error?.message || error?.code || String(error);
+        console.warn('[db] PostgreSQL init skipped:', message);
     });

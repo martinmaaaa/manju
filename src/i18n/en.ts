@@ -1,11 +1,9 @@
 import { Translation } from './zh';
 
 export const en: Translation = {
-  // App Name
-  appName: 'HahaHome',
-  welcome: 'Welcome',
+  appName: 'Tianti AI',
+  welcome: 'Move ideas upward, one step at a time',
 
-  // Node Types
   nodes: {
     promptInput: 'Prompt Input',
     imageGenerator: 'Text to Image',
@@ -19,10 +17,9 @@ export const en: Translation = {
     characterNode: 'Character Design',
   },
 
-  // Actions
   actions: {
     doubleClick: 'Double Click',
-    canvasHint: 'Free creation on canvas, or check workflow templates',
+    canvasHint: 'Free creation on canvas, or start from the fixed workflow',
     generate: 'Generate',
     delete: 'Delete',
     copy: 'Copy',
@@ -33,7 +30,6 @@ export const en: Translation = {
     confirm: 'Confirm',
   },
 
-  // Context Menu
   contextMenu: {
     createNode: 'Create New Node',
     copyNode: 'Copy Node',
@@ -44,7 +40,6 @@ export const en: Translation = {
     deleteGroup: 'Delete Group',
   },
 
-  // Settings
   settings: {
     language: 'Language',
     chinese: '中文',

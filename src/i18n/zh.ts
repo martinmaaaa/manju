@@ -1,9 +1,7 @@
 export const zh = {
-  // App Name
-  appName: 'HahaHome',
-  welcome: '人人可用的短剧生产力',
+  appName: '添梯',
+  welcome: '把灵感一步一步抬上去',
 
-  // Node Types
   nodes: {
     promptInput: '创意描述',
     imageGenerator: '文字生图',
@@ -17,10 +15,9 @@ export const zh = {
     characterNode: '角色设计',
   },
 
-  // Actions
   actions: {
     doubleClick: '双击',
-    canvasHint: '画布自由生成，或查看工作流模板',
+    canvasHint: '自由创建你的画布，或先查看固定工作流',
     generate: '生成',
     delete: '删除',
     copy: '复制',
@@ -31,7 +28,6 @@ export const zh = {
     confirm: '确认',
   },
 
-  // Context Menu
   contextMenu: {
     createNode: '创建新节点',
     copyNode: '复制节点',
@@ -42,7 +38,6 @@ export const zh = {
     deleteGroup: '删除分组',
   },
 
-  // Settings
   settings: {
     language: '语言',
     chinese: '中文',

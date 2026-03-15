@@ -5,6 +5,10 @@ function createProjectId() {
   return `proj_${randomUUID().replace(/-/g, '')}`;
 }
 
+function createJimengJobId() {
+  return `jimeng_${randomUUID().replace(/-/g, '')}`;
+}
+
 function createEntityId() {
   return randomUUID().replace(/-/g, '');
 }
@@ -19,6 +23,10 @@ function asObject(value) {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function asOptionalIsoString(value) {
+  return value ? toIsoString(value) : undefined;
 }
 
 function appendUniqueValue(values, value) {
@@ -62,6 +70,44 @@ function mapConnection(row) {
   };
 }
 
+function mapJimengReferenceFile(file, includePath = false) {
+  const mapped = {
+    originalname: typeof file?.originalname === 'string' ? file.originalname : '',
+    mimetype: typeof file?.mimetype === 'string' ? file.mimetype : '',
+    size: Number(file?.size ?? 0),
+  };
+
+  if (includePath && typeof file?.path === 'string') {
+    return {
+      ...mapped,
+      path: file.path,
+    };
+  }
+
+  return mapped;
+}
+
+function mapJimengJob(row, { includeReferencePaths = false } = {}) {
+  return {
+    id: row.id,
+    prompt: row.prompt,
+    status: row.status,
+    phase: row.phase,
+    progress: Number(row.progress ?? 0),
+    error: row.error ?? undefined,
+    videoUrl: row.result_video_url ?? undefined,
+    referenceFiles: asArray(row.reference_files).map((file) =>
+      mapJimengReferenceFile(file, includeReferencePaths),
+    ),
+    metadata: asObject(row.metadata),
+    attempts: Number(row.attempts ?? 0),
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at),
+    started_at: asOptionalIsoString(row.started_at),
+    completed_at: asOptionalIsoString(row.completed_at),
+  };
+}
+
 async function withTransaction(callback) {
   const pool = getPool();
   const client = await pool.connect();
@@ -94,6 +140,18 @@ async function getNodeRow(client, id) {
   const result = await client.query(
     `SELECT id, project_id, type, title, x, y, width, height, status, data, inputs, created_at, updated_at
      FROM nodes
+     WHERE id = $1`,
+    [id],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function getJimengJobRow(client, id) {
+  const result = await client.query(
+    `SELECT id, prompt, status, phase, progress, error, result_video_url, reference_files, metadata, attempts,
+            created_at, updated_at, started_at, completed_at
+     FROM jimeng_jobs
      WHERE id = $1`,
     [id],
   );
@@ -205,14 +263,14 @@ export async function getProjectById(id) {
   };
 }
 
-export async function createProject(title) {
+export async function createProject(title, settings = {}) {
   const pool = getPool();
   const id = createProjectId();
   const result = await pool.query(
     `INSERT INTO projects (id, title, settings, groups)
-     VALUES ($1, $2, '{}'::jsonb, '[]'::jsonb)
+     VALUES ($1, $2, $3::jsonb, '[]'::jsonb)
      RETURNING id, title, settings, created_at, updated_at`,
-    [id, title],
+    [id, title, JSON.stringify(settings)],
   );
 
   return mapProjectSummary(result.rows[0]);
@@ -473,5 +531,206 @@ export async function deleteConnectionById(id) {
     await client.query('DELETE FROM connections WHERE id = $1', [id]);
     await removeInputFromNode(client, existing.to_node, existing.from_node);
     await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [existing.project_id]);
+  });
+}
+
+export async function createJimengJob(payload) {
+  const pool = getPool();
+  const id = payload.id ?? createJimengJobId();
+  const referenceFiles = asArray(payload.referenceFiles).map((file) => ({
+    path: file.path,
+    mimetype: file.mimetype,
+    originalname: file.originalname,
+    size: Number(file.size ?? 0),
+  }));
+  const metadata = asObject(payload.metadata);
+
+  const result = await pool.query(
+    `INSERT INTO jimeng_jobs (
+      id, prompt, status, phase, progress, reference_files, metadata
+    ) VALUES (
+      $1, $2, 'QUEUED', 'QUEUED', 0, $3::jsonb, $4::jsonb
+    )
+    RETURNING id, prompt, status, phase, progress, error, result_video_url, reference_files, metadata, attempts,
+              created_at, updated_at, started_at, completed_at`,
+    [id, String(payload.prompt || '').trim(), JSON.stringify(referenceFiles), JSON.stringify(metadata)],
+  );
+
+  return mapJimengJob(result.rows[0]);
+}
+
+export async function getJimengJobById(id, options = {}) {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT id, prompt, status, phase, progress, error, result_video_url, reference_files, metadata, attempts,
+            created_at, updated_at, started_at, completed_at
+     FROM jimeng_jobs
+     WHERE id = $1`,
+    [id],
+  );
+
+  const row = result.rows[0];
+  return row ? mapJimengJob(row, options) : null;
+}
+
+export async function requeueRunningJimengJobs() {
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE jimeng_jobs
+     SET status = 'QUEUED',
+         phase = 'QUEUED',
+         progress = CASE
+           WHEN progress < 10 THEN progress
+           ELSE 10
+         END,
+         error = NULL,
+         updated_at = NOW()
+     WHERE status = 'RUNNING'
+     RETURNING id`,
+  );
+
+  return result.rowCount ?? 0;
+}
+
+export async function claimNextJimengJob() {
+  return withTransaction(async (client) => {
+    const selectResult = await client.query(
+      `SELECT id
+       FROM jimeng_jobs
+       WHERE status = 'QUEUED'
+       ORDER BY created_at ASC
+       LIMIT 1
+       FOR UPDATE SKIP LOCKED`,
+    );
+
+    const nextJob = selectResult.rows[0];
+    if (!nextJob) {
+      return null;
+    }
+
+    const result = await client.query(
+      `UPDATE jimeng_jobs
+       SET status = 'RUNNING',
+           phase = 'STARTING',
+           progress = CASE
+             WHEN progress < 5 THEN 5
+             ELSE progress
+           END,
+           attempts = attempts + 1,
+           started_at = COALESCE(started_at, NOW()),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, prompt, status, phase, progress, error, result_video_url, reference_files, metadata, attempts,
+                 created_at, updated_at, started_at, completed_at`,
+      [nextJob.id],
+    );
+
+    return mapJimengJob(result.rows[0], { includeReferencePaths: true });
+  });
+}
+
+export async function updateJimengJobProgress(id, updates = {}) {
+  return withTransaction(async (client) => {
+    const existing = await getJimengJobRow(client, id);
+    if (!existing) {
+      return null;
+    }
+
+    const nextMetadata = {
+      ...asObject(existing.metadata),
+      ...asObject(updates.metadata),
+    };
+
+    const result = await client.query(
+      `UPDATE jimeng_jobs
+       SET status = $2,
+           phase = $3,
+           progress = $4,
+           error = $5,
+           metadata = $6::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, prompt, status, phase, progress, error, result_video_url, reference_files, metadata, attempts,
+                 created_at, updated_at, started_at, completed_at`,
+      [
+        id,
+        updates.status ?? existing.status,
+        updates.phase ?? existing.phase,
+        Number(updates.progress ?? existing.progress ?? 0),
+        Object.prototype.hasOwnProperty.call(updates, 'error') ? (updates.error ?? null) : existing.error,
+        JSON.stringify(nextMetadata),
+      ],
+    );
+
+    return mapJimengJob(result.rows[0]);
+  });
+}
+
+export async function markJimengJobSucceeded(id, updates = {}) {
+  return withTransaction(async (client) => {
+    const existing = await getJimengJobRow(client, id);
+    if (!existing) {
+      return null;
+    }
+
+    const nextMetadata = {
+      ...asObject(existing.metadata),
+      ...asObject(updates.metadata),
+    };
+
+    const result = await client.query(
+      `UPDATE jimeng_jobs
+       SET status = 'SUCCEEDED',
+           phase = 'SUCCEEDED',
+           progress = 100,
+           error = NULL,
+           result_video_url = $2,
+           metadata = $3::jsonb,
+           completed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, prompt, status, phase, progress, error, result_video_url, reference_files, metadata, attempts,
+                 created_at, updated_at, started_at, completed_at`,
+      [id, updates.videoUrl ?? existing.result_video_url ?? null, JSON.stringify(nextMetadata)],
+    );
+
+    return mapJimengJob(result.rows[0]);
+  });
+}
+
+export async function markJimengJobFailed(id, updates = {}) {
+  return withTransaction(async (client) => {
+    const existing = await getJimengJobRow(client, id);
+    if (!existing) {
+      return null;
+    }
+
+    const nextMetadata = {
+      ...asObject(existing.metadata),
+      ...asObject(updates.metadata),
+    };
+
+    const result = await client.query(
+      `UPDATE jimeng_jobs
+       SET status = 'FAILED',
+           phase = $2,
+           progress = $3,
+           error = $4,
+           metadata = $5::jsonb,
+           completed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, prompt, status, phase, progress, error, result_video_url, reference_files, metadata, attempts,
+                 created_at, updated_at, started_at, completed_at`,
+      [
+        id,
+        updates.phase ?? 'FAILED',
+        Number(updates.progress ?? existing.progress ?? 0),
+        updates.error ?? existing.error ?? 'Jimeng job failed.',
+        JSON.stringify(nextMetadata),
+      ],
+    );
+
+    return mapJimengJob(result.rows[0]);
   });
 }
