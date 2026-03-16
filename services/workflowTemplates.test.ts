@@ -21,6 +21,18 @@ describe('workflowTemplates', () => {
     expect(jimengNode?.inputs).toHaveLength(2);
   });
 
+  it('builds unique ids across repeated graph creation', () => {
+    const firstGraph = buildPipelineGraph(DEFAULT_PROJECT_SETTINGS.pipelineTemplateId);
+    const secondGraph = buildPipelineGraph(DEFAULT_PROJECT_SETTINGS.pipelineTemplateId);
+    const firstIds = new Set([
+      ...firstGraph.nodes.map(node => node.id),
+      ...firstGraph.groups.map(group => group.id),
+    ]);
+
+    expect(secondGraph.nodes.some(node => firstIds.has(node.id))).toBe(false);
+    expect(secondGraph.groups.some(group => firstIds.has(group.id))).toBe(false);
+  });
+
   it('marks stages completed from node outputs', () => {
     const statuses = getPipelineStageStatuses([
       {

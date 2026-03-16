@@ -103,7 +103,7 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
                             <>
                         <div className="flex items-center justify-between px-1">
                             <div className="text-[10px] text-slate-500">
-                                鍗虫ⅵ褰撳墠椤甸潰浠呮敮鎸?2 寮犲浘鐗囧弬鑰冿紙棣栧笢 / 灏惧笢锛?
+                                即梦当前页面仅支持 2 张图片参考（首帧 / 尾帧）
                             </div>
                             <div className="text-[10px] text-slate-600">
                                 {jimengReferenceValidation.acceptedFiles.length}/2
@@ -1698,7 +1698,7 @@ export const BottomPanel: React.FC<BottomPanelContext> = (ctx) => {
                         {/* 生成视频按钮 */}
                         <div className="flex items-center justify-between px-1">
                             <div className="text-[10px] text-slate-500">
-                                鍗虫ⅵ褰撳墠椤甸潰浠呮敮鎸?2 寮犲浘鐗囧弬鑰冿紙棣栧笢 / 灏惧笢锛?
+                                即梦当前页面仅支持 2 张图片参考（首帧 / 尾帧）
                             </div>
                             <div className="text-[10px] text-slate-600">
                                 {jimengReferenceValidation.acceptedFiles.length}/2

@@ -1,4 +1,4 @@
-﻿import { chromium } from 'playwright';
+import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -229,8 +229,8 @@ class JimengService {
     async closeBlockingModal(page) {
         const closeSelectors = [
             '[class*="close-icon-wrapper"]',
-            'button[aria-label*="鍏抽棴"]',
-            'button[title*="鍏抽棴"]',
+            'button[aria-label*="关闭"]',
+            'button[title*="关闭"]',
         ];
 
         for (let attempt = 0; attempt < 3; attempt += 1) {

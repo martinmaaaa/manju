@@ -45,6 +45,65 @@ export interface WorkflowAssetSummary {
   style: number;
 }
 
+export interface WorkflowAssetBatchTemplate {
+  id: string;
+  name: string;
+  assetIds: string[];
+  autoApplyToNewEpisodes: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowAssetBatchTemplateSuggestion {
+  key: string;
+  name: string;
+  assetIds: string[];
+  reason: string;
+  autoApplyToNewEpisodes: boolean;
+}
+
+export interface WorkflowAssetBatchTemplateTarget {
+  key: string;
+  name: string;
+  reason: string;
+  templateId?: string;
+  autoApplyToNewEpisodes: boolean;
+}
+
+export interface WorkflowSeriesNextAction {
+  key:
+    | 'create_series_assets'
+    | 'organize_asset_templates'
+    | 'create_episodes'
+    | 'open_episode_script'
+    | 'open_episode_assets'
+    | 'open_episode_storyboard'
+    | 'open_episode_prompt'
+    | 'open_episode_video'
+    | 'materialize_series';
+  label: string;
+  description: string;
+  episodeId?: string;
+  stageId?: string;
+}
+
+export interface WorkflowSeriesOverview {
+  seriesStageCount: number;
+  seriesCompletedStageCount: number;
+  plannedEpisodeCount: number;
+  createdEpisodeCount: number;
+  scriptCompletedEpisodeCount: number;
+  assetCompletedEpisodeCount: number;
+  storyboardCompletedEpisodeCount: number;
+  promptCompletedEpisodeCount: number;
+  videoCompletedEpisodeCount: number;
+  autoApplyTemplateCount: number;
+  reusableAssetCount: number;
+  coveredAssetCount: number;
+  uncoveredAssetCount: number;
+  nextAction: WorkflowSeriesNextAction;
+}
+
 export interface WorkflowInstance {
   id: string;
   templateId: WorkflowTemplateId;
@@ -63,6 +122,7 @@ export interface WorkflowInstance {
     canvasMaterializationTemplateId?: string;
     preferredBindingMode?: WorkflowBindingMode;
     assetSummary?: Partial<WorkflowAssetSummary>;
+    assetBatchTemplates?: WorkflowAssetBatchTemplate[];
   };
 }
 

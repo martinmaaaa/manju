@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, RotateCcw, History, FolderHeart, Edit, Trash2, Settings } from 'lucide-react';
+import type { PipelineTemplateId } from '../services/workflowTemplates';
 import { CanvasSnapshot, NodeType } from '../types';
 import { AddNodePanel } from './sidebar/AddNodePanel';
 import { HistoryPanel } from './sidebar/HistoryPanel';
@@ -8,6 +9,7 @@ import type { HistoryAssetItem, PanelId, SidebarContextMenuState } from './sideb
 
 interface SidebarDockProps {
     onAddNode: (type: NodeType) => void;
+    onAddWorkflowTemplate?: (templateId: PipelineTemplateId) => void;
     onUploadFiles?: () => void;
     onUndo: () => void;
     isChatOpen: boolean;
@@ -39,6 +41,7 @@ const isPanelId = (id: string): id is PanelId => PANEL_IDS.includes(id as PanelI
 
 export const SidebarDock: React.FC<SidebarDockProps> = ({
     onAddNode,
+    onAddWorkflowTemplate,
     onUploadFiles,
     onUndo,
     assetHistory,
@@ -115,6 +118,13 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
         }
     };
 
+    const handleAddWorkflowTemplateFromPanel = (templateId: PipelineTemplateId) => {
+        onAddWorkflowTemplate?.(templateId);
+        if (!pinnedPanel) {
+            setActivePanel(null);
+        }
+    };
+
     const handleUploadFromPanel = () => {
         onUploadFiles?.();
         if (!pinnedPanel) {
@@ -163,6 +173,7 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
         return (
             <AddNodePanel
                 onAddNode={handleAddNodeFromPanel}
+                onAddWorkflowTemplate={handleAddWorkflowTemplateFromPanel}
                 onUploadFiles={handleUploadFromPanel}
                 onClose={closePanel}
             />

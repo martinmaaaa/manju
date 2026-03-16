@@ -75,7 +75,7 @@ export function getJimengReferenceValidationMessage(result: JimengReferenceValid
     }
 
     if (result.overflowFiles.length > 0) {
-        return `即梦当前页面最多支持 ${JIMENG_MAX_REFERENCE_IMAGES} 张参考图（首帧/尾帧）。`;
+        return `即梦当前页面最多支持 ${JIMENG_MAX_REFERENCE_IMAGES} 张参考图（首帧 / 尾帧）。`;
     }
 
     return '';

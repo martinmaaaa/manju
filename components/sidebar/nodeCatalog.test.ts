@@ -3,6 +3,14 @@ import { NodeType } from '../../types';
 import { GENERIC_CANVAS_NODE_TYPES, GENERIC_CANVAS_WORKFLOW_ITEMS } from './nodeCatalog';
 
 describe('generic canvas workflow catalog', () => {
+    it('offers a full manju workflow entry for one-click canvas prefill', () => {
+        const manjuWorkflowItem = GENERIC_CANVAS_WORKFLOW_ITEMS.find((item) => item.id === 'manju-workflow');
+
+        expect(manjuWorkflowItem).toBeDefined();
+        expect(manjuWorkflowItem?.workflowTemplateId).toBe('short-drama-standard');
+        expect(manjuWorkflowItem?.type).toBeUndefined();
+    });
+
     it('keeps the canvas add menu focused on generic workflows', () => {
         expect(GENERIC_CANVAS_NODE_TYPES).toEqual([
             NodeType.PROMPT_INPUT,

@@ -437,11 +437,12 @@ export function buildPipelineGraph(templateId: PipelineTemplateId): {
   const graph = TEMPLATE_GRAPHS[templateId];
   const stageMap = new Map(STAGE_DEFINITIONS.map(stage => [stage.id, stage]));
   const timestamp = Date.now();
+  const seed = `${timestamp}-${Math.floor(Math.random() * 10000)}`;
   const nodeIdByKey = new Map<string, string>();
   let sequence = 0;
 
   const nodes = graph.nodes.map((definition) => {
-    const id = `n-${timestamp}-${sequence++}`;
+    const id = `n-${seed}-${sequence++}`;
     nodeIdByKey.set(definition.key, id);
 
     return {
@@ -491,7 +492,7 @@ export function buildPipelineGraph(templateId: PipelineTemplateId): {
     const stage = stageMap.get(stageId)!;
 
     return {
-      id: `g-${timestamp}-${index}`,
+      id: `g-${seed}-${index}`,
       title: stage.title,
       x: minX - paddingX,
       y: minY - paddingY,

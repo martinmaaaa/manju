@@ -54,16 +54,21 @@ import {
 } from './services/workflowTemplates';
 import { WORKFLOW_TEMPLATES } from './services/workflow/registry';
 import {
-  appendWorkflowAsset,
+  appendWorkflowAssetAndApplySuggestedTemplates,
   appendWorkflowAssetVersion,
+  appendEpisodeInstanceToSeries,
+  appendEpisodeInstancesToSeries,
   bindAssetToEpisode,
-  createEpisodeInstance,
-  createEpisodeInstances,
   createWorkflowInstance,
   normalizeWorkflowProjectState,
+  removeSeriesAssetBatchTemplate,
   setActiveEpisode,
+  syncAssetBindingsForEpisodes,
+  syncMultipleAssetBindingsForEpisodes,
   unbindAssetFromEpisode,
+  upsertSeriesAssetBatchTemplates,
   updateSeriesWorkflowSettings,
+  upsertSeriesAssetBatchTemplate,
   updateWorkflowStageState,
   upsertContinuityState,
   withWorkflowProjectState,
@@ -104,6 +109,85 @@ const SPRING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const SNAP_THRESHOLD = 8; // Pixels for magnetic snap
 const COLLISION_PADDING = 24; // Spacing when nodes bounce off each other
 type SaveIndicatorState = 'idle' | 'saving' | 'saved' | 'error' | 'local';
+
+function getCanvasGraphBounds(nodes: AppNode[], groups: Group[]): {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+} {
+  const boxes: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
+
+  if (groups.length > 0) {
+    boxes.push(...groups.map(group => ({
+      minX: group.x,
+      minY: group.y,
+      maxX: group.x + group.width,
+      maxY: group.y + group.height,
+    })));
+  }
+
+  if (nodes.length > 0) {
+    boxes.push(...nodes.map(node => {
+      const width = node.width ?? 420;
+      const height = node.height ?? getApproxNodeHeight(node);
+
+      return {
+        minX: node.x,
+        minY: node.y,
+        maxX: node.x + width,
+        maxY: node.y + height,
+      };
+    }));
+  }
+
+  if (boxes.length === 0) {
+    return {
+      minX: 0,
+      minY: 0,
+      maxX: 0,
+      maxY: 0,
+      width: 0,
+      height: 0,
+    };
+  }
+
+  const minX = Math.min(...boxes.map(box => box.minX));
+  const minY = Math.min(...boxes.map(box => box.minY));
+  const maxX = Math.max(...boxes.map(box => box.maxX));
+  const maxY = Math.max(...boxes.map(box => box.maxY));
+
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+}
+
+function offsetCanvasGraph(
+  graph: ReturnType<typeof buildPipelineGraph>,
+  offsetX: number,
+  offsetY: number,
+): ReturnType<typeof buildPipelineGraph> {
+  return {
+    nodes: graph.nodes.map(node => ({
+      ...node,
+      x: node.x + offsetX,
+      y: node.y + offsetY,
+    })),
+    connections: graph.connections,
+    groups: graph.groups.map(group => ({
+      ...group,
+      x: group.x + offsetX,
+      y: group.y + offsetY,
+    })),
+  };
+}
 
 /**
  * 保存视频到服务器数据库
@@ -896,6 +980,52 @@ export const App = () => {
     setSelectedCanvasSnapshotId,
   ]);
 
+  const handleAddWorkflowTemplateToCanvas = useCallback((templateId: PipelineTemplateId) => {
+    saveHistory();
+
+    const graph = buildPipelineGraph(templateId);
+    const graphBounds = getCanvasGraphBounds(graph.nodes, graph.groups);
+    const existingBounds = getCanvasGraphBounds(nodes, groups);
+    const viewportCenterX = (-canvas.pan.x + window.innerWidth / 2) / canvas.scale;
+    const viewportCenterY = (-canvas.pan.y + window.innerHeight / 2) / canvas.scale;
+    const hasCanvasContent = nodes.length > 0 || groups.length > 0;
+
+    const desiredMinX = hasCanvasContent
+      ? Math.max(viewportCenterX - graphBounds.width / 2, existingBounds.minX)
+      : viewportCenterX - graphBounds.width / 2;
+    const desiredMinY = hasCanvasContent
+      ? existingBounds.maxY + 180
+      : viewportCenterY - graphBounds.height / 2;
+
+    const placedGraph = offsetCanvasGraph(
+      graph,
+      desiredMinX - graphBounds.minX,
+      desiredMinY - graphBounds.minY,
+    );
+
+    setNodes(previous => [...previous, ...placedGraph.nodes]);
+    setConnections(previous => [...previous, ...placedGraph.connections]);
+    setGroups(previous => [...previous, ...placedGraph.groups]);
+    setSelectedNodeIds([]);
+    setSelectedCanvasSnapshotId(null);
+    setSelectedGroupId(null);
+    setCurrentView('canvas');
+  }, [
+    canvas.pan.x,
+    canvas.pan.y,
+    canvas.scale,
+    groups,
+    nodes,
+    saveHistory,
+    setConnections,
+    setCurrentView,
+    setGroups,
+    setNodes,
+    setSelectedCanvasSnapshotId,
+    setSelectedGroupId,
+    setSelectedNodeIds,
+  ]);
+
   const handleCreateWorkflow = useCallback(async (templateId: WorkflowTemplateId) => {
     if (!activeProject) return;
 
@@ -925,19 +1055,14 @@ export const App = () => {
   const handleAddEpisodeWorkflow = useCallback(async (seriesInstanceId: string) => {
     if (!activeProject) return;
 
-    const nextEpisode = createEpisodeInstance(workflowProjectState, seriesInstanceId);
-    const nextWorkflowState: WorkflowProjectState = {
-      ...workflowProjectState,
-      instances: workflowProjectState.instances.map(instance => (
-        instance.id === seriesInstanceId
-          ? { ...instance, updatedAt: new Date().toISOString() }
-          : instance
-      )),
-      activeSeriesId: seriesInstanceId,
-      activeEpisodeId: nextEpisode.id,
-    };
+    const next = appendEpisodeInstanceToSeries(workflowProjectState, seriesInstanceId);
+    if (!next.episode) return;
 
-    nextWorkflowState.instances = [nextEpisode, ...nextWorkflowState.instances];
+    const nextWorkflowState: WorkflowProjectState = {
+      ...next.state,
+      activeSeriesId: seriesInstanceId,
+      activeEpisodeId: next.episode.id,
+    };
 
     const nextSettings = withWorkflowProjectState(
       mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
@@ -950,7 +1075,8 @@ export const App = () => {
   const handleBulkAddEpisodesWorkflow = useCallback(async (seriesInstanceId: string, count: number) => {
     if (!activeProject) return;
 
-    const nextEpisodes = createEpisodeInstances(workflowProjectState, seriesInstanceId, count);
+    const next = appendEpisodeInstancesToSeries(workflowProjectState, seriesInstanceId, count);
+    const nextEpisodes = next.episodes;
     if (nextEpisodes.length === 0) return;
 
     const activeEpisode = workflowProjectState.activeEpisodeId
@@ -959,15 +1085,7 @@ export const App = () => {
     const shouldPreserveActiveEpisode = activeEpisode?.parentInstanceId === seriesInstanceId;
 
     const nextWorkflowState: WorkflowProjectState = {
-      ...workflowProjectState,
-      instances: [
-        ...nextEpisodes,
-        ...workflowProjectState.instances.map(instance => (
-          instance.id === seriesInstanceId
-            ? { ...instance, updatedAt: new Date().toISOString() }
-            : instance
-        )),
-      ],
+      ...next.state,
       activeSeriesId: seriesInstanceId,
       activeEpisodeId: shouldPreserveActiveEpisode ? workflowProjectState.activeEpisodeId : nextEpisodes[0].id,
     };
@@ -1008,24 +1126,10 @@ export const App = () => {
       return;
     }
 
-    saveHistory();
-    const graph = buildPipelineGraph(templateId);
-    setNodes(graph.nodes);
-    setConnections(graph.connections);
-    setGroups(graph.groups);
-    setSelectedNodeIds([]);
-    setSelectedCanvasSnapshotId(null);
-    setSelectedGroupId(null);
-    setCurrentView('canvas');
+    handleAddWorkflowTemplateToCanvas(templateId);
   }, [
-    saveHistory,
-    setConnections,
+    handleAddWorkflowTemplateToCanvas,
     setCurrentView,
-    setGroups,
-    setNodes,
-    setSelectedCanvasSnapshotId,
-    setSelectedGroupId,
-    setSelectedNodeIds,
     workflowProjectState.instances,
   ]);
 
@@ -1045,16 +1149,34 @@ export const App = () => {
     type: WorkflowAssetType,
     name: string,
     tags: string[],
+    options?: {
+      seriesInstanceId?: string;
+      autoApplySuggestedTemplates?: boolean;
+    },
   ) => {
     if (!activeProject) return;
 
-    const nextWorkflowState = appendWorkflowAsset(workflowProjectState, activeProject.id, type, name, tags);
+    const next = appendWorkflowAssetAndApplySuggestedTemplates(
+      workflowProjectState,
+      activeProject.id,
+      options?.seriesInstanceId,
+      type,
+      name,
+      tags,
+      options?.autoApplySuggestedTemplates ?? false,
+    );
     const nextSettings = withWorkflowProjectState(
       mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
-      nextWorkflowState,
+      next.state,
     );
 
     await persistProjectSettings(nextSettings);
+    return {
+      assetId: next.asset.id,
+      assetName: next.asset.name,
+      appliedTemplateNames: next.appliedTargets.map(target => target.name),
+      suggestedTargets: next.suggestedTargets,
+    };
   }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
 
   const handleCreateWorkflowAssetVersion = useCallback(async (
@@ -1080,6 +1202,122 @@ export const App = () => {
     if (!activeProject) return;
 
     const nextWorkflowState = bindAssetToEpisode(workflowProjectState, episodeId, assetId, mode);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleSyncAssetCoverage = useCallback(async (
+    assetId: string,
+    scopedEpisodeIds: string[],
+    desiredEpisodeIds: string[],
+    mode: WorkflowBindingMode,
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = syncAssetBindingsForEpisodes(
+      workflowProjectState,
+      assetId,
+      scopedEpisodeIds,
+      desiredEpisodeIds,
+      mode,
+    );
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleBatchSyncAssetCoverage = useCallback(async (
+    assetIds: string[],
+    scopedEpisodeIds: string[],
+    desiredEpisodeIds: string[],
+    mode: WorkflowBindingMode,
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = syncMultipleAssetBindingsForEpisodes(
+      workflowProjectState,
+      assetIds,
+      scopedEpisodeIds,
+      desiredEpisodeIds,
+      mode,
+    );
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleSaveSeriesAssetBatchTemplate = useCallback(async (
+    seriesInstanceId: string,
+    name: string,
+    assetIds: string[],
+    templateId?: string,
+    autoApplyToNewEpisodes?: boolean,
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = upsertSeriesAssetBatchTemplate(
+      workflowProjectState,
+      seriesInstanceId,
+      {
+        id: templateId,
+        name,
+        assetIds,
+        autoApplyToNewEpisodes,
+      },
+    );
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleSaveSeriesAssetBatchTemplates = useCallback(async (
+    seriesInstanceId: string,
+    templates: Array<{
+      id?: string;
+      name: string;
+      assetIds: string[];
+      autoApplyToNewEpisodes?: boolean;
+    }>,
+  ) => {
+    if (!activeProject || templates.length === 0) return;
+
+    const nextWorkflowState = upsertSeriesAssetBatchTemplates(
+      workflowProjectState,
+      seriesInstanceId,
+      templates,
+    );
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleDeleteSeriesAssetBatchTemplate = useCallback(async (
+    seriesInstanceId: string,
+    templateId: string,
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = removeSeriesAssetBatchTemplate(
+      workflowProjectState,
+      seriesInstanceId,
+      templateId,
+    );
     const nextSettings = withWorkflowProjectState(
       mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
       nextWorkflowState,
@@ -2196,6 +2434,11 @@ export const App = () => {
           onCreateAsset={handleCreateWorkflowAsset}
           onCreateAssetVersion={handleCreateWorkflowAssetVersion}
           onBindAsset={handleBindEpisodeAsset}
+          onSyncAssetCoverage={handleSyncAssetCoverage}
+          onBatchSyncAssetCoverage={handleBatchSyncAssetCoverage}
+          onSaveSeriesAssetBatchTemplate={handleSaveSeriesAssetBatchTemplate}
+          onSaveSeriesAssetBatchTemplates={handleSaveSeriesAssetBatchTemplates}
+          onDeleteSeriesAssetBatchTemplate={handleDeleteSeriesAssetBatchTemplate}
           onUnbindAsset={handleUnbindEpisodeAsset}
           onUpdateContinuity={handleUpdateContinuityState}
           onUpdateStage={handleUpdateWorkflowStage}
@@ -2549,6 +2792,7 @@ export const App = () => {
 
       <SidebarDock
         onAddNode={addNode}
+        onAddWorkflowTemplate={handleAddWorkflowTemplateToCanvas}
         onUploadFiles={openAssetUploadPicker}
         onUndo={undo}
         isChatOpen={isChatOpen}
