@@ -2,17 +2,7 @@ import React from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { WorkflowBindingMode, WorkflowInstance } from '../../services/workflow/domain/types';
 import { countCompletedStages } from '../../services/workflow/runtime/projectState';
-
-type PreferredBindingMode = Extract<WorkflowBindingMode, 'follow_latest' | 'pinned'>;
-
-const bindingModeLabels: Record<PreferredBindingMode, string> = {
-  follow_latest: '跟随最新',
-  pinned: '固定版本',
-};
-
-function toPreferredBindingMode(mode?: WorkflowBindingMode): PreferredBindingMode {
-  return mode === 'pinned' ? 'pinned' : 'follow_latest';
-}
+import { bindingModeLabels, toPreferredBindingMode } from './seriesShared';
 
 function formatUpdatedAt(value: string): string {
   return new Date(value).toLocaleString('zh-CN', {

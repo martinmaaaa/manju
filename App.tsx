@@ -69,6 +69,7 @@ import {
   normalizeWorkflowProjectState,
   removeSeriesAssetBatchTemplate,
   setActiveEpisode,
+  setActiveSeries,
   syncAssetBindingsForEpisodes,
   syncMultipleAssetBindingsForEpisodes,
   unbindAssetFromEpisode,
@@ -1104,6 +1105,20 @@ export const App = () => {
       activeSeriesId: seriesInstanceId,
       activeEpisodeId: shouldPreserveActiveEpisode ? workflowProjectState.activeEpisodeId : nextEpisodes[0].id,
     };
+
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleFocusSeriesWorkflow = useCallback(async (seriesInstanceId: string) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = setActiveSeries(workflowProjectState, seriesInstanceId);
+    if (nextWorkflowState === workflowProjectState) return;
 
     const nextSettings = withWorkflowProjectState(
       mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
@@ -2450,6 +2465,7 @@ export const App = () => {
           onOpenCanvas={() => setCurrentView('canvas')}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onCreateWorkflow={handleCreateWorkflow}
+          onFocusSeries={handleFocusSeriesWorkflow}
           onAddEpisode={handleAddEpisodeWorkflow}
           onBulkAddEpisodes={handleBulkAddEpisodesWorkflow}
           onUpdateSeriesSettings={handleUpdateSeriesWorkflowSettings}
@@ -2522,6 +2538,8 @@ export const App = () => {
             onBulkAddEpisodes={handleBulkAddEpisodesWorkflow}
             onOpenEpisodeWorkspace={handleOpenEpisodeWorkspace}
             onMaterializeWorkflow={handleMaterializeWorkflow}
+            onFocusSeries={handleFocusSeriesWorkflow}
+            onUpdateSeriesSettings={handleUpdateSeriesWorkflowSettings}
           />
         </ProjectWorkspaceLayout>
         <SettingsPanel

@@ -496,6 +496,31 @@ export function getSeriesInstances(state: WorkflowProjectState): WorkflowInstanc
   return state.instances.filter(instance => instance.scope === 'series');
 }
 
+export function setActiveSeries(
+  state: WorkflowProjectState,
+  seriesInstanceId: string,
+): WorkflowProjectState {
+  const series = state.instances.find(instance => instance.id === seriesInstanceId && instance.scope === 'series');
+  if (!series) return state;
+
+  const activeEpisode = state.activeEpisodeId
+    ? state.instances.find(instance => instance.id === state.activeEpisodeId)
+    : null;
+  const nextEpisodeId = activeEpisode?.parentInstanceId === seriesInstanceId
+    ? activeEpisode.id
+    : getEpisodeInstances(state, seriesInstanceId)[0]?.id ?? null;
+
+  if (state.activeSeriesId === seriesInstanceId && state.activeEpisodeId === nextEpisodeId) {
+    return state;
+  }
+
+  return {
+    ...state,
+    activeSeriesId: seriesInstanceId,
+    activeEpisodeId: nextEpisodeId,
+  };
+}
+
 export function getAutoApplySeriesAssetBatchTemplates(
   state: WorkflowProjectState,
   seriesInstanceId: string,

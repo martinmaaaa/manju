@@ -11,6 +11,7 @@ interface ContinuityPanelProps {
   assets: WorkflowAsset[];
   bindings: EpisodeAssetBinding[];
   continuityStates: ContinuityState[];
+  compact?: boolean;
   onUpdateContinuity: (
     workflowInstanceId: string,
     subjectType: ContinuityState['subjectType'],
@@ -36,6 +37,7 @@ export const ContinuityPanel: React.FC<ContinuityPanelProps> = ({
   assets,
   bindings,
   continuityStates,
+  compact = false,
   onUpdateContinuity,
 }) => {
   const trackableBindings = useMemo(
@@ -81,7 +83,7 @@ export const ContinuityPanel: React.FC<ContinuityPanelProps> = ({
   }, [trackableBindings]);
 
   return (
-    <section className="tianti-surface rounded-[28px] p-6">
+    <section className={`tianti-surface ${compact ? 'rounded-[28px] p-5' : 'rounded-[28px] p-6'}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-white">
           <Clock3 className="h-4 w-4 text-cyan-200" />

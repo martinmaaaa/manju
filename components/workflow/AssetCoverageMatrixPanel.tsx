@@ -7,18 +7,8 @@ import type {
   WorkflowInstance,
 } from '../../services/workflow/domain/types';
 import { getSeriesAssetCoverage } from '../../services/workflow/runtime/projectState';
-
-type PreferredBindingMode = Extract<WorkflowBindingMode, 'follow_latest' | 'pinned'>;
+import { bindingModeLabels, type PreferredBindingMode, toPreferredBindingMode } from './seriesShared';
 type SeriesAssetCoverageEntry = ReturnType<typeof getSeriesAssetCoverage>[number];
-
-const bindingModeLabels: Record<PreferredBindingMode, string> = {
-  follow_latest: '跟随最新',
-  pinned: '固定版本',
-};
-
-function toPreferredBindingMode(mode?: WorkflowBindingMode): PreferredBindingMode {
-  return mode === 'pinned' ? 'pinned' : 'follow_latest';
-}
 
 const assetTypeLabels: Record<WorkflowAssetType, string> = {
   character: '人物',
