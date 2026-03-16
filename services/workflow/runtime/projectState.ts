@@ -1355,6 +1355,21 @@ export function updateWorkflowStageState(
   };
 }
 
+export function batchUpdateWorkflowStageStates(
+  state: WorkflowProjectState,
+  workflowInstanceIds: string[],
+  stageId: string,
+  patch: Partial<WorkflowStageState>,
+): WorkflowProjectState {
+  const uniqueWorkflowInstanceIds = Array.from(new Set(workflowInstanceIds));
+  if (uniqueWorkflowInstanceIds.length === 0) return state;
+
+  return uniqueWorkflowInstanceIds.reduce(
+    (draftState, workflowInstanceId) => updateWorkflowStageState(draftState, workflowInstanceId, stageId, patch),
+    state,
+  );
+}
+
 export function upsertContinuityState(
   state: WorkflowProjectState,
   workflowInstanceId: string,

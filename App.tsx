@@ -77,6 +77,7 @@ import {
   updateSeriesWorkflowSettings,
   upsertSeriesAssetBatchTemplate,
   updateWorkflowStageState,
+  batchUpdateWorkflowStageStates,
   upsertContinuityState,
   withWorkflowProjectState,
 } from './services/workflow/runtime/projectState';
@@ -1416,6 +1417,31 @@ export const App = () => {
     await persistProjectSettings(nextSettings);
   }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
 
+  const handleBatchUpdateWorkflowStages = useCallback(async (
+    workflowInstanceIds: string[],
+    stageId: string,
+    patch: {
+      status?: WorkflowStageStatus;
+      formData?: Record<string, unknown>;
+      outputs?: Record<string, unknown>;
+    },
+  ) => {
+    if (!activeProject || workflowInstanceIds.length === 0) return;
+
+    const nextWorkflowState = batchUpdateWorkflowStageStates(
+      workflowProjectState,
+      workflowInstanceIds,
+      stageId,
+      patch,
+    );
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
   // 防抖版本的历史保存（1秒内多次调用只保存一次）
   const debouncedSaveHistoryRef = useRef<NodeJS.Timeout | null>(null);
   const debouncedSaveHistory = useCallback(() => {
@@ -2540,6 +2566,7 @@ export const App = () => {
             onMaterializeWorkflow={handleMaterializeWorkflow}
             onFocusSeries={handleFocusSeriesWorkflow}
             onUpdateSeriesSettings={handleUpdateSeriesWorkflowSettings}
+            onBatchUpdateStages={handleBatchUpdateWorkflowStages}
           />
         </ProjectWorkspaceLayout>
         <SettingsPanel
