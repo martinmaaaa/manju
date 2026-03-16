@@ -73,9 +73,9 @@ describe('workflowTemplates', () => {
     expect(statuses.find(stage => stage.id === 'character')?.state).toBe('not_started');
   });
 
-  it('normalizes settings and preserves old canvas projects', () => {
+  it('normalizes settings and defaults projects to workflow center', () => {
     expect(normalizeProjectSettings(undefined)).toEqual(DEFAULT_PROJECT_SETTINGS);
-    expect(resolveProjectEntryView(undefined, true)).toBe('canvas');
+    expect(resolveProjectEntryView(undefined, true)).toBe('pipeline');
     expect(resolveProjectEntryView(undefined, false)).toBe('pipeline');
   });
 });

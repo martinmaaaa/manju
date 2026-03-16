@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, ChevronRight, Film, FolderHeart, Sparkles, Wand2 } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronRight,
+  Film,
+  FolderHeart,
+  Sparkles,
+  Wand2,
+} from 'lucide-react';
 import type {
   EpisodeAssetBinding,
   WorkflowAsset,
@@ -38,7 +45,12 @@ const stageIcons: Record<string, React.ComponentType<{ className?: string }>> = 
   video: CheckCircle2,
 };
 
-const statusOptions: WorkflowStageStatus[] = ['not_started', 'in_progress', 'completed', 'error'];
+const statusOptions: WorkflowStageStatus[] = [
+  'not_started',
+  'in_progress',
+  'completed',
+  'error',
+];
 
 const statusLabels: Record<WorkflowStageStatus, string> = {
   not_started: '未开始',
@@ -47,16 +59,27 @@ const statusLabels: Record<WorkflowStageStatus, string> = {
   error: '异常',
 };
 
-const bindingModeOptions: Array<{ value: EditableBindingMode; label: string; hint: string }> = [
+const statusClassNames: Record<WorkflowStageStatus, string> = {
+  not_started: '',
+  in_progress: 'is-accent',
+  completed: 'is-success',
+  error: 'is-danger',
+};
+
+const bindingModeOptions: Array<{
+  value: EditableBindingMode;
+  label: string;
+  hint: string;
+}> = [
   {
     value: 'follow_latest',
     label: '跟随最新',
-    hint: '资产出新版本后，本集自动跟到最新版本',
+    hint: '资产有新版本时，本集会自动跟到最新版本。',
   },
   {
     value: 'pinned',
     label: '固定版本',
-    hint: '锁定当前版本，后续资产更新不自动变化',
+    hint: '锁定当前版本，后续资产更新不会自动变化。',
   },
 ];
 
@@ -64,6 +87,13 @@ const bindingModeLabels: Record<WorkflowBindingMode, string> = {
   follow_latest: '跟随最新',
   pinned: '固定版本',
   derived: '派生版本',
+};
+
+const assetTypeLabels: Record<WorkflowAsset['type'], string> = {
+  character: '人物',
+  scene: '场景',
+  prop: '道具',
+  style: '风格',
 };
 
 function normalizeEditableBindingMode(mode?: WorkflowBindingMode): EditableBindingMode {
@@ -80,34 +110,59 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
   onUpdateStage,
   onMaterializeWorkflow,
 }) => {
-  const [bindingModeDrafts, setBindingModeDrafts] = useState<Record<string, EditableBindingMode>>({});
-  const defaultBindingMode = normalizeEditableBindingMode(episode.metadata?.preferredBindingMode);
+  const [bindingModeDrafts, setBindingModeDrafts] = useState<
+    Record<string, EditableBindingMode>
+  >({});
+  const defaultBindingMode = normalizeEditableBindingMode(
+    episode.metadata?.preferredBindingMode,
+  );
 
-  const boundAssetIds = useMemo(() => new Set(bindings.map(binding => binding.assetId)), [bindings]);
-  const bindingByAssetId = useMemo(() => bindings.reduce<Record<string, EpisodeAssetBinding>>((accumulator, binding) => {
-    accumulator[binding.assetId] = binding;
-    return accumulator;
-  }, {}), [bindings]);
+  const boundAssetIds = useMemo(
+    () => new Set(bindings.map((binding) => binding.assetId)),
+    [bindings],
+  );
+  const bindingByAssetId = useMemo(
+    () =>
+      bindings.reduce<Record<string, EpisodeAssetBinding>>((accumulator, binding) => {
+        accumulator[binding.assetId] = binding;
+        return accumulator;
+      }, {}),
+    [bindings],
+  );
 
   const stageEntries = stageDefinitions
-    .map(stage => ({ definition: stage, state: episode.stageStates[stage.id] }))
-    .filter(item => item.state);
+    .map((stage) => ({ definition: stage, state: episode.stageStates[stage.id] }))
+    .filter((item) => item.state);
+  const completedStageCount = stageEntries.filter(
+    ({ state }) => state.status === 'completed',
+  ).length;
 
   return (
-    <section className="rounded-[32px] border border-white/10 bg-white/[0.04] p-8 shadow-2xl shadow-black/20 backdrop-blur-xl">
+    <section className="tianti-surface rounded-[32px] p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">单集工作区</div>
-          <h2 className="mt-3 text-3xl font-semibold">{episode.title}</h2>
+          <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">
+            Episode Workspace
+          </div>
+          <h2 className="mt-3 text-3xl font-semibold text-white">{episode.title}</h2>
           <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
             先推进本集阶段、资产绑定和连续性，再按需把整套执行链路投放到原始画布。
           </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <span className="tianti-chip is-accent">
+              阶段完成 {completedStageCount}/{stageEntries.length}
+            </span>
+            <span className="tianti-chip">当前绑定 {bindings.length} 个资产</span>
+            <span className="tianti-chip">
+              默认策略 {bindingModeLabels[defaultBindingMode]}
+            </span>
+          </div>
         </div>
 
         <button
           type="button"
           onClick={() => onMaterializeWorkflow(episode.id)}
-          className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/15 px-5 py-3 text-sm font-medium text-cyan-50 transition hover:bg-cyan-500/20"
+          className="tianti-button tianti-button-primary px-5 py-3 text-sm font-semibold"
         >
           整套投放到画布
           <ChevronRight size={16} />
@@ -121,63 +176,86 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
             const notes = typeof state.formData.notes === 'string' ? state.formData.notes : '';
 
             return (
-              <article key={definition.id} className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+              <article
+                key={definition.id}
+                className="tianti-surface-muted rounded-[24px] p-5"
+              >
                 <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <div className="rounded-2xl bg-white/5 p-3 text-cyan-200">
-                        <Icon className="h-5 w-5" />
+                  <div className="flex items-start gap-3">
+                    <div className="rounded-2xl bg-cyan-400/10 p-3 text-cyan-200">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold text-white">
+                        {definition.title}
                       </div>
-                      <div>
-                        <div className="text-lg font-semibold text-white">{definition.title}</div>
-                        <div className="mt-1 text-sm text-slate-400">{definition.summary}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-400">
+                        {definition.summary}
                       </div>
                     </div>
                   </div>
 
-                  <select
-                    value={state.status}
-                    onChange={(event) => onUpdateStage(episode.id, definition.id, {
-                      status: event.target.value as WorkflowStageStatus,
-                    })}
-                    className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white outline-none"
-                  >
-                    {statusOptions.map(status => (
-                      <option key={status} value={status}>
-                        {statusLabels[status]}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-3">
+                    <span className={`tianti-chip ${statusClassNames[state.status]}`}>
+                      {statusLabels[state.status]}
+                    </span>
+                    <select
+                      value={state.status}
+                      onChange={(event) =>
+                        onUpdateStage(episode.id, definition.id, {
+                          status: event.target.value as WorkflowStageStatus,
+                        })
+                      }
+                      className="tianti-control-pill px-4 py-2 text-sm"
+                    >
+                      {statusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {statusLabels[status]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 <textarea
                   value={notes}
-                  onChange={(event) => onUpdateStage(episode.id, definition.id, {
-                    formData: { notes: event.target.value },
-                  })}
+                  onChange={(event) =>
+                    onUpdateStage(episode.id, definition.id, {
+                      formData: { notes: event.target.value },
+                    })
+                  }
                   placeholder={`记录 ${definition.title} 阶段的输入、约束或备注`}
-                  className="mt-4 min-h-[108px] w-full rounded-[20px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-cyan-500/40"
+                  className="tianti-input mt-4 min-h-[112px] w-full px-4 py-3 text-sm leading-7"
                 />
               </article>
             );
           })}
         </div>
 
-        <div className="rounded-[24px] border border-white/10 bg-black/20 p-5">
-          <div className="text-xs uppercase tracking-[0.22em] text-white/45">资产绑定</div>
-          <div className="mt-3 text-sm leading-7 text-slate-300">
-            当前单集已绑定 {bindings.length} 个资产。可为每个资产单独选择“跟随最新”或“固定版本”。
+        <aside className="tianti-surface-muted rounded-[24px] p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs uppercase tracking-[0.22em] text-white/45">
+                Asset Binding
+              </div>
+              <div className="mt-2 text-lg font-semibold text-white">资产绑定</div>
+            </div>
+            <span className="tianti-chip">
+              默认 {bindingModeLabels[defaultBindingMode]}
+            </span>
           </div>
-          <div className="mt-3 rounded-[18px] border border-white/10 bg-white/[0.03] px-4 py-3 text-xs leading-6 text-slate-400">
-            本集默认绑定策略：{bindingModeLabels[defaultBindingMode]}。新绑定的资产会默认采用该策略，你也可以逐个改。
+
+          <div className="mt-3 rounded-[20px] border border-white/8 bg-black/20 px-4 py-4 text-sm leading-7 text-slate-300">
+            当前单集已绑定 {bindings.length} 个资产。每个资产都可以单独切换成“跟随最新”
+            或“固定版本”。
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
             {bindings.length === 0 ? (
-              <span className="text-sm text-slate-500">还没有绑定资产</span>
+              <span className="text-sm text-slate-500">还没有绑定资产。</span>
             ) : (
               bindings.map((binding) => {
-                const asset = assets.find(item => item.id === binding.assetId);
+                const asset = assets.find((item) => item.id === binding.assetId);
                 if (!asset) return null;
 
                 return (
@@ -185,7 +263,7 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
                     key={binding.id}
                     type="button"
                     onClick={() => onUnbindAsset(binding.id)}
-                    className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[11px] text-cyan-100 transition hover:border-red-500/30 hover:bg-red-500/15"
+                    className="tianti-button tianti-button-ghost px-3 py-1.5 text-xs"
                   >
                     {asset.name} · {bindingModeLabels[binding.mode]}
                   </button>
@@ -195,22 +273,23 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
           </div>
 
           <div className="mt-6 space-y-3">
-            {assets.map(asset => {
+            {assets.map((asset) => {
               const binding = bindingByAssetId[asset.id];
               const selectedMode = binding
                 ? normalizeEditableBindingMode(binding.mode)
-                : (bindingModeDrafts[asset.id] ?? defaultBindingMode);
+                : bindingModeDrafts[asset.id] ?? defaultBindingMode;
 
               return (
-                <div
+                <article
                   key={asset.id}
-                  className="rounded-[18px] border border-white/10 bg-white/[0.03] px-4 py-4"
+                  className="tianti-surface rounded-[20px] p-4"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-white">{asset.name}</div>
+                      <div className="text-sm font-semibold text-white">{asset.name}</div>
                       <div className="mt-1 text-xs text-slate-400">
-                        {asset.type}{asset.tags.length > 0 ? ` · ${asset.tags.join(' / ')}` : ''}
+                        {assetTypeLabels[asset.type]}
+                        {asset.tags.length > 0 ? ` · ${asset.tags.join(' / ')}` : ''}
                       </div>
                       {binding && (
                         <div className="mt-2 text-xs text-cyan-200">
@@ -229,11 +308,19 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
 
                         onBindAsset(episode.id, asset.id, selectedMode);
                       }}
-                      className={`rounded-full px-3 py-1.5 text-xs transition ${
+                      className={`tianti-button px-3 py-1.5 text-xs ${
                         boundAssetIds.has(asset.id)
-                          ? 'border border-red-500/30 bg-red-500/10 text-red-100 hover:bg-red-500/15'
-                          : 'border border-white/10 bg-white/5 text-slate-200 hover:border-cyan-500/30 hover:text-white'
+                          ? 'text-red-50'
+                          : 'tianti-button-secondary'
                       }`}
+                      style={
+                        boundAssetIds.has(asset.id)
+                          ? {
+                              borderColor: 'rgba(248, 113, 113, 0.22)',
+                              background: 'rgba(248, 113, 113, 0.12)',
+                            }
+                          : undefined
+                      }
                     >
                       {binding ? '解绑' : '绑定'}
                     </button>
@@ -244,30 +331,36 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
                       value={selectedMode}
                       onChange={(event) => {
                         const nextMode = event.target.value as EditableBindingMode;
-                        setBindingModeDrafts(current => ({ ...current, [asset.id]: nextMode }));
+                        setBindingModeDrafts((current) => ({
+                          ...current,
+                          [asset.id]: nextMode,
+                        }));
 
                         if (binding) {
                           onBindAsset(episode.id, asset.id, nextMode);
                         }
                       }}
-                      className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white outline-none"
+                      className="tianti-control-pill px-4 py-2 text-sm"
                     >
-                      {bindingModeOptions.map(option => (
+                      {bindingModeOptions.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
                       ))}
                     </select>
 
-                    <div className="text-xs text-slate-400">
-                      {bindingModeOptions.find(option => option.value === selectedMode)?.hint}
+                    <div className="text-xs leading-6 text-slate-400">
+                      {
+                        bindingModeOptions.find((option) => option.value === selectedMode)
+                          ?.hint
+                      }
                     </div>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
-        </div>
+        </aside>
       </div>
     </section>
   );

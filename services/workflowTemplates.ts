@@ -416,13 +416,10 @@ export function normalizeProjectSettings(
 
 export function resolveProjectEntryView(
   settings: Record<string, unknown> | null | undefined,
-  hasNodes: boolean,
+  _hasNodes: boolean,
 ): ProjectEditorMode {
-  if (settings?.editorMode === 'canvas' || settings?.editorMode === 'pipeline') {
-    return settings.editorMode;
-  }
-
-  return hasNodes ? 'canvas' : 'pipeline';
+  void settings;
+  return 'pipeline';
 }
 
 export function getPipelineTemplate(templateId?: PipelineTemplateId | null): PipelineTemplateDefinition {

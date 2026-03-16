@@ -9,9 +9,11 @@ import { create } from 'zustand';
 import type { ContextMenuState, CharacterProfile } from '../types';
 import type { VideoSource } from '../components/VideoEditor';
 
+export type AppView = 'projects' | 'pipeline' | 'assets' | 'episodes' | 'workspace' | 'canvas';
+
 interface UIState {
   // Application View
-  currentView: 'projects' | 'pipeline' | 'canvas';
+  currentView: AppView;
 
   // Modal states
   isChatOpen: boolean;
@@ -39,7 +41,7 @@ interface UIState {
   imageToCrop: string | null;
 
   // Actions
-  setCurrentView: (v: 'projects' | 'pipeline' | 'canvas') => void;
+  setCurrentView: (v: AppView) => void;
   setIsChatOpen: (v: boolean) => void;
   setIsSketchEditorOpen: (v: boolean) => void;
   setIsMultiFrameOpen: (v: boolean) => void;

@@ -44,13 +44,18 @@ import { getWorkflowTemplate } from '../../services/workflow/registry';
 import { AssetCenterPanel } from './panels/AssetCenterPanel';
 import { ContinuityPanel } from './panels/ContinuityPanel';
 import { EpisodeWorkspace } from './panels/EpisodeWorkspace';
+import { ProjectWorkspaceNav } from './ProjectWorkspaceNav';
+import type { AppView } from '../../stores/ui.store';
 
 type PreferredBindingMode = Extract<WorkflowBindingMode, 'follow_latest' | 'pinned'>;
+type ProjectWorkspaceView = Extract<AppView, 'pipeline' | 'assets' | 'episodes' | 'workspace' | 'canvas'>;
 
 interface WorkflowCenterProps {
   projectTitle: string;
   workflowState: WorkflowProjectState;
+  activeView: ProjectWorkspaceView;
   templates: WorkflowTemplateDefinition[];
+  onNavigate: (view: ProjectWorkspaceView) => void;
   onBackToProjects: () => void;
   onOpenCanvas: () => void;
   onOpenSettings: () => void;
@@ -197,7 +202,9 @@ function formatUpdatedAt(value: string): string {
 export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
   projectTitle,
   workflowState,
+  activeView,
   templates,
+  onNavigate,
   onBackToProjects,
   onOpenCanvas,
   onOpenSettings,
@@ -258,16 +265,15 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
     : [];
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#0a0a0c] text-white">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.16),_transparent_36%),radial-gradient(circle_at_bottom_right,_rgba(168,85,247,0.12),_transparent_30%)]" />
-      <div className="relative flex h-full flex-col overflow-hidden">
-        <div className="sticky top-0 z-20 border-b border-white/10 bg-[#0a0a0c]/85 backdrop-blur-2xl">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-8 py-5">
+    <div className="tianti-shell">
+      <div className="relative flex h-screen flex-col overflow-hidden">
+        <div className="tianti-shell-header">
+          <div className="tianti-shell-container flex items-center justify-between gap-4 px-6 py-5 lg:px-8">
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={onBackToProjects}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+                className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
               >
                 <ArrowLeft size={16} />
                 返回项目
@@ -282,7 +288,7 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
               <button
                 type="button"
                 onClick={onOpenSettings}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+                className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
               >
                 <Settings size={16} />
                 系统设置
@@ -290,18 +296,25 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
               <button
                 type="button"
                 onClick={onOpenCanvas}
-                className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/15 px-5 py-2.5 text-sm font-medium text-cyan-50 transition hover:bg-cyan-500/20"
+                className="tianti-button tianti-button-ghost px-5 py-2.5 text-sm"
               >
-                进入原始画布
+                高级画布
                 <ChevronRight size={16} />
               </button>
             </div>
           </div>
+          <div className="tianti-shell-container px-6 pb-5 lg:px-8">
+            <ProjectWorkspaceNav
+              currentView={activeView}
+              onChange={onNavigate}
+              hasActiveEpisode={Boolean(activeEpisode)}
+            />
+          </div>
         </div>
 
-        <div className="mx-auto grid h-full w-full max-w-7xl grid-cols-[320px_minmax(0,1fr)] gap-8 overflow-hidden px-8 py-8">
+        <div className="tianti-shell-container grid h-full w-full grid-cols-[320px_minmax(0,1fr)] gap-8 overflow-hidden px-6 py-8 lg:px-8">
           <aside className="flex h-full flex-col gap-6 overflow-y-auto pr-2">
-            <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-2xl shadow-black/20 backdrop-blur-xl">
+            <section className="tianti-hero-card p-6">
               <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">产品定位</div>
               <h2 className="mt-3 text-2xl font-semibold">工作流优先的创作中心</h2>
               <p className="mt-3 text-sm leading-7 text-slate-300">
@@ -309,7 +322,7 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
               </p>
             </section>
 
-            <section className="rounded-[28px] border border-white/10 bg-white/[0.03] p-6 backdrop-blur-xl">
+            <section className="tianti-surface rounded-[28px] p-6">
               <div className="text-xs uppercase tracking-[0.22em] text-white/45">固定工作流方案</div>
               <div className="mt-4 space-y-3">
                 {templates
@@ -468,7 +481,7 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
 };
 
 const SummaryBadge: React.FC<{ label: string; value: number }> = ({ label, value }) => (
-  <div className="rounded-[20px] border border-white/10 bg-black/20 px-4 py-3">
+  <div className="tianti-stat-card px-4 py-3">
     <div className="text-xs uppercase tracking-[0.18em] text-white/40">{label}</div>
     <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
   </div>
@@ -637,19 +650,19 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
   })();
 
   return (
-    <section className="rounded-[32px] border border-white/10 bg-white/[0.04] p-8 shadow-2xl shadow-black/20 backdrop-blur-xl">
+    <section className="tianti-surface rounded-[32px] p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">系列工作流</div>
           <h2 className="mt-3 text-3xl font-semibold">{instance.title}</h2>
           <div className="mt-3 flex flex-wrap gap-3 text-sm text-slate-300">
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+            <span className="tianti-chip">
               阶段进度 {completedStages}/{Object.keys(instance.stageStates).length}
             </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+            <span className="tianti-chip">
               规划集数 {plannedEpisodeCount}
             </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+            <span className="tianti-chip">
               已建单集 {episodes.length}
             </span>
           </div>
@@ -659,7 +672,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
           <button
             type="button"
             onClick={() => onAddEpisode(instance.id)}
-            className="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+            className="tianti-button tianti-button-primary px-5 py-3 text-sm font-semibold"
           >
             <Plus size={16} />
             新增单集
@@ -667,7 +680,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
           <button
             type="button"
             onClick={() => onMaterializeWorkflow(instance.id)}
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm text-slate-200 transition hover:border-white/20 hover:text-white"
+            className="tianti-button tianti-button-secondary px-5 py-3 text-sm"
           >
             进入原始画布
             <ChevronRight size={16} />
@@ -676,7 +689,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-4">
-        <div className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+        <div className="tianti-stat-card p-5">
           <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">系列总控</div>
           <div className="mt-3 text-3xl font-semibold text-white">
             {workflowOverview.seriesCompletedStageCount}/{workflowOverview.seriesStageCount}
@@ -687,7 +700,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
           </div>
         </div>
 
-        <div className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+        <div className="tianti-stat-card p-5">
           <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">资产复用</div>
           <div className="mt-3 text-3xl font-semibold text-white">{workflowOverview.reusableAssetCount}</div>
           <div className="mt-2 text-sm text-slate-300">已纳入模板的复用资产</div>
@@ -696,7 +709,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
           </div>
         </div>
 
-        <div className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+        <div className="tianti-stat-card p-5">
           <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">单集执行</div>
           <div className="mt-3 text-3xl font-semibold text-white">{workflowOverview.createdEpisodeCount}</div>
           <div className="mt-2 text-sm text-slate-300">已创建的单集工作单元</div>
@@ -708,14 +721,14 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
           </div>
         </div>
 
-        <div className="rounded-[24px] border border-cyan-500/20 bg-cyan-500/10 p-5">
+        <div className="tianti-hero-card rounded-[24px] p-5">
           <div className="text-xs uppercase tracking-[0.18em] text-cyan-100/80">下一步</div>
           <div className="mt-3 text-lg font-semibold text-white">{workflowOverview.nextAction.label}</div>
           <div className="mt-2 text-sm leading-6 text-cyan-50/90">{workflowOverview.nextAction.description}</div>
           <button
             type="button"
             onClick={handleNextAction}
-            className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm text-white transition hover:bg-white/15"
+            className="tianti-button tianti-button-secondary mt-4 px-4 py-2 text-sm"
           >
             {nextActionButtonLabel}
             <ChevronRight size={15} />
@@ -724,7 +737,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-        <section className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+        <section className="tianti-surface-muted rounded-[28px] p-6">
           <div className="text-xs uppercase tracking-[0.18em] text-white/40">系列默认配置</div>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <label className="block">
@@ -734,7 +747,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                 min={Math.max(1, episodes.length)}
                 value={plannedEpisodeInput}
                 onChange={(event) => setPlannedEpisodeInput(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-500/40"
+                className="tianti-input mt-2 w-full px-4 py-2.5 text-sm"
               />
             </label>
             <label className="block">
@@ -742,7 +755,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
               <select
                 value={preferredBindingModeInput}
                 onChange={(event) => setPreferredBindingModeInput(event.target.value as PreferredBindingMode)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-500/40"
+                className="tianti-input mt-2 w-full px-4 py-2.5 text-sm"
               >
                 {Object.entries(bindingModeLabels).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -759,7 +772,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
             <button
               type="button"
               onClick={handleSaveSeriesSettings}
-              className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/15 px-5 py-3 text-sm font-medium text-cyan-50 transition hover:bg-cyan-500/20"
+              className="tianti-button tianti-button-primary px-5 py-3 text-sm font-medium"
             >
               保存系列配置
             </button>
@@ -769,7 +782,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
           </div>
         </section>
 
-        <section className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+        <section className="tianti-surface-muted rounded-[28px] p-6">
           <div className="text-xs uppercase tracking-[0.18em] text-white/40">批量建集</div>
           <div className="mt-3 text-sm leading-7 text-slate-300">
             支持一次性铺开多个单集；若已设置总集数，也可以一键补齐剩余集数。
@@ -784,14 +797,14 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                 value={batchEpisodeInput}
                 onChange={(event) => setBatchEpisodeInput(event.target.value)}
                 disabled={!hasBatchCapacity}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-500/40 disabled:cursor-not-allowed disabled:opacity-40"
+                className="tianti-input mt-2 w-full px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-40"
               />
             </div>
             <button
               type="button"
               onClick={handleBulkCreate}
               disabled={!hasBatchCapacity}
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm text-slate-200 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="tianti-button tianti-button-secondary px-5 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Plus size={16} />
               批量新增
@@ -800,7 +813,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
               <button
                 type="button"
                 onClick={() => onBulkAddEpisodes(instance.id, remainingEpisodeCount)}
-                className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-sm text-cyan-100 transition hover:bg-cyan-500/20"
+                className="tianti-button tianti-button-ghost px-5 py-3 text-sm"
               >
                 一键补齐剩余 {remainingEpisodeCount} 集
               </button>
@@ -839,12 +852,12 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
           const Icon = stageIcons[stageId] ?? Sparkles;
 
           return (
-            <div key={stageId} className="rounded-[24px] border border-white/10 bg-black/20 p-5">
+            <div key={stageId} className="tianti-surface-muted rounded-[24px] p-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="rounded-2xl bg-white/5 p-3 text-cyan-200">
                   <Icon className="h-5 w-5" />
                 </div>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] tracking-[0.16em] text-slate-300">
+                <span className="tianti-chip">
                   {stage.status}
                 </span>
               </div>
@@ -854,7 +867,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
         })}
       </div>
 
-      <div className="mt-8 rounded-[24px] border border-white/10 bg-black/20 p-6">
+      <div className="tianti-surface-muted mt-8 rounded-[24px] p-6">
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-xs uppercase tracking-[0.22em] text-white/45">分集工作区</div>
@@ -872,7 +885,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
             </div>
           ) : (
             episodes.map((episode) => (
-              <article key={episode.id} className="rounded-[22px] border border-white/10 bg-white/[0.03] p-5">
+              <article key={episode.id} className="tianti-surface rounded-[22px] p-5">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-lg font-semibold text-white">{episode.title}</div>
@@ -880,7 +893,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                       阶段 {countCompletedStages(episode)}/{Object.keys(episode.stageStates).length}
                     </div>
                   </div>
-                  <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[11px] text-cyan-200">
+                  <span className="tianti-chip is-accent">
                     Episode {episode.metadata?.episodeNumber ?? '--'}
                   </span>
                 </div>
@@ -889,7 +902,7 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {Object.keys(episode.stageStates).map((stageId) => (
-                    <span key={stageId} className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[11px] text-slate-300">
+                    <span key={stageId} className="tianti-chip">
                       {stageTitleMap[stageId] ?? stageId}
                     </span>
                   ))}
@@ -898,14 +911,14 @@ const SeriesCard: React.FC<SeriesCardProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectEpisode(episode.id)}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-white/20 hover:text-white"
+                    className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
                   >
                     打开单集
                   </button>
                   <button
                     type="button"
                     onClick={() => onMaterializeWorkflow(episode.id)}
-                    className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/15 px-4 py-2 text-sm font-medium text-cyan-50 transition hover:bg-cyan-500/20"
+                    className="tianti-button tianti-button-primary px-4 py-2 text-sm font-medium"
                   >
                     投放画布
                     <ChevronRight size={15} />
@@ -1184,7 +1197,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
         </button>
       </div>
 
-      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
+      <div className="tianti-surface mt-4 rounded-[20px] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-medium text-white">筛选结果批量调度</div>
@@ -1309,7 +1322,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
           <select
             value={bulkBindingMode}
             onChange={(event) => setBulkBindingMode(event.target.value as PreferredBindingMode)}
-            className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white outline-none"
+            className="tianti-control-pill px-4 py-2 text-sm"
           >
             {Object.entries(bindingModeLabels).map(([value, label]) => (
               <option key={value} value={value}>
@@ -1317,7 +1330,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+          <label className="tianti-control-pill flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300">
             <span>从</span>
             <input
               type="number"
@@ -1328,7 +1341,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
               className="w-16 bg-transparent text-white outline-none"
             />
           </label>
-          <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+          <label className="tianti-control-pill flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300">
             <span>到</span>
             <input
               type="number"
@@ -1357,7 +1370,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
             value={batchTemplateName}
             onChange={(event) => setBatchTemplateName(event.target.value)}
             placeholder="例如：主角组 / 常驻场景 / 高频道具"
-            className="min-w-[260px] rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white outline-none transition focus:border-cyan-500/40"
+            className="tianti-control-pill min-w-[260px] px-4 py-2 text-sm"
           />
           <button
             type="button"
@@ -1446,7 +1459,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
               : `E${normalizedRange.start}-E${normalizedRange.end}`;
 
             return (
-              <article key={entry.asset.id} className="rounded-[20px] border border-white/10 bg-white/[0.03] p-4">
+              <article key={entry.asset.id} className="tianti-surface rounded-[20px] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <div className="text-sm font-medium text-white">{entry.asset.name}</div>
@@ -1465,7 +1478,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
                   <select
                     value={currentMode}
                     onChange={(event) => setRowBindingModes(current => ({ ...current, [entry.asset.id]: event.target.value as PreferredBindingMode }))}
-                    className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white outline-none"
+                    className="tianti-control-pill px-4 py-2 text-sm"
                   >
                     {Object.entries(bindingModeLabels).map(([value, label]) => (
                       <option key={value} value={value}>
@@ -1499,9 +1512,9 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
                   <div className="text-xs text-slate-400">点击单格可逐集切换绑定</div>
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-3">
+                <div className="tianti-surface-muted mt-3 flex flex-wrap items-center gap-3 rounded-2xl px-3 py-3">
                   <div className="text-xs text-slate-400">区间调度</div>
-                  <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+                  <label className="tianti-control-pill flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300">
                     <span>从</span>
                     <input
                       type="number"
@@ -1512,7 +1525,7 @@ const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> = ({
                       className="w-16 bg-transparent text-white outline-none"
                     />
                   </label>
-                  <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+                  <label className="tianti-control-pill flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300">
                     <span>到</span>
                     <input
                       type="number"
