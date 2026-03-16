@@ -61,6 +61,7 @@ export interface WorkflowInstance {
     episodeNumber?: number;
     plannedEpisodeCount?: number;
     canvasMaterializationTemplateId?: string;
+    preferredBindingMode?: WorkflowBindingMode;
     assetSummary?: Partial<WorkflowAssetSummary>;
   };
 }
@@ -70,6 +71,10 @@ export interface WorkflowProjectState {
   instances: WorkflowInstance[];
   activeSeriesId: string | null;
   activeEpisodeId: string | null;
+  assets: WorkflowAsset[];
+  assetVersions: WorkflowAssetVersion[];
+  assetBindings: EpisodeAssetBinding[];
+  continuityStates: ContinuityState[];
 }
 
 export interface WorkflowAsset {
@@ -79,6 +84,8 @@ export interface WorkflowAsset {
   name: string;
   currentVersionId?: string;
   tags: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkflowAssetVersion {
@@ -88,6 +95,7 @@ export interface WorkflowAssetVersion {
   files: string[];
   promptPack: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface EpisodeAssetBinding {
@@ -97,6 +105,7 @@ export interface EpisodeAssetBinding {
   versionId: string;
   mode: WorkflowBindingMode;
   derivedFromVersionId?: string;
+  createdAt: string;
 }
 
 export interface ContinuityState {
@@ -105,4 +114,5 @@ export interface ContinuityState {
   subjectType: 'character' | 'scene' | 'prop';
   subjectId: string;
   state: Record<string, unknown>;
+  updatedAt: string;
 }

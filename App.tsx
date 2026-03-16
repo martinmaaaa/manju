@@ -53,8 +53,29 @@ import {
   type PipelineTemplateId,
 } from './services/workflowTemplates';
 import { WORKFLOW_TEMPLATES } from './services/workflow/registry';
-import { createEpisodeInstance, createWorkflowInstance, getEpisodeInstances, normalizeWorkflowProjectState, withWorkflowProjectState } from './services/workflow/runtime/projectState';
-import type { WorkflowProjectState, WorkflowTemplateId } from './services/workflow/domain/types';
+import {
+  appendWorkflowAsset,
+  appendWorkflowAssetVersion,
+  bindAssetToEpisode,
+  createEpisodeInstance,
+  createEpisodeInstances,
+  createWorkflowInstance,
+  normalizeWorkflowProjectState,
+  setActiveEpisode,
+  unbindAssetFromEpisode,
+  updateSeriesWorkflowSettings,
+  updateWorkflowStageState,
+  upsertContinuityState,
+  withWorkflowProjectState,
+} from './services/workflow/runtime/projectState';
+import type {
+  ContinuityState,
+  WorkflowAssetType,
+  WorkflowBindingMode,
+  WorkflowProjectState,
+  WorkflowStageStatus,
+  WorkflowTemplateId,
+} from './services/workflow/domain/types';
 
 // Lazy load large components
 const VideoEditor = lazy(() => import('./components/VideoEditor').then(m => ({ default: m.VideoEditor })));
@@ -926,6 +947,57 @@ export const App = () => {
     await persistProjectSettings(nextSettings);
   }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
 
+  const handleBulkAddEpisodesWorkflow = useCallback(async (seriesInstanceId: string, count: number) => {
+    if (!activeProject) return;
+
+    const nextEpisodes = createEpisodeInstances(workflowProjectState, seriesInstanceId, count);
+    if (nextEpisodes.length === 0) return;
+
+    const activeEpisode = workflowProjectState.activeEpisodeId
+      ? workflowProjectState.instances.find(instance => instance.id === workflowProjectState.activeEpisodeId)
+      : null;
+    const shouldPreserveActiveEpisode = activeEpisode?.parentInstanceId === seriesInstanceId;
+
+    const nextWorkflowState: WorkflowProjectState = {
+      ...workflowProjectState,
+      instances: [
+        ...nextEpisodes,
+        ...workflowProjectState.instances.map(instance => (
+          instance.id === seriesInstanceId
+            ? { ...instance, updatedAt: new Date().toISOString() }
+            : instance
+        )),
+      ],
+      activeSeriesId: seriesInstanceId,
+      activeEpisodeId: shouldPreserveActiveEpisode ? workflowProjectState.activeEpisodeId : nextEpisodes[0].id,
+    };
+
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleUpdateSeriesWorkflowSettings = useCallback(async (
+    seriesInstanceId: string,
+    patch: {
+      plannedEpisodeCount?: number;
+      preferredBindingMode?: WorkflowBindingMode;
+    },
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = updateSeriesWorkflowSettings(workflowProjectState, seriesInstanceId, patch);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
   const handleMaterializeWorkflow = useCallback((workflowInstanceId: string) => {
     const workflowInstance = workflowProjectState.instances.find(instance => instance.id === workflowInstanceId);
     if (!workflowInstance) return;
@@ -956,6 +1028,120 @@ export const App = () => {
     setSelectedNodeIds,
     workflowProjectState.instances,
   ]);
+
+  const handleSelectEpisodeWorkflow = useCallback(async (episodeId: string) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = setActiveEpisode(workflowProjectState, episodeId);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleCreateWorkflowAsset = useCallback(async (
+    type: WorkflowAssetType,
+    name: string,
+    tags: string[],
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = appendWorkflowAsset(workflowProjectState, activeProject.id, type, name, tags);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleCreateWorkflowAssetVersion = useCallback(async (
+    assetId: string,
+    notes?: string,
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = appendWorkflowAssetVersion(workflowProjectState, assetId, notes);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleBindEpisodeAsset = useCallback(async (
+    episodeId: string,
+    assetId: string,
+    mode: WorkflowBindingMode,
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = bindAssetToEpisode(workflowProjectState, episodeId, assetId, mode);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleUnbindEpisodeAsset = useCallback(async (bindingId: string) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = unbindAssetFromEpisode(workflowProjectState, bindingId);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleUpdateContinuityState = useCallback(async (
+    workflowInstanceId: string,
+    subjectType: ContinuityState['subjectType'],
+    subjectId: string,
+    patch: Record<string, unknown>,
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = upsertContinuityState(
+      workflowProjectState,
+      workflowInstanceId,
+      subjectType,
+      subjectId,
+      patch,
+    );
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
+
+  const handleUpdateWorkflowStage = useCallback(async (
+    workflowInstanceId: string,
+    stageId: string,
+    patch: {
+      status?: WorkflowStageStatus;
+      formData?: Record<string, unknown>;
+      outputs?: Record<string, unknown>;
+    },
+  ) => {
+    if (!activeProject) return;
+
+    const nextWorkflowState = updateWorkflowStageState(workflowProjectState, workflowInstanceId, stageId, patch);
+    const nextSettings = withWorkflowProjectState(
+      mergeProjectSettings(activeProject.settings, { editorMode: 'pipeline' }),
+      nextWorkflowState,
+    );
+
+    await persistProjectSettings(nextSettings);
+  }, [activeProject, mergeProjectSettings, persistProjectSettings, workflowProjectState]);
 
   // 防抖版本的历史保存（1秒内多次调用只保存一次）
   const debouncedSaveHistoryRef = useRef<NodeJS.Timeout | null>(null);
@@ -2003,7 +2189,16 @@ export const App = () => {
           onOpenSettings={() => setIsSettingsOpen(true)}
           onCreateWorkflow={handleCreateWorkflow}
           onAddEpisode={handleAddEpisodeWorkflow}
+          onBulkAddEpisodes={handleBulkAddEpisodesWorkflow}
+          onUpdateSeriesSettings={handleUpdateSeriesWorkflowSettings}
           onMaterializeWorkflow={handleMaterializeWorkflow}
+          onSelectEpisode={handleSelectEpisodeWorkflow}
+          onCreateAsset={handleCreateWorkflowAsset}
+          onCreateAssetVersion={handleCreateWorkflowAssetVersion}
+          onBindAsset={handleBindEpisodeAsset}
+          onUnbindAsset={handleUnbindEpisodeAsset}
+          onUpdateContinuity={handleUpdateContinuityState}
+          onUpdateStage={handleUpdateWorkflowStage}
         />
         <SettingsPanel
           isOpen={isSettingsOpen}
