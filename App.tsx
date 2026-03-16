@@ -1288,6 +1288,52 @@ export const App = () => {
     setCurrentView('workspace');
   }, [handleSelectEpisodeWorkflow, setCurrentView]);
 
+  const syncLocalGenerationJobBinding = useCallback((
+    nodeId: string,
+    metadata: Record<string, unknown>,
+    generationJobId: string,
+  ) => {
+    const source = typeof metadata.source === 'string' ? metadata.source : null;
+    if (!source) return;
+
+    if (source === 'sora-task-group') {
+      const taskGroupIndex = typeof metadata.taskGroupIndex === 'number'
+        ? metadata.taskGroupIndex
+        : (typeof metadata.taskGroupIndex === 'string' ? Number.parseInt(metadata.taskGroupIndex, 10) : NaN);
+
+      if (!Number.isInteger(taskGroupIndex)) {
+        return;
+      }
+
+      const node = nodesRef.current.find(candidate => candidate.id === nodeId);
+      const taskGroups = Array.isArray(node?.data?.taskGroups) ? [...node.data.taskGroups] : null;
+      if (!taskGroups?.[taskGroupIndex]) {
+        return;
+      }
+
+      taskGroups[taskGroupIndex] = {
+        ...taskGroups[taskGroupIndex],
+        generationJobId,
+      };
+      nodesRef.current = nodesRef.current.map(candidate => (
+        candidate.id === nodeId
+          ? { ...candidate, data: { ...candidate.data, taskGroups } }
+          : candidate
+      ));
+      handleNodeUpdate(nodeId, { taskGroups });
+      return;
+    }
+
+    if (source === 'storyboard-video-generator') {
+      nodesRef.current = nodesRef.current.map(candidate => (
+        candidate.id === nodeId
+          ? { ...candidate, data: { ...candidate.data, generationJobId } }
+          : candidate
+      ));
+      handleNodeUpdate(nodeId, { generationJobId });
+    }
+  }, [handleNodeUpdate, nodesRef]);
+
   const handleGenerationJobAction = useCallback(async (
     job: GenerationJob,
     action: 'cancel' | 'requeue' | 'retry',
@@ -1297,23 +1343,32 @@ export const App = () => {
       : {};
 
     const nodeId = typeof metadata.nodeId === 'string' ? metadata.nodeId : null;
-    const taskGroupIndex = typeof metadata.taskGroupIndex === 'number'
-      ? metadata.taskGroupIndex
-      : (typeof metadata.taskGroupIndex === 'string' ? Number.parseInt(metadata.taskGroupIndex, 10) : NaN);
-
-    const resolvedTaskGroupIndex = Number.isInteger(taskGroupIndex) ? taskGroupIndex : null;
+    const triggerAction = typeof metadata.triggerAction === 'string' ? metadata.triggerAction : null;
+    const cancelAction = typeof metadata.cancelAction === 'string' ? metadata.cancelAction : null;
 
     try {
-      if (job.provider === 'sora' && nodeId && resolvedTaskGroupIndex !== null) {
-        if (action === 'cancel') {
-          await handleNodeAction(nodeId, `cancel-generation-job:${resolvedTaskGroupIndex}`);
-          const cancelResponse = await cancelGenerationJob(job.id);
-          return cancelResponse.success
-            ? { success: true }
-            : { success: false, error: cancelResponse.error ?? '取消任务失败' };
+      if (nodeId && action === 'cancel' && cancelAction) {
+        await handleNodeAction(nodeId, cancelAction);
+        const cancelResponse = await cancelGenerationJob(job.id);
+        return cancelResponse.success
+          ? { success: true }
+          : { success: false, error: cancelResponse.error ?? '取消任务失败' };
+      }
+
+      if (nodeId && triggerAction && (action === 'retry' || action === 'requeue')) {
+        const response = action === 'retry'
+          ? await retryGenerationJob(job.id)
+          : await requeueGenerationJob(job.id);
+
+        if (!response.success || !response.data) {
+          return {
+            success: false,
+            error: response.error ?? '任务操作失败',
+          };
         }
 
-        await handleNodeAction(nodeId, `generate-video:${resolvedTaskGroupIndex}`);
+        syncLocalGenerationJobBinding(nodeId, metadata, response.data.id);
+        await handleNodeAction(nodeId, triggerAction);
         return { success: true };
       }
 
@@ -1332,7 +1387,7 @@ export const App = () => {
         error: error?.message || '任务操作失败',
       };
     }
-  }, [handleNodeAction]);
+  }, [handleNodeAction, syncLocalGenerationJobBinding]);
 
   const handleCreateWorkflowAsset = useCallback(async (
     type: WorkflowAssetType,

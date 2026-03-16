@@ -233,6 +233,19 @@ export function useNodeActions(params: UseNodeActionsParams) {
         soraProvider: taskGroup.provider || 'sora',
     });
 
+    const buildStoryboardGenerationJobMetadata = (
+        nodeId: string,
+        selectedPlatform?: string,
+        selectedModel?: string,
+    ) => ({
+        nodeId,
+        nodeType: NodeType.STORYBOARD_VIDEO_GENERATOR,
+        triggerAction: 'generate-video',
+        cancelAction: 'cancel-generate',
+        source: 'storyboard-video-generator',
+        platform: selectedPlatform,
+        model: selectedModel,
+    });
     const resetSoraTaskGroupForExecution = (
         taskGroup: SoraTaskGroup,
         generationJobId: string | undefined,
@@ -1435,19 +1448,33 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 }
 
                 if (promptOverride === 'cancel-generate') {
+                    const generationJobId = node.data.generationJobId as string | undefined;
 
-                    // 获取并触发 AbortController
                     const abortController = abortControllersRef.current.get(id);
                     if (abortController) {
                         abortController.abort();
                         abortControllersRef.current.delete(id);
                     }
 
-                    // 更新节点状态
+                    if (generationJobId) {
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'CANCELLED',
+                            phase: 'CANCELLED',
+                            error: 'Task cancelled.',
+                            metadata: buildStoryboardGenerationJobMetadata(
+                                id,
+                                node.data.selectedPlatform,
+                                node.data.selectedModel,
+                            ),
+                            completedAt: new Date().toISOString(),
+                        });
+                    }
+
                     handleNodeUpdate(id, {
                         status: 'prompting',
                         progress: 0,
-                        error: undefined
+                        error: undefined,
+                        generationJobId,
                     });
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
 
@@ -1458,10 +1485,9 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                     const generatedPrompt = node.data.generatedPrompt;
                     if (!generatedPrompt) {
-                        throw new Error('请先生成提示词');
+                        throw new Error('Please generate a prompt first.');
                     }
 
-                    // Get model config
                     const selectedPlatform = node.data.selectedPlatform || 'yunwuapi';
                     const selectedModel = node.data.selectedModel || 'luma';
                     const modelConfig = node.data.modelConfig || {
@@ -1469,62 +1495,100 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         duration: '5',
                         quality: 'standard'
                     };
+                    const generationMetadata = buildStoryboardGenerationJobMetadata(
+                        id,
+                        selectedPlatform,
+                        selectedModel,
+                    );
+                    const generationScope = resolveGenerationJobScope();
+                    const trackedJob = node.data.generationJobId
+                        ? await updateTrackedGenerationJob(node.data.generationJobId, {
+                            projectId: generationScope.projectId,
+                            workflowInstanceId: generationScope.workflowInstanceId,
+                            provider: selectedPlatform,
+                            model: selectedModel,
+                            capability: 'video',
+                            prompt: generatedPrompt,
+                            status: 'QUEUED',
+                            phase: 'QUEUED',
+                            progress: 0,
+                            error: null,
+                            resultUrl: null,
+                            resultPayload: {},
+                            metadata: generationMetadata,
+                            sourcePayload: {
+                                modelConfig,
+                                selectedPlatform,
+                                selectedModel,
+                                selectedShotIds: node.data.selectedShotIds || [],
+                                hasReferenceImage: Boolean(node.data.fusedImage || node.data.fusedImageUrl),
+                            },
+                            startedAt: null,
+                            completedAt: null,
+                        })
+                        : await createTrackedGenerationJob({
+                            projectId: generationScope.projectId,
+                            workflowInstanceId: generationScope.workflowInstanceId,
+                            provider: selectedPlatform,
+                            model: selectedModel,
+                            capability: 'video',
+                            prompt: generatedPrompt,
+                            status: 'QUEUED',
+                            phase: 'QUEUED',
+                            progress: 0,
+                            metadata: generationMetadata,
+                            sourcePayload: {
+                                modelConfig,
+                                selectedPlatform,
+                                selectedModel,
+                                selectedShotIds: node.data.selectedShotIds || [],
+                                hasReferenceImage: Boolean(node.data.fusedImage || node.data.fusedImageUrl),
+                            },
+                        });
+                    const generationJobId = trackedJob?.id ?? node.data.generationJobId;
 
-
-                    // Set to generating status
                     handleNodeUpdate(id, {
                         status: 'generating',
-                        progress: 0
+                        progress: 0,
+                        error: undefined,
+                        generationJobId,
                     });
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
 
                     try {
-                        // Handle image fusion (if exists)
-                        let referenceImageUrl: string | undefined;
+                        let referenceImageUrl: string | undefined = node.data.fusedImageUrl;
                         if (node.data.fusedImage) {
-
                             handleNodeUpdate(id, { progress: 10 });
 
-                            // Import OSS service
                             const { uploadFileToOSS } = await import('../services/ossService');
                             const { getOSSConfig } = await import('../services/soraConfigService');
 
                             const ossConfig = getOSSConfig();
                             if (ossConfig) {
-                                const fileName = `storyboard-fusion-${node.id}-${Date.now()}.png`;
-                                referenceImageUrl = await uploadFileToOSS(node.data.fusedImage, fileName, ossConfig);
+                                if (!referenceImageUrl) {
+                                    const fileName = `storyboard-fusion-${node.id}-${Date.now()}.png`;
+                                    referenceImageUrl = await uploadFileToOSS(node.data.fusedImage, fileName, ossConfig);
+                                }
 
                                 handleNodeUpdate(id, {
                                     fusedImageUrl: referenceImageUrl,
-                                    progress: 20
+                                    progress: 20,
                                 });
-
                             } else {
                                 console.warn('[STORYBOARD_VIDEO_GENERATOR] No OSS config, using base64 data URL');
                                 referenceImageUrl = node.data.fusedImage;
                             }
                         }
 
-                        // Get API key
                         const { getVideoPlatformApiKey } = await import('../services/soraConfigService');
                         const apiKey = getVideoPlatformApiKey(selectedPlatform);
                         if (!apiKey) {
-                            const platformNames: Record<string, string> = {
-                                'yunwuapi': '云雾API平台',
-                                'official': '官方 Sora',
-                                'custom': '自定义'
-                            };
-                            const platformName = platformNames[selectedPlatform] || selectedPlatform;
-                            throw new Error(`请先在设置中配置 ${platformName} 的 API Key\n配置路径: 设置 → API 配置 → 视频平台 API Keys → ${platformName} Key`);
+                            throw new Error(`Missing API key for platform: ${selectedPlatform}`);
                         }
 
                         handleNodeUpdate(id, { progress: 30 });
 
-                        // Generate video
                         const { generateVideoFromStoryboard } = await import('../services/videoGenerationService');
-
-
-                        // 创建 AbortController 用于取消任务
                         const abortController = new AbortController();
                         abortControllersRef.current.set(id, abortController);
 
@@ -1539,17 +1603,39 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 onProgress: (message, progress) => {
                                     const adjustedProgress = 30 + Math.round(progress * 0.7);
                                     handleNodeUpdate(id, { progress: adjustedProgress });
+                                    void updateTrackedGenerationJob(generationJobId, {
+                                        status: 'RUNNING',
+                                        phase: 'RUNNING',
+                                        progress: adjustedProgress,
+                                        error: null,
+                                        metadata: {
+                                            ...generationMetadata,
+                                            message,
+                                        },
+                                    });
                                 },
-                                signal: abortController.signal,  // 传递取消信号
-                                subModel: node.data.subModel  // 传递子模型
+                                signal: abortController.signal,
+                                subModel: node.data.subModel,
                             }
                         );
 
-                        // 任务完成，清理 AbortController
                         abortControllersRef.current.delete(id);
 
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'COMPLETED',
+                            phase: 'COMPLETED',
+                            progress: 100,
+                            error: null,
+                            resultUrl: result.videoUrl,
+                            resultPayload: {
+                                taskId: result.taskId,
+                                duration: result.duration,
+                                resolution: result.resolution,
+                            },
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
 
-                        // Create child node
                         const childNodeId = `node-storyboard-video-child-${Date.now()}`;
                         const childIndex = (node.data.childNodeIds?.length || 0) + 1;
 
@@ -1558,7 +1644,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             type: NodeType.STORYBOARD_VIDEO_CHILD,
                             x: node.x + (node.width || 420) + 50,
                             y: node.y + (childIndex - 1) * 150,
-                            title: `视频结果 #${childIndex}`,
+                            title: `Video Result #${childIndex}`,
                             status: NodeStatus.SUCCESS,
                             data: {
                                 prompt: generatedPrompt,
@@ -1581,207 +1667,76 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             to: childNodeId
                         };
 
-                        // Add to asset history
                         if (result.videoUrl) {
-                            handleAssetGenerated('video', result.videoUrl, `分镜视频 #${childIndex}`);
+                            handleAssetGenerated('video', result.videoUrl, `Storyboard Video #${childIndex}`);
                         }
 
-                        // Update node
                         handleNodeUpdate(id, {
                             status: 'completed',
                             progress: 100,
+                            error: undefined,
+                            generationJobId,
                             currentTaskId: result.taskId,
                             childNodeIds: [...(node.data.childNodeIds || []), childNodeId]
                         });
                         setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
 
-                        // Add child node and connection
                         saveHistory();
                         setNodes(prev => [...prev, childNode]);
                         setConnections(prev => [...prev, newConnection]);
 
                     } catch (error: any) {
                         console.error('[STORYBOARD_VIDEO_GENERATOR] Video generation failed:', error);
-
-                        // 清理 AbortController
                         abortControllersRef.current.delete(id);
 
-                        // 如果是取消错误，不显示错误信息
-                        if (error.message === '任务已取消') {
+                        const errorMessage = typeof error?.message === 'string'
+                            ? error.message
+                            : 'Video generation failed.';
+                        const isCancelled = error?.name === 'AbortError'
+                            || errorMessage === 'Task cancelled.'
+                            || /cancel/i.test(errorMessage)
+                            || /取消/.test(errorMessage);
+
+                        if (isCancelled) {
+                            await updateTrackedGenerationJob(generationJobId, {
+                                status: 'CANCELLED',
+                                phase: 'CANCELLED',
+                                error: 'Task cancelled.',
+                                metadata: generationMetadata,
+                                completedAt: new Date().toISOString(),
+                            });
                             handleNodeUpdate(id, {
                                 status: 'prompting',
-                                error: undefined
+                                progress: 0,
+                                error: undefined,
+                                generationJobId,
                             });
                             setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
-                        } else {
-                            handleNodeUpdate(id, {
-                                status: 'prompting',
-                                error: error.message || '视频生成失败'
-                            });
-                            setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                            return;
                         }
 
-                        throw error;
-                    }
-
-                    return;
-                }
-
-                if (promptOverride === 'regenerate-video') {
-
-                    const generatedPrompt = node.data.generatedPrompt;
-                    if (!generatedPrompt) {
-                        throw new Error('请先生成提示词');
-                    }
-
-                    // Get model config
-                    const selectedPlatform = node.data.selectedPlatform || 'yunwuapi';
-                    const selectedModel = node.data.selectedModel || 'luma';
-                    const modelConfig = node.data.modelConfig || {
-                        aspect_ratio: '16:9',
-                        duration: '5',
-                        quality: 'standard'
-                    };
-
-
-                    // Set to generating status
-                    handleNodeUpdate(id, {
-                        status: 'generating',
-                        progress: 0
-                    });
-                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
-
-                    try {
-                        // Handle image fusion (if exists)
-                        let referenceImageUrl: string | undefined;
-                        if (node.data.fusedImage) {
-
-                            handleNodeUpdate(id, { progress: 10 });
-
-                            // Import OSS service
-                            const { uploadFileToOSS } = await import('../services/ossService');
-                            const { getOSSConfig } = await import('../services/soraConfigService');
-
-                            const ossConfig = getOSSConfig();
-                            if (ossConfig) {
-                                // Check if already uploaded
-                                if (node.data.fusedImageUrl) {
-                                    referenceImageUrl = node.data.fusedImageUrl;
-                                } else {
-                                    const fileName = `storyboard-fusion-${node.id}-${Date.now()}.png`;
-                                    referenceImageUrl = await uploadFileToOSS(node.data.fusedImage, fileName, ossConfig);
-
-                                    handleNodeUpdate(id, {
-                                        fusedImageUrl: referenceImageUrl,
-                                        progress: 20
-                                    });
-
-                                }
-                            } else {
-                                console.warn('[STORYBOARD_VIDEO_GENERATOR] No OSS config, using base64 data URL');
-                                referenceImageUrl = node.data.fusedImage;
-                            }
-                        }
-
-                        // Get API key
-                        const { getVideoPlatformApiKey } = await import('../services/soraConfigService');
-                        const apiKey = getVideoPlatformApiKey(selectedPlatform);
-                        if (!apiKey) {
-                            const platformNames: Record<string, string> = {
-                                'yunwuapi': '云雾API平台',
-                                'official': '官方 Sora',
-                                'custom': '自定义'
-                            };
-                            const platformName = platformNames[selectedPlatform] || selectedPlatform;
-                            throw new Error(`请先在设置中配置 ${platformName} 的 API Key\n配置路径: 设置 → API 配置 → 视频平台 API Keys → ${platformName} Key`);
-                        }
-
-                        handleNodeUpdate(id, { progress: 30 });
-
-                        // Generate video
-                        const { generateVideoFromStoryboard } = await import('../services/videoGenerationService');
-
-
-                        const result = await generateVideoFromStoryboard(
-                            selectedPlatform as any,
-                            selectedModel as any,
-                            generatedPrompt,
-                            referenceImageUrl,
-                            modelConfig as any,
-                            apiKey,
-                            {
-                                onProgress: (message, progress) => {
-                                    const adjustedProgress = 30 + Math.round(progress * 0.7);
-                                    handleNodeUpdate(id, { progress: adjustedProgress });
-                                },
-                                subModel: node.data.subModel  // 传递子模型
-                            }
-                        );
-
-
-                        // Create child node
-                        const childNodeId = `node-storyboard-video-child-${Date.now()}`;
-                        const childIndex = (node.data.childNodeIds?.length || 0) + 1;
-
-                        const childNode: AppNode = {
-                            id: childNodeId,
-                            type: NodeType.STORYBOARD_VIDEO_CHILD,
-                            x: node.x + (node.width || 420) + 50,
-                            y: node.y + (childIndex - 1) * 150,
-                            title: `视频结果 #${childIndex}`,
-                            status: NodeStatus.SUCCESS,
-                            data: {
-                                prompt: generatedPrompt,
-                                platformInfo: {
-                                    platformCode: selectedPlatform,
-                                    modelName: selectedModel
-                                },
-                                modelConfig,
-                                videoUrl: result.videoUrl,
-                                videoDuration: result.duration,
-                                videoResolution: result.resolution,
-                                fusedImageUrl: node.data.fusedImageUrl,
-                                promptExpanded: false
-                            },
-                            inputs: [node.id]
-                        };
-
-                        const newConnection: Connection = {
-                            from: node.id,
-                            to: childNodeId
-                        };
-
-                        // Add to asset history
-                        if (result.videoUrl) {
-                            handleAssetGenerated('video', result.videoUrl, `分镜视频 #${childIndex}`);
-                        }
-
-                        // Update node
-                        handleNodeUpdate(id, {
-                            status: 'completed',
-                            progress: 100,
-                            currentTaskId: result.taskId,
-                            childNodeIds: [...(node.data.childNodeIds || []), childNodeId]
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'FAILED',
+                            phase: 'FAILED',
+                            error: errorMessage,
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
                         });
-                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
-
-                        // Add child node and connection
-                        saveHistory();
-                        setNodes(prev => [...prev, childNode]);
-                        setConnections(prev => [...prev, newConnection]);
-
-                    } catch (error: any) {
-                        console.error('[STORYBOARD_VIDEO_GENERATOR] Video regeneration failed:', error);
 
                         handleNodeUpdate(id, {
                             status: 'prompting',
-                            error: error.message || '视频重新生成失败'
+                            error: errorMessage,
+                            generationJobId,
                         });
                         setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
 
                         throw error;
                     }
 
+                    return;
+                }
+                if (promptOverride === 'regenerate-video') {
+                    await handleNodeAction(id, 'generate-video');
                     return;
                 }
             }

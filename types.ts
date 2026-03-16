@@ -605,6 +605,7 @@ export interface StoryboardVideoGeneratorData {
   isLoadingFusion?: boolean; // Whether image fusion is in progress
 
   // 生成结果
+  generationJobId?: string;
   currentTaskId?: string;
   progress?: number;
   error?: string;
