@@ -1324,7 +1324,11 @@ export const App = () => {
       return;
     }
 
-    if (source === 'storyboard-video-generator') {
+    if (
+      source === 'storyboard-video-generator'
+      || source === 'video-generator'
+      || source === 'jimeng-video-generator'
+    ) {
       nodesRef.current = nodesRef.current.map(candidate => (
         candidate.id === nodeId
           ? { ...candidate, data: { ...candidate.data, generationJobId } }

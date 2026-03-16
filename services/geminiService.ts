@@ -60,6 +60,38 @@ const getErrorMessage = (error: any): string => {
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const createAbortError = () => {
+    const error = new Error('Task cancelled.');
+    error.name = 'AbortError';
+    return error;
+};
+
+const throwIfAborted = (signal?: AbortSignal) => {
+    if (signal?.aborted) {
+        throw createAbortError();
+    }
+};
+
+const waitWithAbort = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+        reject(createAbortError());
+        return;
+    }
+
+    const timeoutId = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+    }, ms);
+
+    const onAbort = () => {
+        clearTimeout(timeoutId);
+        signal?.removeEventListener('abort', onAbort);
+        reject(createAbortError());
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+});
+
 async function retryWithBackoff<T>(
     operation: () => Promise<T>,
     maxRetries: number = 3,
@@ -956,11 +988,13 @@ export const generateVideo = async (
     inputImageBase64?: string | null,
     videoInput?: any,
     referenceImages?: string[],
-    context?: { nodeId?: string; nodeType?: string }
+    context?: { nodeId?: string; nodeType?: string },
+    runtime?: { signal?: AbortSignal }
 ): Promise<{ uri: string, isFallbackImage?: boolean, videoMetadata?: any, uris?: string[] }> => {
     return logAPICall(
         'generateVideo',
         async () => {
+            throwIfAborted(runtime?.signal);
             requireGeminiProvider('视频生成');
             const ai = getClient();
 
@@ -1008,6 +1042,7 @@ export const generateVideo = async (
                 const operations = [];
                 for (let i = 0; i < count; i++) {
                     operations.push(retryWithBackoff(async () => {
+                        throwIfAborted(runtime?.signal);
                         let op = await ai.models.generateVideos({
                             model: model,
                             ...inputs,
@@ -1015,7 +1050,8 @@ export const generateVideo = async (
                         });
 
                         while (!op.done) {
-                            await wait(5000);
+                            await waitWithAbort(5000, runtime?.signal);
+                            throwIfAborted(runtime?.signal);
                             op = await ai.operations.getVideosOperation({ operation: op });
                         }
                         return op;

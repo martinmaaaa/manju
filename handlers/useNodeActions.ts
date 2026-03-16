@@ -246,6 +246,135 @@ export function useNodeActions(params: UseNodeActionsParams) {
         platform: selectedPlatform,
         model: selectedModel,
     });
+
+    const buildVideoGeneratorGenerationJobMetadata = (
+        nodeId: string,
+        model?: string,
+        generationMode?: string,
+    ) => ({
+        nodeId,
+        nodeType: NodeType.VIDEO_GENERATOR,
+        triggerAction: 'generate-video-node',
+        cancelAction: 'cancel-video-generation',
+        source: 'video-generator',
+        model,
+        generationMode,
+    });
+
+    const buildJimengGenerationJobMetadata = (nodeId: string) => ({
+        nodeId,
+        nodeType: NodeType.JIMENG_VIDEO_GENERATOR,
+        triggerAction: 'generate-jimeng-video',
+        cancelAction: 'cancel-jimeng-video',
+        source: 'jimeng-video-generator',
+        provider: 'jimeng',
+    });
+
+    const queueTrackedNodeGenerationJob = async (
+        existingId: string | undefined,
+        draft: {
+            provider: string;
+            model?: string;
+            capability?: string;
+            prompt: string;
+            metadata: Record<string, unknown>;
+            sourcePayload?: Record<string, unknown>;
+            legacyJobId?: string | null;
+        },
+    ) => {
+        const generationScope = resolveGenerationJobScope();
+        const payload = {
+            projectId: generationScope.projectId,
+            workflowInstanceId: generationScope.workflowInstanceId,
+            legacyJobId: draft.legacyJobId ?? null,
+            provider: draft.provider,
+            model: draft.model ?? null,
+            capability: draft.capability ?? 'video',
+            prompt: draft.prompt,
+            status: 'QUEUED',
+            phase: 'QUEUED',
+            progress: 0,
+            error: null,
+            resultUrl: null,
+            resultPayload: {},
+            metadata: draft.metadata,
+            sourcePayload: draft.sourcePayload ?? {},
+            startedAt: null,
+            completedAt: null,
+        };
+
+        return existingId
+            ? await updateTrackedGenerationJob(existingId, payload)
+            : await createTrackedGenerationJob(payload);
+    };
+
+    const buildStoryboardGenerationSourcePayload = (
+        node: AppNode,
+        selectedPlatform: string,
+        selectedModel: string,
+        modelConfig: Record<string, unknown>,
+    ) => ({
+        modelConfig,
+        selectedPlatform,
+        selectedModel,
+        selectedShotIds: node.data.selectedShotIds || [],
+        hasReferenceImage: Boolean(node.data.fusedImage || node.data.fusedImageUrl),
+    });
+
+    const buildVideoGeneratorSourcePayload = (
+        node: AppNode,
+        strategy: {
+            generationMode: string;
+            inputImageForGeneration?: string | null;
+            videoInput?: unknown;
+            referenceImages?: string[];
+        },
+    ) => ({
+        generationMode: strategy.generationMode,
+        aspectRatio: node.data.aspectRatio || '16:9',
+        resolution: node.data.resolution,
+        count: node.data.videoCount || 1,
+        hasInputImage: Boolean(strategy.inputImageForGeneration),
+        hasVideoInput: Boolean(strategy.videoInput),
+        referenceImagesCount: strategy.referenceImages?.length || 0,
+    });
+
+    const collectJimengReferenceFiles = async (node: AppNode, inputs: AppNode[]) => {
+        const filesToUpload: File[] = [];
+        const directReferenceFiles = Array.isArray(node.data.referenceFiles) ? node.data.referenceFiles : [];
+        const droppedFiles = Array.isArray(node.data.droppedFiles) ? node.data.droppedFiles : [];
+        let upstreamImageCount = 0;
+
+        for (const inputNode of inputs) {
+            if (!inputNode) continue;
+            const inputData = inputNode.data;
+            if (!inputData.image) continue;
+
+            upstreamImageCount += 1;
+            const fetchRes = await fetch(inputData.image);
+            const blob = await fetchRes.blob();
+            filesToUpload.push(new File([blob], `ref-image-${inputNode.id}.png`, { type: 'image/png' }));
+        }
+
+        filesToUpload.push(...directReferenceFiles, ...droppedFiles);
+
+        const referenceValidation = validateJimengReferenceFiles(filesToUpload);
+        const referenceError = getJimengReferenceValidationMessage(referenceValidation);
+        if (referenceError) {
+            throw new Error(referenceError);
+        }
+
+        return {
+            acceptedFiles: referenceValidation.acceptedFiles,
+            sourcePayload: {
+                directReferenceFileCount: directReferenceFiles.length,
+                droppedFileCount: droppedFiles.length,
+                upstreamImageCount,
+                acceptedFileCount: referenceValidation.acceptedFiles.length,
+                acceptedFileNames: referenceValidation.acceptedFiles.map(file => file.name),
+            },
+        };
+    };
     const resetSoraTaskGroupForExecution = (
         taskGroup: SoraTaskGroup,
         generationJobId: string | undefined,
@@ -1500,51 +1629,18 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         selectedPlatform,
                         selectedModel,
                     );
-                    const generationScope = resolveGenerationJobScope();
-                    const trackedJob = node.data.generationJobId
-                        ? await updateTrackedGenerationJob(node.data.generationJobId, {
-                            projectId: generationScope.projectId,
-                            workflowInstanceId: generationScope.workflowInstanceId,
-                            provider: selectedPlatform,
-                            model: selectedModel,
-                            capability: 'video',
-                            prompt: generatedPrompt,
-                            status: 'QUEUED',
-                            phase: 'QUEUED',
-                            progress: 0,
-                            error: null,
-                            resultUrl: null,
-                            resultPayload: {},
-                            metadata: generationMetadata,
-                            sourcePayload: {
-                                modelConfig,
-                                selectedPlatform,
-                                selectedModel,
-                                selectedShotIds: node.data.selectedShotIds || [],
-                                hasReferenceImage: Boolean(node.data.fusedImage || node.data.fusedImageUrl),
-                            },
-                            startedAt: null,
-                            completedAt: null,
-                        })
-                        : await createTrackedGenerationJob({
-                            projectId: generationScope.projectId,
-                            workflowInstanceId: generationScope.workflowInstanceId,
-                            provider: selectedPlatform,
-                            model: selectedModel,
-                            capability: 'video',
-                            prompt: generatedPrompt,
-                            status: 'QUEUED',
-                            phase: 'QUEUED',
-                            progress: 0,
-                            metadata: generationMetadata,
-                            sourcePayload: {
-                                modelConfig,
-                                selectedPlatform,
-                                selectedModel,
-                                selectedShotIds: node.data.selectedShotIds || [],
-                                hasReferenceImage: Boolean(node.data.fusedImage || node.data.fusedImageUrl),
-                            },
-                        });
+                    const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
+                        provider: selectedPlatform,
+                        model: selectedModel,
+                        prompt: generatedPrompt,
+                        metadata: generationMetadata,
+                        sourcePayload: buildStoryboardGenerationSourcePayload(
+                            node,
+                            selectedPlatform,
+                            selectedModel,
+                            modelConfig,
+                        ),
+                    });
                     const generationJobId = trackedJob?.id ?? node.data.generationJobId;
 
                     handleNodeUpdate(id, {
@@ -1695,7 +1791,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         const isCancelled = error?.name === 'AbortError'
                             || errorMessage === 'Task cancelled.'
                             || /cancel/i.test(errorMessage)
-                            || /取消/.test(errorMessage);
+                            || errorMessage.includes('\u53d6\u6d88');
 
                         if (isCancelled) {
                             await updateTrackedGenerationJob(generationJobId, {
@@ -1775,7 +1871,17 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 return null;
             }).filter(t => t && t.trim().length > 0) as string[];
 
-            let prompt = promptOverride || node.data.prompt || '';
+            const controlPromptOverrides = new Set([
+                'generate-video-node',
+                'cancel-video-generation',
+                'generate-jimeng-video',
+                'cancel-jimeng-video',
+            ]);
+            const effectivePromptOverride = promptOverride && !controlPromptOverrides.has(promptOverride)
+                ? promptOverride
+                : undefined;
+
+            let prompt = effectivePromptOverride || node.data.prompt || '';
             if (upstreamTexts.length > 0) {
                 const combinedUpstream = upstreamTexts.join('\n\n');
                 prompt = prompt ? `${combinedUpstream}\n\n${prompt}` : combinedUpstream;
@@ -2275,27 +2381,108 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 }
 
             } else if (node.type === NodeType.VIDEO_GENERATOR) {
-                // Extract style preset from inputs
+                if (promptOverride === 'cancel-video-generation') {
+                    const generationJobId = node.data.generationJobId;
+                    const abortController = abortControllersRef.current.get(id);
+                    if (abortController) {
+                        abortController.abort();
+                        abortControllersRef.current.delete(id);
+                    }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'CANCELLED',
+                        phase: 'CANCELLED',
+                        error: 'Task cancelled.',
+                        metadata: buildVideoGeneratorGenerationJobMetadata(
+                            id,
+                            node.data.model,
+                            node.data.generationMode,
+                        ),
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        progress: 0,
+                        error: undefined,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                }
+
                 const stylePresetNode = inputs.find(n => n.type === NodeType.STYLE_PRESET);
                 const stylePrefix = stylePresetNode?.data.stylePrompt || '';
                 const finalPrompt = stylePrefix ? `${stylePrefix}, ${prompt}` : prompt;
 
                 const { getGenerationStrategy } = await import('../services/videoStrategies');
                 const strategy = await getGenerationStrategy(node, inputs, finalPrompt);
+                const generationMetadata = buildVideoGeneratorGenerationJobMetadata(
+                    id,
+                    node.data.model,
+                    strategy.generationMode,
+                );
+                const forceRegenerate = promptOverride === 'generate-video-node';
+                const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
+                    provider: 'gemini',
+                    model: node.data.model,
+                    prompt: strategy.finalPrompt,
+                    metadata: generationMetadata,
+                    sourcePayload: buildVideoGeneratorSourcePayload(node, strategy),
+                });
+                const generationJobId = trackedJob?.id ?? node.data.generationJobId;
 
-                // ✅ 检查缓存
-                const cachedVideo = await checkVideoNodeCache(id);
+                const cachedVideo = forceRegenerate
+                    ? null
+                    : await checkVideoNodeCache(id);
                 if (cachedVideo) {
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'COMPLETED',
+                        phase: 'COMPLETED',
+                        progress: 100,
+                        error: null,
+                        resultUrl: cachedVideo,
+                        resultPayload: {
+                            cached: true,
+                            uriCount: 1,
+                        },
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
+
                     handleNodeUpdate(id, {
                         videoUri: cachedVideo,
                         videoMetadata: node.data.videoMetadata,
                         videoUris: [cachedVideo],
-                        status: NodeStatus.SUCCESS,
                         isCached: true,
-                        cacheLocation: 'filesystem'
+                        cacheLocation: 'filesystem',
+                        isWorking: false,
+                        generationJobId,
                     });
-                } else {
-                    // ❌ 没有缓存，调用 API
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                }
+
+                handleNodeUpdate(id, {
+                    progress: 0,
+                    error: undefined,
+                    isCached: false,
+                    isWorking: true,
+                    generationJobId,
+                });
+
+                await updateTrackedGenerationJob(generationJobId, {
+                    status: 'RUNNING',
+                    phase: 'RUNNING',
+                    progress: 10,
+                    error: null,
+                    metadata: generationMetadata,
+                });
+
+                const abortController = new AbortController();
+                abortControllersRef.current.set(id, abortController);
+
+                try {
                     const { generateVideo } = await import('../services/geminiService');
                     const res = await generateVideo(
                         strategy.finalPrompt,
@@ -2309,28 +2496,111 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         strategy.inputImageForGeneration,
                         strategy.videoInput,
                         strategy.referenceImages,
-                        { nodeId: id, nodeType: node.type }
+                        { nodeId: id, nodeType: node.type },
+                        { signal: abortController.signal }
                     );
+
+                    abortControllersRef.current.delete(id);
+
                     if (res.isFallbackImage) {
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'COMPLETED',
+                            phase: 'COMPLETED',
+                            progress: 100,
+                            error: null,
+                            resultUrl: res.uri,
+                            resultPayload: {
+                                fallbackImage: true,
+                            },
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
                         handleNodeUpdate(id, {
                             image: res.uri,
                             videoUri: undefined,
                             videoMetadata: undefined,
                             error: "Region restricted: Generated preview image instead.",
-                            status: NodeStatus.SUCCESS,
-                            isCached: false
+                            isCached: false,
+                            isWorking: false,
+                            generationJobId,
                         });
-                    } else {
-                        handleNodeUpdate(id, {
-                            videoUri: res.uri,
-                            videoMetadata: res.videoMetadata,
-                            videoUris: res.uris,
-                            isCached: false
-                        });
-                        // Save to local storage
-                        const videoUris = res.uris || [res.uri];
-                        await saveVideoNodeOutput(id, videoUris, 'VIDEO_GENERATOR');
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
                     }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'COMPLETED',
+                        phase: 'COMPLETED',
+                        progress: 100,
+                        error: null,
+                        resultUrl: res.uri,
+                        resultPayload: {
+                            fallbackImage: false,
+                            uriCount: res.uris?.length || 1,
+                            hasVideoMetadata: Boolean(res.videoMetadata),
+                        },
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        videoUri: res.uri,
+                        videoMetadata: res.videoMetadata,
+                        videoUris: res.uris,
+                        isCached: false,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    const videoUris = res.uris || [res.uri];
+                    await saveVideoNodeOutput(id, videoUris, 'VIDEO_GENERATOR');
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                } catch (error: any) {
+                    abortControllersRef.current.delete(id);
+
+                    const errorMessage = typeof error?.message === 'string'
+                        ? error.message
+                        : 'Video generation failed.';
+                    const isCancelled = error?.name === 'AbortError'
+                        || errorMessage === 'Task cancelled.'
+                        || /cancel/i.test(errorMessage)
+                        || errorMessage.includes('\u53d6\u6d88');
+
+                    if (isCancelled) {
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'CANCELLED',
+                            phase: 'CANCELLED',
+                            error: 'Task cancelled.',
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
+                        handleNodeUpdate(id, {
+                            progress: 0,
+                            error: undefined,
+                            isWorking: false,
+                            generationJobId,
+                        });
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
+                    }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'FAILED',
+                        phase: 'FAILED',
+                        error: errorMessage,
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        error: errorMessage,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                    throw error;
                 }
 
             } else if (node.type === NodeType.AUDIO_GENERATOR) {
@@ -3094,195 +3364,222 @@ Everything else must be purely visual with no text whatsoever.
 
 
             } else if (node.type === NodeType.JIMENG_VIDEO_GENERATOR) {
-                if (promptOverride === 'generate-jimeng-video') {
-                    if (!prompt) {
-                        throw new Error('请输入即梦视频提示词');
+                if (promptOverride === 'cancel-jimeng-video') {
+                    const generationJobId = node.data.generationJobId;
+                    const abortController = abortControllersRef.current.get(id);
+                    if (abortController) {
+                        abortController.abort();
+                        abortControllersRef.current.delete(id);
                     }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'CANCELLED',
+                        phase: 'CANCELLED',
+                        error: 'Task cancelled.',
+                        metadata: buildJimengGenerationJobMetadata(id),
+                        completedAt: new Date().toISOString(),
+                    });
 
                     handleNodeUpdate(id, {
-                        status: 'queued',
+                        status: 'prompting',
                         progress: 0,
-                        isWorking: true,
                         error: undefined,
+                        jimengReferenceError: undefined,
+                        isWorking: false,
+                        generationJobId,
                     });
-                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
-
-                    try {
-                        const { jimengApi } = await import('../services/jimengApi');
-
-                        const filesToUpload: File[] = [];
-                        const directReferenceFiles = Array.isArray(node.data.referenceFiles) ? node.data.referenceFiles : [];
-                        const droppedFiles = Array.isArray(node.data.droppedFiles) ? node.data.droppedFiles : [];
-
-                        for (const inputNode of inputs) {
-                            if (!inputNode) continue;
-                            const inputData = inputNode.data;
-                            if (inputData.image) {
-                                const fetchRes = await fetch(inputData.image);
-                                const blob = await fetchRes.blob();
-                                filesToUpload.push(new File([blob], `ref-image-${inputNode.id}.png`, { type: 'image/png' }));
-                            }
-                        }
-
-                        filesToUpload.push(...directReferenceFiles, ...droppedFiles);
-
-                        const referenceValidation = validateJimengReferenceFiles(filesToUpload);
-                        const referenceError = getJimengReferenceValidationMessage(referenceValidation);
-                        if (referenceError) {
-                            throw new Error(referenceError);
-                        }
-
-                        handleNodeUpdate(id, {
-                            progress: 10,
-                            jimengReferenceError: undefined,
-                        });
-
-                        const created = await jimengApi.createVideoJob({
-                            prompt,
-                            files: referenceValidation.acceptedFiles,
-                        });
-
-                        if (!created.success || !created.job) {
-                            throw new Error(created.error || '创建即梦任务失败');
-                        }
-
-                        const abortController = new AbortController();
-                        abortControllersRef.current.set(id, abortController);
-
-                        handleNodeUpdate(id, {
-                            status: created.job.status.toLowerCase(),
-                            progress: created.job.progress,
-                            jimengJobId: created.job.id,
-                            jimengJobStatus: created.job.status,
-                            jimengJobPhase: created.job.phase,
-                            jimengJobUpdatedAt: created.job.updated_at,
-                        });
-
-                        const result = await jimengApi.waitForJobCompletion(created.job.id, {
-                            signal: abortController.signal,
-                            onUpdate: async (job) => {
-                                handleNodeUpdate(id, {
-                                    status: job.status.toLowerCase(),
-                                    progress: job.progress,
-                                    error: job.error,
-                                    isWorking: job.status !== 'SUCCEEDED' && job.status !== 'FAILED',
-                                    jimengJobId: job.id,
-                                    jimengJobStatus: job.status,
-                                    jimengJobPhase: job.phase,
-                                    jimengJobUpdatedAt: job.updated_at,
-                                });
-                            },
-                        });
-
-                        abortControllersRef.current.delete(id);
-
-                        if (!result.success || !result.job) {
-                            throw new Error(result.error || '获取即梦任务结果失败');
-                        }
-
-                        if (result.job.status !== 'SUCCEEDED' || !result.job.videoUrl) {
-                            throw new Error(result.job.error || '即梦任务未成功完成');
-                        }
-
-                        handleNodeUpdate(id, {
-                            status: 'completed',
-                            progress: 100,
-                            isWorking: false,
-                            error: undefined,
-                            videoUrl: result.job.videoUrl,
-                            jimengJobId: result.job.id,
-                            jimengJobStatus: result.job.status,
-                            jimengJobPhase: result.job.phase,
-                            jimengJobUpdatedAt: result.job.updated_at,
-                        });
-                        handleAssetGenerated('video', result.job.videoUrl, `即梦视频: ${prompt.substring(0, 10)}...`);
-                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
-                        return;
-                    } catch (error: any) {
-                        console.error('[JIMENG_VIDEO_GENERATOR] Error:', error);
-                        abortControllersRef.current.delete(id);
-                        handleNodeUpdate(id, {
-                            status: 'failed',
-                            error: error.message || '即梦生成失败',
-                            jimengReferenceError: error.message || '即梦生成失败',
-                            isWorking: false,
-                        });
-                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
-                        throw error;
-                    }
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
                 }
 
-                // --- Jimeng Seedance 2.0 Video Generator Logic ---
-                if (promptOverride === 'generate-jimeng-video') {
-                    if (!prompt) throw new Error("请输入生图描述");
+                if (!prompt) {
+                    throw new Error('请输入即梦视频提示词');
+                }
+
+                const { acceptedFiles, sourcePayload } = await collectJimengReferenceFiles(node, inputs);
+                const generationMetadata = buildJimengGenerationJobMetadata(id);
+                const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
+                    provider: 'jimeng',
+                    model: node.data.model || 'seedance-2.0',
+                    prompt,
+                    metadata: generationMetadata,
+                    sourcePayload,
+                });
+                const generationJobId = trackedJob?.id ?? node.data.generationJobId;
+
+                handleNodeUpdate(id, {
+                    status: 'queued',
+                    progress: 0,
+                    isWorking: true,
+                    error: undefined,
+                    jimengReferenceError: undefined,
+                    generationJobId,
+                });
+                setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
+
+                try {
+                    const { jimengApi } = await import('../services/jimengApi');
+                    const generationScope = resolveGenerationJobScope();
+                    const created = await jimengApi.createVideoJob({
+                        prompt,
+                        files: acceptedFiles,
+                        projectId: generationScope.projectId,
+                        workflowInstanceId: generationScope.workflowInstanceId,
+                    });
+
+                    if (!created.success || !created.job) {
+                        throw new Error(created.error || '创建即梦任务失败');
+                    }
+
+                    const abortController = new AbortController();
+                    abortControllersRef.current.set(id, abortController);
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        legacyJobId: created.job.id,
+                        status: 'RUNNING',
+                        phase: created.job.phase || 'RUNNING',
+                        progress: created.job.progress,
+                        error: null,
+                        metadata: {
+                            ...generationMetadata,
+                            jimengStatus: created.job.status,
+                        },
+                    });
 
                     handleNodeUpdate(id, {
-                        status: 'generating',
-                        progress: 0,
-                        isWorking: true
+                        status: created.job.status.toLowerCase(),
+                        progress: created.job.progress,
+                        jimengJobId: created.job.id,
+                        jimengJobStatus: created.job.status,
+                        jimengJobPhase: created.job.phase,
+                        jimengJobUpdatedAt: created.job.updated_at,
+                        generationJobId,
                     });
-                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
 
-                    try {
-                        const { jimengApi } = await import('../services/jimengApi');
-
-                        const filesToUpload: File[] = [];
-                        const directReferenceFiles = Array.isArray(node.data.referenceFiles) ? node.data.referenceFiles : [];
-                        const droppedFiles = Array.isArray(node.data.droppedFiles) ? node.data.droppedFiles : [];
-
-                        // Look for standard file properties in inputs (e.g. from IMAGE_GENERATOR, AUDIO_INPUT etc)
-                        for (const inputNode of inputs) {
-                            if (!inputNode) continue;
-                            const nid = inputNode.data;
-                            if (nid.image) {
-                                // Convert base64 to File
-                                const fetchRes = await fetch(nid.image);
-                                const blob = await fetchRes.blob();
-                                filesToUpload.push(new File([blob], `ref-image-${inputNode.id}.png`, { type: 'image/png' }));
-                            }
-                        }
-
-                        filesToUpload.push(...directReferenceFiles, ...droppedFiles);
-
-                        const referenceValidation = validateJimengReferenceFiles(filesToUpload);
-                        const referenceError = getJimengReferenceValidationMessage(referenceValidation);
-                        if (referenceError) {
-                            throw new Error(referenceError);
-                        }
-
-                        handleNodeUpdate(id, {
-                            progress: 20,
-                            jimengReferenceError: undefined
-                        });
-
-                        const result = await jimengApi.generateVideo({
-                            prompt,
-                            files: referenceValidation.acceptedFiles
-                        });
-
-                        if (result.success && result.videoUrl) {
+                    const result = await jimengApi.waitForJobCompletion(created.job.id, {
+                        signal: abortController.signal,
+                        onUpdate: async (job) => {
                             handleNodeUpdate(id, {
-                                status: 'completed',
-                                progress: 100,
-                                isWorking: false,
-                                videoUrl: result.videoUrl,
+                                status: job.status.toLowerCase(),
+                                progress: job.progress,
+                                error: job.error,
+                                isWorking: job.status !== 'SUCCEEDED' && job.status !== 'FAILED',
+                                jimengJobId: job.id,
+                                jimengJobStatus: job.status,
+                                jimengJobPhase: job.phase,
+                                jimengJobUpdatedAt: job.updated_at,
+                                generationJobId,
                             });
-                            handleAssetGenerated('video', result.videoUrl, `即梦视频: ${prompt.substring(0, 10)}...`);
-                            setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
-                        } else {
-                            throw new Error(result.error || "即梦接口返回失败");
-                        }
-                    } catch (error: any) {
-                        console.error('[JIMENG_VIDEO_GENERATOR] Error:', error);
+
+                            await updateTrackedGenerationJob(generationJobId, {
+                                legacyJobId: job.id,
+                                status: job.status === 'SUCCEEDED'
+                                    ? 'COMPLETED'
+                                    : job.status === 'FAILED'
+                                        ? 'FAILED'
+                                        : 'RUNNING',
+                                phase: job.phase || job.status,
+                                progress: job.progress,
+                                error: job.error ?? null,
+                                metadata: {
+                                    ...generationMetadata,
+                                    jimengStatus: job.status,
+                                },
+                            });
+                        },
+                    });
+
+                    abortControllersRef.current.delete(id);
+
+                    if (!result.success || !result.job) {
+                        throw new Error(result.error || '获取即梦任务结果失败');
+                    }
+
+                    if (result.job.status !== 'SUCCEEDED' || !result.job.videoUrl) {
+                        throw new Error(result.job.error || '即梦任务未成功完成');
+                    }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        legacyJobId: result.job.id,
+                        status: 'COMPLETED',
+                        phase: 'COMPLETED',
+                        progress: 100,
+                        error: null,
+                        resultUrl: result.job.videoUrl,
+                        resultPayload: {
+                            jimengJobId: result.job.id,
+                            jimengPhase: result.job.phase,
+                            attempts: result.job.attempts,
+                        },
+                        metadata: generationMetadata,
+                        completedAt: result.job.completed_at || new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        status: 'completed',
+                        progress: 100,
+                        isWorking: false,
+                        error: undefined,
+                        videoUrl: result.job.videoUrl,
+                        jimengJobId: result.job.id,
+                        jimengJobStatus: result.job.status,
+                        jimengJobPhase: result.job.phase,
+                        jimengJobUpdatedAt: result.job.updated_at,
+                        generationJobId,
+                    });
+                    handleAssetGenerated('video', result.job.videoUrl, `即梦视频: ${prompt.substring(0, 10)}...`);
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                } catch (error: any) {
+                    console.error('[JIMENG_VIDEO_GENERATOR] Error:', error);
+                    abortControllersRef.current.delete(id);
+
+                    const errorMessage = typeof error?.message === 'string'
+                        ? error.message
+                        : '即梦生成失败';
+                    const isCancelled = error?.name === 'AbortError'
+                        || errorMessage === 'Task cancelled.'
+                        || /cancel/i.test(errorMessage)
+                        || errorMessage.includes('\u53d6\u6d88');
+
+                    if (isCancelled) {
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'CANCELLED',
+                            phase: 'CANCELLED',
+                            error: 'Task cancelled.',
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
                         handleNodeUpdate(id, {
                             status: 'prompting',
-                            error: error.message || '即梦生成失败',
-                            jimengReferenceError: error.message || '即梦生成失败',
-                            isWorking: false
+                            progress: 0,
+                            error: undefined,
+                            jimengReferenceError: undefined,
+                            isWorking: false,
+                            generationJobId,
                         });
-                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
-                        throw error;
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
                     }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'FAILED',
+                        phase: 'FAILED',
+                        error: errorMessage,
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        status: 'failed',
+                        error: errorMessage,
+                        jimengReferenceError: errorMessage,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                    throw error;
                 }
 
             } else if (node.type === NodeType.VIDEO_ANALYZER) {

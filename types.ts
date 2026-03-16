@@ -324,6 +324,7 @@ export interface AppNode {
 
     // Video Generation Extended
     videoUrl?: string; // 视频URL（videoUri 别名）
+    generationJobId?: string;
 
     // Storyboard Video Child Specifics
     platformInfo?: {
