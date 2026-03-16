@@ -499,6 +499,7 @@ export interface SoraTaskGroup {
 
   // 视频生成状态
   generationStatus: 'idle' | 'prompt_ready' | 'image_fused' | 'uploading' | 'generating' | 'completed' | 'failed';
+  generationJobId?: string;
   soraTaskId?: string;
   progress?: number; // 0-100
   videoUrl?: string; // 视频URL

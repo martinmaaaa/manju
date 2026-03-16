@@ -227,8 +227,8 @@ export function useNodeActions(params: UseNodeActionsParams) {
         taskGroupId: taskGroup.id,
         taskGroupIndex,
         taskNumber: taskGroup.taskNumber,
-        triggerAction: 'generate-video',
-        cancelAction: 'cancel-generation-job',
+        triggerAction: `generate-video:${taskGroupIndex}`,
+        cancelAction: `cancel-generation-job:${taskGroupIndex}`,
         source: 'sora-task-group',
         soraProvider: taskGroup.provider || 'sora',
     });
@@ -516,7 +516,45 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 }
                             }
                         }, 5000);
+                }
+                return;
+            }
+
+                if (promptOverride?.startsWith('cancel-generation-job:')) {
+                    const taskGroupIndex = Number.parseInt(promptOverride.split(':')[1] ?? '', 10);
+                    const taskGroup = Number.isFinite(taskGroupIndex) ? taskGroups[taskGroupIndex] : null;
+
+                    if (!taskGroup) {
+                        throw new Error('未找到要取消的任务组');
                     }
+
+                    const generationJobId = taskGroup.generationJobId;
+                    if (generationJobId) {
+                        const runningController = abortControllersRef.current.get(generationJobId);
+                        if (runningController) {
+                            runningController.abort();
+                        }
+                        abortControllersRef.current.delete(generationJobId);
+
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'CANCELLED',
+                            phase: 'CANCELLED',
+                            error: 'Task cancelled.',
+                            metadata: buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
+                            completedAt: new Date().toISOString(),
+                        });
+                    }
+
+                    const updatedTaskGroups = [...taskGroups];
+                    updatedTaskGroups[taskGroupIndex] = {
+                        ...resetSoraTaskGroupForExecution(taskGroup, generationJobId),
+                        generationStatus: taskGroup.imageFused ? 'image_fused' : 'prompt_ready',
+                        progress: 0,
+                        error: undefined,
+                    };
+
+                    handleNodeUpdate(id, { taskGroups: updatedTaskGroups });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
                 }
 
@@ -736,6 +774,30 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                     } catch (error: any) {
                         console.error('[SORA_VIDEO_GENERATOR] Failed to generate video:', error);
+                        if (generationJobId) {
+                            abortControllersRef.current.delete(generationJobId);
+                        }
+                        const cancelled = error?.name === 'AbortError'
+                            || error?.message === '任务已取消'
+                            || error?.message === 'Task cancelled.';
+                        if (cancelled) {
+                            await updateTrackedGenerationJob(generationJobId, {
+                                status: 'CANCELLED',
+                                phase: 'CANCELLED',
+                                error: 'Task cancelled.',
+                                metadata: buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
+                                completedAt: new Date().toISOString(),
+                            });
+                            updatedTaskGroups[taskGroupIndex] = {
+                                ...resetSoraTaskGroupForExecution(taskGroup, generationJobId),
+                                generationStatus: taskGroup.imageFused ? 'image_fused' : 'prompt_ready',
+                                progress: 0,
+                                error: undefined,
+                            };
+                            handleNodeUpdate(id, { taskGroups: updatedTaskGroups });
+                            setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                            return;
+                        }
                         const errorMessage = error.message || '生成失败';
 
                         // 更新任务组状态

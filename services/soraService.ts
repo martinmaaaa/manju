@@ -18,6 +18,45 @@ import type { SoraSubmitResult, SoraVideoResult, SoraSubmitParams, CallContext }
 // 重新导出类型供外部使用
 export type { SoraSubmitResult, SoraVideoResult } from './soraProviders';
 
+function createAbortError(): Error {
+  const error = new Error('任务已取消');
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  throw createAbortError();
+}
+
+function waitWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      window.clearTimeout(timeoutId);
+      signal.removeEventListener('abort', onAbort);
+      reject(createAbortError());
+    };
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /**
  * 构建 Sora 2 分镜模式提示词
  */
@@ -117,13 +156,15 @@ export async function pollSoraTaskUntilComplete(
   taskId: string,
   onProgress?: (progress: number) => void,
   pollingInterval: number = 10000,  // 10 秒轮询间隔
-  context?: { nodeId?: string; nodeType?: string }
+  context?: { nodeId?: string; nodeType?: string },
+  options?: { signal?: AbortSignal },
 ): Promise<SoraVideoResult> {
   let attempts = 0;
   const maxAttempts = 240; // 240 次 × 10 秒 = 40 分钟
 
 
   while (attempts < maxAttempts) {
+    throwIfAborted(options?.signal);
     const result = await checkSoraTaskStatus(taskId, onProgress, context);
 
 
@@ -178,10 +219,11 @@ export async function pollSoraTaskUntilComplete(
     attempts++;
 
     // 等待后重试
-    await new Promise(resolve => setTimeout(resolve, pollingInterval));
+    await waitWithSignal(pollingInterval, options?.signal);
   }
 
   // 超时前最后尝试一次查询
+  throwIfAborted(options?.signal);
   const finalResult = await checkSoraTaskStatus(taskId, undefined, context);
 
   if (finalResult.videoUrl || finalResult.status === 'completed') {
@@ -197,9 +239,11 @@ export async function pollSoraTaskUntilComplete(
 export async function generateSoraVideo(
   taskGroup: SoraTaskGroup,
   onProgress?: (message: string, progress: number) => void,
-  context?: { nodeId?: string; nodeType?: string }
+  context?: { nodeId?: string; nodeType?: string },
+  options?: { signal?: AbortSignal },
 ): Promise<SoraVideoResult> {
   try {
+    throwIfAborted(options?.signal);
 
     // 用局部变量跟踪 taskId，避免修改传入的只读对象
     let soraTaskId = taskGroup.soraTaskId;
@@ -214,6 +258,7 @@ export async function generateSoraVideo(
       if (referenceImageUrl && referenceImageUrl.startsWith('data:')) {
         // Base64 格式，需要上传到 OSS
         onProgress?.('正在上传参考图片到 OSS...', 5);
+        throwIfAborted(options?.signal);
 
         const ossConfig = getOSSConfig();
         if (!ossConfig) {
@@ -231,6 +276,7 @@ export async function generateSoraVideo(
 
       // 3. 提交新任务
       onProgress?.('正在提交 Sora 2 任务...', 10);
+      throwIfAborted(options?.signal);
 
 
       if (!referenceImageUrl) {
@@ -244,6 +290,7 @@ export async function generateSoraVideo(
         taskGroup.sora2Config,
         context
       );
+      throwIfAborted(options?.signal);
 
       soraTaskId = submitResult.id;
 
@@ -261,12 +308,16 @@ export async function generateSoraVideo(
         onProgress?.(`视频生成中... ${progress}%`, progress);
       },
       5000,
-      context
+      context,
+      options
     );
 
     return result;
 
   } catch (error: any) {
+    if (options?.signal?.aborted || error?.name === 'AbortError' || error?.message === '任务已取消') {
+      throw createAbortError();
+    }
     console.error('[Sora Service] Generate video failed:', error);
     throw error;
   }

@@ -38,12 +38,16 @@ import { useWindowSize } from './hooks/useWindowSize';
 import { useUIStore } from './stores/ui.store';
 import { useEditorStore } from './stores/editor.store';
 import {
+  cancelGenerationJob,
   getProjects,
   getProject,
   getProjectWorkflowEntities,
   createProject,
+  requeueGenerationJob,
+  retryGenerationJob,
   updateProject,
   isApiAvailable,
+  type GenerationJob,
   type ProjectDetail,
 } from './services/api';
 import { initSync, setSyncProjectId, getSyncProjectId, createStoreSubscription, syncFullSnapshot, setOnlineStatus, subscribeToSyncStatus } from './services/syncMiddleware';
@@ -1284,6 +1288,52 @@ export const App = () => {
     setCurrentView('workspace');
   }, [handleSelectEpisodeWorkflow, setCurrentView]);
 
+  const handleGenerationJobAction = useCallback(async (
+    job: GenerationJob,
+    action: 'cancel' | 'requeue' | 'retry',
+  ): Promise<{ success: boolean; error?: string }> => {
+    const metadata = job.metadata && typeof job.metadata === 'object'
+      ? job.metadata as Record<string, unknown>
+      : {};
+
+    const nodeId = typeof metadata.nodeId === 'string' ? metadata.nodeId : null;
+    const taskGroupIndex = typeof metadata.taskGroupIndex === 'number'
+      ? metadata.taskGroupIndex
+      : (typeof metadata.taskGroupIndex === 'string' ? Number.parseInt(metadata.taskGroupIndex, 10) : NaN);
+
+    const resolvedTaskGroupIndex = Number.isInteger(taskGroupIndex) ? taskGroupIndex : null;
+
+    try {
+      if (job.provider === 'sora' && nodeId && resolvedTaskGroupIndex !== null) {
+        if (action === 'cancel') {
+          await handleNodeAction(nodeId, `cancel-generation-job:${resolvedTaskGroupIndex}`);
+          const cancelResponse = await cancelGenerationJob(job.id);
+          return cancelResponse.success
+            ? { success: true }
+            : { success: false, error: cancelResponse.error ?? '取消任务失败' };
+        }
+
+        await handleNodeAction(nodeId, `generate-video:${resolvedTaskGroupIndex}`);
+        return { success: true };
+      }
+
+      const response = action === 'cancel'
+        ? await cancelGenerationJob(job.id)
+        : action === 'requeue'
+          ? await requeueGenerationJob(job.id)
+          : await retryGenerationJob(job.id);
+
+      return response.success
+        ? { success: true }
+        : { success: false, error: response.error ?? '任务操作失败' };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error?.message || '任务操作失败',
+      };
+    }
+  }, [handleNodeAction]);
+
   const handleCreateWorkflowAsset = useCallback(async (
     type: WorkflowAssetType,
     name: string,
@@ -2493,6 +2543,8 @@ export const App = () => {
     saveHistory,
     handleNodeUpdate,
     handleAssetGenerated,
+    activeProjectId: activeProject?.id,
+    activeWorkflowInstanceId: workflowProjectState.activeEpisodeId ?? workflowProjectState.activeSeriesId ?? null,
   });
 
   // --- Canvas Snapshot Actions ---
@@ -2698,6 +2750,7 @@ export const App = () => {
             projectTitle={projectWorkspaceTitle}
             workflowState={workflowProjectState}
             onOpenEpisodeWorkspace={handleOpenEpisodeWorkspace}
+            onRunJobAction={handleGenerationJobAction}
           />
         </ProjectWorkspaceLayout>
         <SettingsPanel

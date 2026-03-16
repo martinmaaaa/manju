@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   CheckCircle2,
@@ -9,7 +9,13 @@ import {
   Search,
   TriangleAlert,
 } from 'lucide-react';
-import { listProjectGenerationJobs, type GenerationJob } from '../../../services/api/generationJobApi';
+import {
+  cancelGenerationJob,
+  listProjectGenerationJobs,
+  requeueGenerationJob,
+  retryGenerationJob,
+  type GenerationJob,
+} from '../../../services/api/generationJobApi';
 import type { WorkflowInstance, WorkflowProjectState } from '../../../services/workflow/domain/types';
 
 interface WorkflowJobsViewProps {
@@ -17,10 +23,13 @@ interface WorkflowJobsViewProps {
   projectTitle: string;
   workflowState: WorkflowProjectState;
   onOpenEpisodeWorkspace?: (episodeId: string) => void | Promise<void>;
+  onRunJobAction?: (job: GenerationJob, action: JobAction) => Promise<JobActionResult>;
 }
 
 type JobStatusBucket = 'active' | 'completed' | 'failed' | 'cancelled' | 'other';
 type JobStatusFilter = 'all' | JobStatusBucket;
+type JobAction = 'cancel' | 'requeue' | 'retry';
+type JobActionResult = { success: boolean; error?: string };
 
 const ACTIVE_JOB_STATUSES = new Set([
   'queued',
@@ -169,6 +178,7 @@ export const WorkflowJobsView: React.FC<WorkflowJobsViewProps> = ({
   projectTitle,
   workflowState,
   onOpenEpisodeWorkspace,
+  onRunJobAction,
 }) => {
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [query, setQuery] = useState('');
@@ -178,6 +188,7 @@ export const WorkflowJobsView: React.FC<WorkflowJobsViewProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [jobActionState, setJobActionState] = useState<{ jobId: string; action: JobAction } | null>(null);
 
   const instanceById = useMemo(
     () => new Map(workflowState.instances.map((instance) => [instance.id, instance])),
@@ -324,6 +335,54 @@ export const WorkflowJobsView: React.FC<WorkflowJobsViewProps> = ({
     [filteredJobs],
   );
 
+  const refreshJobsList = useCallback(async (): Promise<boolean> => {
+    if (!projectId) return false;
+
+    const response = await listProjectGenerationJobs(projectId, { limit: 200 });
+    if (response.success) {
+      setJobs(
+        [...response.data].sort(
+          (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at),
+        ),
+      );
+      setError(null);
+      return true;
+    }
+
+    setError(response.error ?? 'Failed to refresh generation jobs.');
+    return false;
+  }, [projectId]);
+
+  const handleJobAction = useCallback(async (job: GenerationJob, action: JobAction) => {
+    setJobActionState({ jobId: job.id, action });
+    setIsRefreshing(true);
+
+    try {
+      let result: JobActionResult;
+      if (onRunJobAction) {
+        result = await onRunJobAction(job, action);
+      } else {
+        const response = action === 'cancel'
+          ? await cancelGenerationJob(job.id)
+          : action === 'requeue'
+            ? await requeueGenerationJob(job.id)
+            : await retryGenerationJob(job.id);
+        result = response.success
+          ? { success: true }
+          : { success: false, error: response.error ?? `Failed to ${action} generation job.` };
+      }
+
+      if (!result.success) {
+        setError(result.error ?? `Failed to ${action} generation job.`);
+      }
+
+      await refreshJobsList();
+    } finally {
+      setJobActionState(null);
+      setIsRefreshing(false);
+    }
+  }, [onRunJobAction, refreshJobsList]);
+
   return (
     <div className="space-y-6">
       <section className="tianti-hero-card p-6">
@@ -343,19 +402,7 @@ export const WorkflowJobsView: React.FC<WorkflowJobsViewProps> = ({
             onClick={() => {
               if (!projectId) return;
               setIsRefreshing(true);
-              void listProjectGenerationJobs(projectId, { limit: 200 }).then((response) => {
-                if (response.success) {
-                  setJobs(
-                    [...response.data].sort(
-                      (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at),
-                    ),
-                  );
-                  setError(null);
-                } else {
-                  setError(response.error ?? 'Failed to refresh generation jobs.');
-                }
-                setIsRefreshing(false);
-              });
+              void refreshJobsList().finally(() => setIsRefreshing(false));
             }}
             className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
           >
@@ -591,6 +638,8 @@ export const WorkflowJobsView: React.FC<WorkflowJobsViewProps> = ({
                   job={selectedJob}
                   target={resolveJobTarget(selectedJob, instanceById)}
                   onOpenEpisodeWorkspace={onOpenEpisodeWorkspace}
+                  onRunJobAction={handleJobAction}
+                  pendingAction={jobActionState && jobActionState.jobId === selectedJob.id ? jobActionState.action : null}
                 />
               ) : (
                 <div className="rounded-[22px] border border-dashed border-white/10 p-6 text-sm leading-7 text-slate-400">
@@ -674,12 +723,20 @@ const JobDetailPanel: React.FC<{
   job: GenerationJob;
   target: ReturnType<typeof resolveJobTarget>;
   onOpenEpisodeWorkspace?: (episodeId: string) => void | Promise<void>;
+  onRunJobAction?: (job: GenerationJob, action: JobAction) => Promise<void>;
+  pendingAction?: JobAction | null;
 }> = ({
   job,
   target,
   onOpenEpisodeWorkspace,
+  onRunJobAction,
+  pendingAction,
 }) => {
   const bucket = getJobStatusBucket(job.status);
+  const isActionPending = Boolean(pendingAction);
+  const canCancel = bucket === 'active';
+  const canRequeue = bucket === 'failed' || bucket === 'cancelled';
+  const canRetry = bucket !== 'active';
   const metadataEntries = Object.entries(job.metadata ?? {}).filter(([, value]) => value !== undefined && value !== null);
   const sourcePayloadEntries = Object.entries(job.sourcePayload ?? {}).filter(([, value]) => value !== undefined && value !== null);
   const resultPayloadEntries = Object.entries(job.resultPayload ?? {}).filter(([, value]) => value !== undefined && value !== null);
@@ -748,6 +805,48 @@ const JobDetailPanel: React.FC<{
           >
             <ExternalLink className="h-4 w-4" />
             Open result
+          </button>
+        ) : null}
+
+        {canCancel && onRunJobAction ? (
+          <button
+            type="button"
+            disabled={isActionPending}
+            onClick={() => {
+              void onRunJobAction(job, 'cancel');
+            }}
+            className="tianti-button tianti-button-secondary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${pendingAction === 'cancel' ? 'animate-spin' : ''}`} />
+            Cancel
+          </button>
+        ) : null}
+
+        {canRequeue && onRunJobAction ? (
+          <button
+            type="button"
+            disabled={isActionPending}
+            onClick={() => {
+              void onRunJobAction(job, 'requeue');
+            }}
+            className="tianti-button tianti-button-secondary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${pendingAction === 'requeue' ? 'animate-spin' : ''}`} />
+            Requeue
+          </button>
+        ) : null}
+
+        {canRetry && onRunJobAction ? (
+          <button
+            type="button"
+            disabled={isActionPending}
+            onClick={() => {
+              void onRunJobAction(job, 'retry');
+            }}
+            className="tianti-button tianti-button-primary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${pendingAction === 'retry' ? 'animate-spin' : ''}`} />
+            Retry
           </button>
         ) : null}
       </div>
