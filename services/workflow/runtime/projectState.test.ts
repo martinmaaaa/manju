@@ -11,10 +11,12 @@ import {
   createWorkflowInstance,
   getEpisodeBindings,
   getEpisodeContinuityStates,
+  getWorkflowProjectEntityCollections,
   getSeriesAssetCoverage,
   getSeriesWorkflowOverview,
   getSuggestedAssetBatchTemplateTargetsForAsset,
   getSuggestedSeriesAssetBatchTemplates,
+  hydrateWorkflowProjectState,
   normalizeWorkflowProjectState,
   removeSeriesAssetBatchTemplate,
   syncAssetBindingsForEpisodes,
@@ -139,6 +141,53 @@ describe('workflow project state runtime', () => {
     const settings = withWorkflowProjectState({ editorMode: 'pipeline' }, workflowState);
 
     expect(settings.workflowState).toEqual(workflowState);
+  });
+
+  it('hydrates workflow state from entity collections', () => {
+    const seriesInstance = createWorkflowInstance('manju-series', 'test series');
+    const baseState = {
+      version: 1 as const,
+      instances: [],
+      activeSeriesId: seriesInstance.id,
+      activeEpisodeId: null,
+      assets: [],
+      assetVersions: [],
+      assetBindings: [],
+      continuityStates: [],
+    };
+
+    const hydratedState = hydrateWorkflowProjectState(baseState, {
+      instances: [seriesInstance],
+      assets: [],
+      assetVersions: [],
+      assetBindings: [],
+      continuityStates: [],
+    });
+
+    expect(hydratedState.instances).toEqual([seriesInstance]);
+    expect(hydratedState.activeSeriesId).toBe(seriesInstance.id);
+  });
+
+  it('clears stale active ids when hydrated entity collections no longer include them', () => {
+    const seriesInstance = createWorkflowInstance('manju-series', 'test series');
+    const state = {
+      version: 1 as const,
+      instances: [seriesInstance],
+      activeSeriesId: seriesInstance.id,
+      activeEpisodeId: 'episode-missing',
+      assets: [],
+      assetVersions: [],
+      assetBindings: [],
+      continuityStates: [],
+    };
+
+    const hydratedState = hydrateWorkflowProjectState(state, {
+      ...getWorkflowProjectEntityCollections(state),
+      instances: [],
+    });
+
+    expect(hydratedState.activeSeriesId).toBeNull();
+    expect(hydratedState.activeEpisodeId).toBeNull();
   });
 
   it('adds reusable assets and binds them to an episode', () => {

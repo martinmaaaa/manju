@@ -5,6 +5,14 @@
 import { apiRequest, isApiAvailable } from './client';
 import type { ApiResponse } from './client';
 import type { AppNode, Connection, Group } from '../../types';
+import type { WorkflowProjectDashboardSummary } from '../workflow/domain/dashboard';
+import type { WorkflowProjectState } from '../workflow/domain/types';
+import { buildWorkflowProjectDashboardSummary } from '../workflow/runtime/projectDashboard';
+import {
+  getWorkflowProjectEntityCollections,
+  normalizeWorkflowProjectState,
+  type WorkflowProjectEntityCollections,
+} from '../workflow/runtime/projectState';
 import { saveToStorage, loadFromStorage } from '../storage_old';
 import { getFileStorageService } from '../storage';
 
@@ -79,6 +87,8 @@ export interface ProjectSummary {
   id: string;
   title: string;
   settings: Record<string, unknown>;
+  workflow_state?: WorkflowProjectState;
+  dashboard?: WorkflowProjectDashboardSummary;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +105,99 @@ export interface SnapshotPayload {
   groups: Group[];
 }
 
+export interface WorkflowEpisodeRecord {
+  workflowInstanceId: string;
+  projectId: string;
+  seriesInstanceId: string | null;
+  episodeNumber: number;
+  title: string;
+  status: string;
+  currentStageId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowProjectEntities extends Required<WorkflowProjectEntityCollections> {
+  episodes: WorkflowEpisodeRecord[];
+}
+
+function enrichProjectSummary(project: ProjectSummary): ProjectSummary {
+  return project.dashboard
+    ? project
+    : {
+        ...project,
+        dashboard: buildWorkflowProjectDashboardSummary(project),
+      };
+}
+
+function resolveProjectWorkflowState(project: Pick<ProjectSummary, 'settings' | 'workflow_state'>): WorkflowProjectState {
+  return project.workflow_state
+    ? normalizeWorkflowProjectState({ workflowState: project.workflow_state })
+    : normalizeWorkflowProjectState(project.settings);
+}
+
+function buildEpisodesFromWorkflowState(projectId: string, workflowState: WorkflowProjectState): WorkflowEpisodeRecord[] {
+  return workflowState.instances
+    .filter((instance) => instance.scope === 'episode')
+    .map((instance) => ({
+      workflowInstanceId: instance.id,
+      projectId,
+      seriesInstanceId: instance.parentInstanceId ?? null,
+      episodeNumber: Number(instance.metadata?.episodeNumber ?? 0),
+      title: instance.title,
+      status: instance.status,
+      currentStageId: instance.currentStageId ?? null,
+      metadata: instance.metadata ?? {},
+      createdAt: instance.createdAt,
+      updatedAt: instance.updatedAt,
+    }));
+}
+
+function toWorkflowProjectEntities(projectId: string, workflowState: WorkflowProjectState): WorkflowProjectEntities {
+  return {
+    ...getWorkflowProjectEntityCollections(workflowState),
+    episodes: buildEpisodesFromWorkflowState(projectId, workflowState),
+  };
+}
+
+export async function getProjectDashboard(id: string): Promise<ApiResponse<WorkflowProjectDashboardSummary>> {
+  if (await checkOnline()) {
+    const res = await apiRequest<WorkflowProjectDashboardSummary>(`/projects/${id}/dashboard`);
+    if (res.success) return res;
+    console.warn(`Online getProjectDashboard failed for ${id}, falling back to local storage:`, res.error);
+  }
+
+  const projectRes = await getProject(id);
+  if (!projectRes.success || !projectRes.data) {
+    return { success: false, error: projectRes.error || 'Project not found' };
+  }
+
+  return {
+    success: true,
+    data: buildWorkflowProjectDashboardSummary(projectRes.data),
+  };
+}
+
+export async function getProjectWorkflowEntities(id: string): Promise<ApiResponse<WorkflowProjectEntities>> {
+  if (await checkOnline()) {
+    const res = await apiRequest<WorkflowProjectEntities>(`/projects/${id}/workflow-entities`);
+    if (res.success) return res;
+    console.warn(`Online getProjectWorkflowEntities failed for ${id}, falling back to project snapshot:`, res.error);
+  }
+
+  const projectRes = await getProject(id);
+  if (!projectRes.success || !projectRes.data) {
+    return { success: false, error: projectRes.error || 'Project not found' };
+  }
+
+  const workflowState = resolveProjectWorkflowState(projectRes.data);
+  return {
+    success: true,
+    data: toWorkflowProjectEntities(id, workflowState),
+  };
+}
+
 export async function getProjects(): Promise<ApiResponse<ProjectSummary[]>> {
   if (await checkOnline()) {
     const res = await apiRequest<ProjectSummary[]>('/projects');
@@ -105,11 +208,21 @@ export async function getProjects(): Promise<ApiResponse<ProjectSummary[]>> {
   const service = getFileStorageService();
   if (service.isEnabled()) {
     const localProjects = await readFromLocalFS('default', 'global', LOCAL_PROJECTS_KEY + '.json') as ProjectSummary[] || [];
-    return { success: true, data: localProjects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()) };
+    return {
+      success: true,
+      data: localProjects
+        .map(enrichProjectSummary)
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
+    };
   }
   // IndexedDB fallback
   const projects = await loadFromStorage<ProjectSummary[]>(LOCAL_PROJECTS_KEY) || [];
-  return { success: true, data: projects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()) };
+  return {
+    success: true,
+    data: projects
+      .map(enrichProjectSummary)
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
+  };
 }
 
 export async function getProject(id: string): Promise<ApiResponse<ProjectDetail>> {
@@ -132,7 +245,7 @@ export async function getProject(id: string): Promise<ApiResponse<ProjectDetail>
     return {
       success: true,
       data: {
-        ...project,
+        ...enrichProjectSummary(project),
         nodes,
         connections,
         groups
@@ -153,7 +266,7 @@ export async function getProject(id: string): Promise<ApiResponse<ProjectDetail>
   return {
     success: true,
     data: {
-      ...project,
+      ...enrichProjectSummary(project),
       nodes,
       connections,
       groups
@@ -174,10 +287,16 @@ export async function createProject(
     console.warn("Online createProject failed, falling back to local storage:", res.error);
   }
 
+  const projectId = `proj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const newProject: ProjectSummary = {
-    id: `proj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: projectId,
     title,
     settings,
+    dashboard: buildWorkflowProjectDashboardSummary({
+      id: projectId,
+      title,
+      settings,
+    }),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -204,7 +323,7 @@ export async function createProject(
 
 export async function updateProject(
   id: string,
-  data: { title?: string; settings?: Record<string, unknown> },
+  data: { title?: string; settings?: Record<string, unknown>; workflow_state?: WorkflowProjectState },
 ): Promise<ApiResponse<ProjectSummary>> {
   if (await checkOnline()) {
     const res = await apiRequest<ProjectSummary>(`/projects/${id}`, {
@@ -224,6 +343,12 @@ export async function updateProject(
     localProjects[idx] = {
       ...localProjects[idx],
       ...data,
+      dashboard: buildWorkflowProjectDashboardSummary({
+        id,
+        title: data.title ?? localProjects[idx].title,
+        settings: data.settings ?? localProjects[idx].settings,
+        workflow_state: data.workflow_state ?? localProjects[idx].workflow_state,
+      }),
       updated_at: new Date().toISOString(),
     };
     await writeToLocalFS('default', 'global', LOCAL_PROJECTS_KEY + '.json', localProjects);
@@ -238,6 +363,12 @@ export async function updateProject(
   projects[idx] = {
     ...projects[idx],
     ...data,
+    dashboard: buildWorkflowProjectDashboardSummary({
+      id,
+      title: data.title ?? projects[idx].title,
+      settings: data.settings ?? projects[idx].settings,
+      workflow_state: data.workflow_state ?? projects[idx].workflow_state,
+    }),
     updated_at: new Date().toISOString(),
   };
   await saveToStorage(LOCAL_PROJECTS_KEY, projects);

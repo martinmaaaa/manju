@@ -1,8 +1,8 @@
 import React from 'react';
-import { Clapperboard, Layers3, LayoutTemplate, Package2, Sparkles } from 'lucide-react';
+import { Activity, Clapperboard, Layers3, LayoutTemplate, Package2, Sparkles } from 'lucide-react';
 import type { AppView } from '../../stores/ui.store';
 
-type ProjectWorkspaceView = Extract<AppView, 'pipeline' | 'assets' | 'episodes' | 'workspace' | 'canvas'>;
+type ProjectWorkspaceView = Extract<AppView, 'pipeline' | 'assets' | 'episodes' | 'jobs' | 'workspace' | 'canvas'>;
 
 interface ProjectWorkspaceNavProps {
   currentView: ProjectWorkspaceView;
@@ -11,14 +11,15 @@ interface ProjectWorkspaceNavProps {
 }
 
 const primaryItems: Array<{
-  view: Extract<ProjectWorkspaceView, 'pipeline' | 'assets' | 'episodes' | 'workspace'>;
+  view: Extract<ProjectWorkspaceView, 'pipeline' | 'assets' | 'episodes' | 'jobs' | 'workspace'>;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { view: 'pipeline', label: '工作流', icon: Sparkles },
-  { view: 'assets', label: '资产', icon: Package2 },
-  { view: 'episodes', label: '剧集', icon: Clapperboard },
-  { view: 'workspace', label: '单集工作区', icon: Layers3 },
+  { view: 'pipeline', label: 'Workflow', icon: Sparkles },
+  { view: 'assets', label: 'Assets', icon: Package2 },
+  { view: 'episodes', label: 'Episodes', icon: Clapperboard },
+  { view: 'jobs', label: 'Jobs', icon: Activity },
+  { view: 'workspace', label: 'Workspace', icon: Layers3 },
 ];
 
 export const ProjectWorkspaceNav: React.FC<ProjectWorkspaceNavProps> = ({
@@ -60,7 +61,7 @@ export const ProjectWorkspaceNav: React.FC<ProjectWorkspaceNavProps> = ({
       }`}
     >
       <LayoutTemplate className="h-4 w-4" />
-      高级画布
+      Canvas
     </button>
   </div>
 );

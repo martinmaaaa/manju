@@ -14,6 +14,11 @@ import {
 } from 'lucide-react';
 import { createProject, deleteProject, getProjects } from '../services/api';
 import type { ProjectSummary } from '../services/api';
+import type {
+  WorkflowDashboardPhase,
+  WorkflowProjectDashboardSummary,
+} from '../services/workflow/domain/dashboard';
+import { buildWorkflowProjectDashboardSummary } from '../services/workflow/runtime/projectDashboard';
 import {
   BRAND_LOGO_ALT,
   BRAND_TAGLINE,
@@ -33,6 +38,65 @@ type ToastState = {
   message: string;
 } | null;
 
+type ProjectCardState = {
+  project: ProjectSummary;
+  dashboard: WorkflowProjectDashboardSummary;
+};
+
+const PROJECT_PHASE_META: Record<
+  WorkflowDashboardPhase,
+  {
+    label: string;
+    description: string;
+    className: string;
+  }
+> = {
+  empty: {
+    label: '待创建流程',
+    description: '还没有进入 v2 工作流主链路。',
+    className: 'border-white/10 bg-white/5 text-slate-200',
+  },
+  asset_setup: {
+    label: '待补资产',
+    description: '流程已经启动，下一步先沉淀项目级可复用资产。',
+    className: 'border-amber-400/20 bg-amber-500/10 text-amber-100',
+  },
+  episode_planning: {
+    label: '待铺排单集',
+    description: '资产具备基础后，下一步是把系列拆到单集执行单元。',
+    className: 'border-sky-400/20 bg-sky-500/10 text-sky-100',
+  },
+  in_production: {
+    label: '制作进行中',
+    description: '当前已经进入脚本、分镜、提示词或视频的推进阶段。',
+    className: 'border-violet-400/20 bg-violet-500/10 text-violet-100',
+  },
+  ready_for_canvas: {
+    label: '可投放画布',
+    description: '主流程已基本打通，可以继续投放到高级画布执行。',
+    className: 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100',
+  },
+};
+
+function getProjectCardState(project: ProjectSummary): ProjectCardState {
+  return {
+    project,
+    dashboard: project.dashboard ?? buildWorkflowProjectDashboardSummary(project),
+  };
+}
+
+function formatDate(dateString?: string): string {
+  if (!dateString) return '刚刚';
+
+  return new Date(dateString).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
   onSelectProject,
   onOpenSettings,
@@ -46,14 +110,37 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
   const [newProjectName, setNewProjectName] = useState('');
   const [toast, setToast] = useState<ToastState>(null);
 
+  const projectCards = useMemo(
+    () => projects.map(getProjectCardState),
+    [projects],
+  );
+
   const latestProject = useMemo(
-    () => projects.reduce<ProjectSummary | null>((latest, project) => {
-      if (!latest) return project;
-      return new Date(project.updated_at).getTime() > new Date(latest.updated_at).getTime()
-        ? project
+    () => projectCards.reduce<ProjectCardState | null>((latest, current) => {
+      if (!latest) return current;
+      return new Date(current.project.updated_at).getTime() > new Date(latest.project.updated_at).getTime()
+        ? current
         : latest;
     }, null),
-    [projects],
+    [projectCards],
+  );
+
+  const workflowTotals = useMemo(
+    () => projectCards.reduce((accumulator, current) => ({
+      workflowCount: accumulator.workflowCount + current.dashboard.totals.workflowCount,
+      seriesCount: accumulator.seriesCount + current.dashboard.totals.seriesCount,
+      episodeCount: accumulator.episodeCount + current.dashboard.totals.episodeCount,
+      assetCount: accumulator.assetCount + current.dashboard.totals.assetCount,
+      videoCompletedEpisodeCount:
+        accumulator.videoCompletedEpisodeCount + current.dashboard.totals.videoCompletedEpisodeCount,
+    }), {
+      workflowCount: 0,
+      seriesCount: 0,
+      episodeCount: 0,
+      assetCount: 0,
+      videoCompletedEpisodeCount: 0,
+    }),
+    [projectCards],
   );
 
   const showToast = (type: NonNullable<ToastState>['type'], message: string) => {
@@ -127,7 +214,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
       const response = await createProject(trimmedProjectName, DEFAULT_PROJECT_SETTINGS);
 
       if (response.success && response.data) {
-        setProjects((currentProjects) => [response.data!, ...currentProjects]);
+        setProjects((currentProjects) => [response.data, ...currentProjects]);
         setNewProjectName('');
         setIsCreating(false);
         showToast('success', `项目“${response.data.title || trimmedProjectName}”已创建。`);
@@ -168,10 +255,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
           currentProjects.filter((project) => project.id !== deletingProject.id),
         );
         setProjectToDelete(null);
-        showToast(
-          'success',
-          `项目“${deletingProject.title || '未命名项目'}”已删除。`,
-        );
+        showToast('success', `项目“${deletingProject.title || '未命名项目'}”已删除。`);
         return;
       }
 
@@ -182,18 +266,6 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
     } finally {
       setDeletingProjectId(null);
     }
-  };
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return '刚刚';
-
-    return new Date(dateString).toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
   };
 
   if (loading) {
@@ -275,7 +347,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 创作工作流入口
               </div>
               <h2 className="mt-5 text-3xl font-semibold leading-tight text-white">
-                从项目开始，逐步进入添梯的工作流创作体系。
+                从项目开始，逐步进入 v2 的工作流创作体系。
               </h2>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-300">
                 {BRAND_WELCOME_SUBTITLE}
@@ -291,7 +363,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => latestProject && onSelectProject(latestProject.id)}
+                  onClick={() => latestProject && onSelectProject(latestProject.project.id)}
                   disabled={!latestProject}
                   className="tianti-button tianti-button-secondary px-6 py-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -305,22 +377,24 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
               <div className="tianti-stat-card px-5 py-5">
                 <div className="text-xs uppercase tracking-[0.18em] text-white/45">项目总数</div>
                 <div className="mt-3 text-3xl font-semibold text-white">{projects.length}</div>
-                <div className="mt-2 text-sm text-slate-400">工作流、资产与画布都从这里进入。</div>
+                <div className="mt-2 text-sm text-slate-400">工作流、资产和画布都从这里进入。</div>
               </div>
               <div className="tianti-stat-card px-5 py-5">
                 <div className="text-xs uppercase tracking-[0.18em] text-white/45">最近更新</div>
                 <div className="mt-3 truncate text-lg font-semibold text-white">
-                  {latestProject?.title || '暂无项目'}
+                  {latestProject?.project.title || '暂无项目'}
                 </div>
                 <div className="mt-2 text-sm text-slate-400">
-                  {latestProject ? formatDate(latestProject.updated_at) : '创建项目后会显示在这里。'}
+                  {latestProject ? formatDate(latestProject.project.updated_at) : '创建项目后会显示在这里。'}
                 </div>
               </div>
               <div className="tianti-stat-card px-5 py-5">
-                <div className="text-xs uppercase tracking-[0.18em] text-white/45">建议路径</div>
-                <div className="mt-3 text-lg font-semibold text-white">项目 → 工作流 → 画布</div>
+                <div className="text-xs uppercase tracking-[0.18em] text-white/45">V2 进度</div>
+                <div className="mt-3 text-lg font-semibold text-white">
+                  {workflowTotals.workflowCount} 流程 / {workflowTotals.seriesCount} 系列
+                </div>
                 <div className="mt-2 text-sm text-slate-400">
-                  先进入工作流中心，再按需投放到高级画布执行。
+                  {workflowTotals.episodeCount} 单集，{workflowTotals.videoCompletedEpisodeCount} 个视频已完成，{workflowTotals.assetCount} 项资产已沉淀。
                 </div>
               </div>
             </div>
@@ -337,14 +411,14 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
               </div>
             </div>
 
-            {projects.length === 0 ? (
+            {projectCards.length === 0 ? (
               <div className="tianti-surface flex min-h-[360px] flex-col items-center justify-center rounded-[32px] px-8 py-12 text-center">
                 <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-500">
                   <FolderHeart size={40} />
                 </div>
                 <h4 className="mt-6 text-2xl font-semibold text-white">还没有项目</h4>
                 <p className="mt-3 max-w-md text-sm leading-7 text-slate-400">
-                  先创建一个项目，再从工作流中心进入剧本、资产、分镜和提示词的完整创作路径。
+                  先创建一个项目，再从工作流中心进入脚本、资产、分镜和画布执行的完整路径。
                 </p>
                 <button
                   type="button"
@@ -357,71 +431,106 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {projects.map((project) => (
-                  <article
-                    key={project.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onSelectProject(project.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        onSelectProject(project.id);
-                      }
-                    }}
-                    className="tianti-surface group cursor-pointer overflow-hidden rounded-[28px] transition duration-300 hover:-translate-y-1 hover:border-cyan-400/30 hover:shadow-[0_24px_80px_rgba(10,132,255,0.18)]"
-                  >
-                    <div className="relative aspect-[16/10] overflow-hidden border-b border-white/8 bg-[radial-gradient(circle_at_top,rgba(115,224,255,0.18),transparent_36%),linear-gradient(180deg,rgba(11,16,28,0.92),rgba(6,10,18,0.96))]">
-                      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.08),transparent)] opacity-0 transition duration-700 group-hover:translate-x-full group-hover:opacity-100" />
-                      <div className="absolute inset-x-0 top-0 flex items-center justify-between p-4">
-                        <span className="tianti-chip is-accent">工作流项目</span>
-                        <button
-                          type="button"
-                          onClick={(event) => handleRequestDeleteProject(event, project)}
-                          disabled={deletingProjectId === project.id}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-black/30 text-slate-300 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-100 disabled:cursor-not-allowed disabled:opacity-40"
-                          title="删除项目"
-                        >
-                          {deletingProjectId === project.id ? (
-                            <Loader2 size={16} className="animate-spin" />
-                          ) : (
-                            <Trash2 size={16} />
+                {projectCards.map(({ project, dashboard }) => {
+                  const phaseMeta = PROJECT_PHASE_META[dashboard.phase];
+                  const episodeProgressLabel = dashboard.totals.plannedEpisodeCount > 0
+                    ? `${dashboard.totals.episodeCount}/${dashboard.totals.plannedEpisodeCount}`
+                    : String(dashboard.totals.episodeCount);
+
+                  return (
+                    <article
+                      key={project.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onSelectProject(project.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onSelectProject(project.id);
+                        }
+                      }}
+                      className="tianti-surface group cursor-pointer overflow-hidden rounded-[28px] transition duration-300 hover:-translate-y-1 hover:border-cyan-400/30 hover:shadow-[0_24px_80px_rgba(10,132,255,0.18)]"
+                    >
+                      <div className="relative aspect-[16/10] overflow-hidden border-b border-white/8 bg-[radial-gradient(circle_at_top,rgba(115,224,255,0.18),transparent_36%),linear-gradient(180deg,rgba(11,16,28,0.92),rgba(6,10,18,0.96))]">
+                        <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.08),transparent)] opacity-0 transition duration-700 group-hover:translate-x-full group-hover:opacity-100" />
+                        <div className="absolute inset-x-0 top-0 flex items-center justify-between p-4">
+                          <span className="tianti-chip is-accent">工作流项目</span>
+                          <button
+                            type="button"
+                            onClick={(event) => handleRequestDeleteProject(event, project)}
+                            disabled={deletingProjectId === project.id}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-black/30 text-slate-300 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            title="删除项目"
+                          >
+                            {deletingProjectId === project.id ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={16} />
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="flex h-20 w-20 items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-400/10 text-cyan-100 shadow-[0_10px_30px_rgba(73,200,255,0.18)] transition duration-300 group-hover:scale-105">
+                            <FolderHeart size={32} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-5">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <h4 className="truncate text-lg font-semibold text-white transition-colors group-hover:text-cyan-200">
+                              {project.title || '未命名项目'}
+                            </h4>
+                            <p className="mt-2 text-sm leading-6 text-slate-400">
+                              {dashboard.activeWorkflowTitle
+                                ? `当前焦点：${dashboard.activeWorkflowTitle}`
+                                : '进入后默认先到工作流中心，再按需切换到高级画布。'}
+                            </p>
+                          </div>
+                          <div className="mt-0.5 text-cyan-200 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
+                            <ArrowUpRight size={18} />
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${phaseMeta.className}`}>
+                            {phaseMeta.label}
+                          </span>
+                          {dashboard.activeEpisodeTitle && (
+                            <span className="tianti-chip">当前单集 {dashboard.activeEpisodeTitle}</span>
                           )}
-                        </button>
-                      </div>
+                        </div>
 
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="flex h-20 w-20 items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-400/10 text-cyan-100 shadow-[0_10px_30px_rgba(73,200,255,0.18)] transition duration-300 group-hover:scale-105">
-                          <FolderHeart size={32} />
+                        <div className="mt-4 grid grid-cols-3 gap-2">
+                          <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-white/35">流程</div>
+                            <div className="mt-2 text-base font-semibold text-white">{dashboard.totals.workflowCount}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-white/35">单集</div>
+                            <div className="mt-2 text-base font-semibold text-white">{episodeProgressLabel}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-white/35">资产</div>
+                            <div className="mt-2 text-base font-semibold text-white">{dashboard.totals.assetCount}</div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
 
-                    <div className="p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <h4 className="truncate text-lg font-semibold text-white transition-colors group-hover:text-cyan-200">
-                            {project.title || '未命名项目'}
-                          </h4>
-                          <p className="mt-2 text-sm leading-6 text-slate-400">
-                            进入后默认先到工作流中心，再按需切换到高级画布。
-                          </p>
-                        </div>
-                        <div className="mt-0.5 text-cyan-200 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
-                          <ArrowUpRight size={18} />
-                        </div>
-                      </div>
+                        <p className="mt-4 text-sm leading-6 text-slate-400">{phaseMeta.description}</p>
 
-                      <div className="mt-5 flex items-center justify-between gap-3">
-                        <div className="inline-flex items-center gap-2 text-xs text-slate-400">
-                          <Clock size={13} />
-                          {formatDate(project.updated_at)}
+                        <div className="mt-5 flex items-center justify-between gap-3">
+                          <div className="inline-flex items-center gap-2 text-xs text-slate-400">
+                            <Clock size={13} />
+                            {formatDate(project.updated_at)}
+                          </div>
+                          <span className="tianti-chip">视频完成 {dashboard.totals.videoCompletedEpisodeCount}</span>
                         </div>
-                        <span className="tianti-chip">可继续创作</span>
                       </div>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -445,7 +554,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">Create Project</div>
                 <h2 className="mt-2 text-2xl font-semibold text-white">创建新项目</h2>
                 <p className="mt-3 text-sm leading-7 text-slate-400">
-                  命名后即可进入工作流中心，开始配置剧本、资产和画布执行链路。
+                  命名后即可进入工作流中心，开始配置脚本、资产和画布执行链路。
                 </p>
               </div>
               <button
@@ -476,7 +585,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
               </div>
 
               <div className="tianti-surface-muted rounded-[24px] px-4 py-4 text-sm leading-7 text-slate-300">
-                新项目会自动挂载默认工作流模板，后续可在工作流中心继续补充资产策略和剧集结构。
+                新项目会自动挂载默认工作流模板，后续可在工作流中心继续补充资产策略和单集结构。
               </div>
 
               <div className="flex justify-end gap-3">
@@ -519,7 +628,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 <div className="text-xs uppercase tracking-[0.22em] text-red-200/80">Delete Project</div>
                 <h2 className="mt-2 text-2xl font-semibold text-white">确认删除项目</h2>
                 <p className="mt-3 text-sm leading-7 text-slate-400">
-                  删除后，项目配置、画布节点以及关联的工作流数据会一起移除，且无法撤销。
+                  删除后，项目配置、画布节点以及关联的工作流数据都会一并移除，且无法撤销。
                 </p>
               </div>
               <button

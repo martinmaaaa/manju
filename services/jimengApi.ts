@@ -3,6 +3,8 @@ const JIMENG_API_BASE = 'http://localhost:3001/api/jimeng';
 export interface JimengGenerateOptions {
     prompt: string;
     files?: File[];
+    projectId?: string;
+    workflowInstanceId?: string;
 }
 
 export interface JimengLoginResult {
@@ -77,6 +79,14 @@ export const jimengApi = {
         try {
             const formData = new FormData();
             formData.append('prompt', options.prompt);
+
+            if (options.projectId) {
+                formData.append('projectId', options.projectId);
+            }
+
+            if (options.workflowInstanceId) {
+                formData.append('workflowInstanceId', options.workflowInstanceId);
+            }
 
             if (options.files && options.files.length > 0) {
                 options.files.forEach((file) => {

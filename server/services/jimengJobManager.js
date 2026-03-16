@@ -1,5 +1,6 @@
 import fs from 'fs';
 import {
+  cancelJimengJobById,
   claimNextJimengJob,
   createJimengJob,
   getJimengJobById,
@@ -14,6 +15,8 @@ const IDLE_POLL_MS = 2000;
 const ERROR_BACKOFF_MS = 5000;
 
 let workerPromise = null;
+const runningJobControllers = new Map();
+const cancelledJobIds = new Set();
 
 function delay(ms) {
   return new Promise((resolve) => {
@@ -36,6 +39,10 @@ async function cleanupReferenceFiles(referenceFiles = []) {
 }
 
 async function syncJobProgress(jobId, update = {}) {
+  if (cancelledJobIds.has(jobId)) {
+    return;
+  }
+
   await updateJimengJobProgress(jobId, {
     status: 'RUNNING',
     phase: update.phase ?? 'RUNNING',
@@ -46,6 +53,9 @@ async function syncJobProgress(jobId, update = {}) {
 }
 
 async function processJimengJob(job) {
+  const abortController = new AbortController();
+  runningJobControllers.set(job.id, abortController);
+
   await syncJobProgress(job.id, {
     phase: 'STARTING',
     progress: 5,
@@ -57,7 +67,18 @@ async function processJimengJob(job) {
       onProgress: async (update) => {
         await syncJobProgress(job.id, update);
       },
+      signal: abortController.signal,
     });
+
+    if (cancelledJobIds.has(job.id) || result.cancelled) {
+      await cancelJimengJobById(job.id, {
+        error: 'Jimeng job cancelled.',
+        metadata: {
+          message: 'Jimeng job cancelled.',
+        },
+      });
+      return;
+    }
 
     if (result.success && result.videoUrl) {
       await markJimengJobSucceeded(job.id, {
@@ -78,6 +99,16 @@ async function processJimengJob(job) {
       },
     });
   } catch (error) {
+    if (cancelledJobIds.has(job.id) || abortController.signal.aborted) {
+      await cancelJimengJobById(job.id, {
+        error: 'Jimeng job cancelled.',
+        metadata: {
+          message: 'Jimeng job cancelled.',
+        },
+      });
+      return;
+    }
+
     await markJimengJobFailed(job.id, {
       phase: 'FAILED',
       progress: 100,
@@ -87,6 +118,8 @@ async function processJimengJob(job) {
       },
     });
   } finally {
+    runningJobControllers.delete(job.id);
+    cancelledJobIds.delete(job.id);
     await cleanupReferenceFiles(job.referenceFiles);
   }
 }
@@ -117,6 +150,22 @@ export function ensureJimengJobWorker() {
   }
 
   return workerPromise;
+}
+
+export async function cancelJimengJob(jobId) {
+  cancelledJobIds.add(jobId);
+
+  const runningController = runningJobControllers.get(jobId);
+  if (runningController) {
+    runningController.abort();
+  }
+
+  return cancelJimengJobById(jobId, {
+    error: 'Jimeng job cancelled.',
+    metadata: {
+      message: 'Jimeng job cancelled.',
+    },
+  });
 }
 
 export async function initializeJimengJobWorker() {

@@ -28,6 +28,71 @@ const DEFAULT_WORKFLOW_PROJECT_STATE: WorkflowProjectState = {
   continuityStates: [],
 };
 
+export interface WorkflowProjectEntityCollections {
+  instances?: WorkflowProjectState['instances'];
+  assets?: WorkflowProjectState['assets'];
+  assetVersions?: WorkflowProjectState['assetVersions'];
+  assetBindings?: WorkflowProjectState['assetBindings'];
+  continuityStates?: WorkflowProjectState['continuityStates'];
+}
+
+export function getWorkflowProjectEntityCollections(
+  state: WorkflowProjectState | null | undefined,
+): Required<WorkflowProjectEntityCollections> {
+  const normalizedState = state
+    ? normalizeWorkflowProjectState({ workflowState: state })
+    : DEFAULT_WORKFLOW_PROJECT_STATE;
+
+  return {
+    instances: normalizedState.instances,
+    assets: normalizedState.assets,
+    assetVersions: normalizedState.assetVersions,
+    assetBindings: normalizedState.assetBindings,
+    continuityStates: normalizedState.continuityStates,
+  };
+}
+
+export function hydrateWorkflowProjectState(
+  state: WorkflowProjectState | null | undefined,
+  collections?: WorkflowProjectEntityCollections | null,
+): WorkflowProjectState {
+  const normalizedState = state
+    ? normalizeWorkflowProjectState({ workflowState: state })
+    : DEFAULT_WORKFLOW_PROJECT_STATE;
+
+  if (!collections) {
+    return normalizedState;
+  }
+
+  const instances = Array.isArray(collections.instances) ? collections.instances : normalizedState.instances;
+  const assets = Array.isArray(collections.assets) ? collections.assets : normalizedState.assets;
+  const assetVersions = Array.isArray(collections.assetVersions)
+    ? collections.assetVersions
+    : normalizedState.assetVersions;
+  const assetBindings = Array.isArray(collections.assetBindings)
+    ? collections.assetBindings
+    : normalizedState.assetBindings;
+  const continuityStates = Array.isArray(collections.continuityStates)
+    ? collections.continuityStates
+    : normalizedState.continuityStates;
+  const persistedIds = new Set(instances.map((instance) => instance.id));
+
+  return {
+    ...normalizedState,
+    instances,
+    assets,
+    assetVersions,
+    assetBindings,
+    continuityStates,
+    activeSeriesId: typeof normalizedState.activeSeriesId === 'string' && persistedIds.has(normalizedState.activeSeriesId)
+      ? normalizedState.activeSeriesId
+      : null,
+    activeEpisodeId: typeof normalizedState.activeEpisodeId === 'string' && persistedIds.has(normalizedState.activeEpisodeId)
+      ? normalizedState.activeEpisodeId
+      : null,
+  };
+}
+
 function createStageStates(template: WorkflowTemplateDefinition): Record<string, WorkflowStageState> {
   return template.stages.reduce<Record<string, WorkflowStageState>>((accumulator, stage, index) => {
     accumulator[stage.id] = {

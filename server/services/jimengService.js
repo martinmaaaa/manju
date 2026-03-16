@@ -59,6 +59,44 @@ function extractVideoUrls(payload, matches = new Set()) {
     return matches;
 }
 
+function throwIfAborted(signal) {
+    if (!signal?.aborted) {
+        return;
+    }
+
+    const error = new Error('Jimeng job cancelled.');
+    error.name = 'AbortError';
+    throw error;
+}
+
+function waitWithSignal(ms, signal) {
+    if (!signal) {
+        return new Promise((resolve) => {
+            setTimeout(resolve, ms);
+        });
+    }
+
+    return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            signal.removeEventListener('abort', abortHandler);
+            resolve();
+        }, ms);
+
+        const abortHandler = () => {
+            clearTimeout(timeoutId);
+            signal.removeEventListener('abort', abortHandler);
+            reject(new Error('Jimeng job cancelled.'));
+        };
+
+        if (signal.aborted) {
+            abortHandler();
+            return;
+        }
+
+        signal.addEventListener('abort', abortHandler, { once: true });
+    });
+}
+
 function parseTimestamp(value) {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return value;
@@ -479,12 +517,13 @@ class JimengService {
         throw new Error('Jimeng safety confirmation dialog could not be confirmed automatically.');
     }
 
-    async waitForGeneratedVideo(page, knownVideoUrls, getGeneratedVideoUrl, assetTracker, prompt, onProgress) {
+    async waitForGeneratedVideo(page, knownVideoUrls, getGeneratedVideoUrl, assetTracker, prompt, onProgress, signal) {
         const deadline = Date.now() + GENERATION_TIMEOUT_MS;
         let sawFreshBlobPreview = false;
         let attempt = 0;
 
         while (Date.now() < deadline) {
+            throwIfAborted(signal);
             attempt += 1;
             if (attempt === 1 || attempt % 6 === 0) {
                 await this.notifyProgress(onProgress, {
@@ -523,7 +562,7 @@ class JimengService {
                 }
             }
 
-            await page.waitForTimeout(GENERATION_POLL_INTERVAL_MS);
+            await waitWithSignal(GENERATION_POLL_INTERVAL_MS, signal);
         }
 
         if (sawFreshBlobPreview) {
@@ -565,12 +604,15 @@ class JimengService {
 
     async generateVideo(prompt, uploadedFiles = [], options = {}) {
         let browserContext;
+        let abortHandler = null;
 
         try {
             const trimmedPrompt = String(prompt || '').trim();
             if (!trimmedPrompt) {
                 return { success: false, error: 'Prompt is required.' };
             }
+
+            throwIfAborted(options.signal);
 
             await this.notifyProgress(options.onProgress, {
                 phase: 'VALIDATING_INPUT',
@@ -588,7 +630,14 @@ class JimengService {
             });
 
             browserContext = await this.launchContext({ headless: true });
+            if (options.signal) {
+                abortHandler = () => {
+                    browserContext?.close().catch(() => { });
+                };
+                options.signal.addEventListener('abort', abortHandler, { once: true });
+            }
             const page = await this.getOrCreatePage(browserContext);
+            throwIfAborted(options.signal);
 
             await this.notifyProgress(options.onProgress, {
                 phase: 'SYNCING_HISTORY',
@@ -597,6 +646,7 @@ class JimengService {
             });
 
             const assetTracker = await this.createAssetTracker(browserContext);
+            throwIfAborted(options.signal);
 
             await this.notifyProgress(options.onProgress, {
                 phase: 'OPENING_WORKSPACE',
@@ -605,6 +655,7 @@ class JimengService {
             });
 
             const { promptTextarea, submitButton, fileInputs } = await this.openGenerationWorkspace(page);
+            throwIfAborted(options.signal);
 
             const knownVideoUrls = new Set(await this.collectCurrentVideoUrls(page));
             let generatedVideoUrl = null;
@@ -652,8 +703,9 @@ class JimengService {
                 }
 
                 for (let index = 0; index < referenceFiles.length; index += 1) {
+                    throwIfAborted(options.signal);
                     await fileInputs.nth(index).setInputFiles(referenceFiles[index].path);
-                    await page.waitForTimeout(600);
+                    await waitWithSignal(600, options.signal);
                 }
             }
 
@@ -665,11 +717,12 @@ class JimengService {
 
             await promptTextarea.fill(trimmedPrompt);
             await this.waitForEnabledSubmitButton(page, submitButton);
+            throwIfAborted(options.signal);
 
             console.log('Video generation started. Waiting for result...');
             submissionStarted = true;
             await submitButton.click();
-            await page.waitForTimeout(1200);
+            await waitWithSignal(1200, options.signal);
             await this.confirmSafetyModal(page).catch((error) => {
                 const message = error instanceof Error ? error.message : String(error);
                 console.warn('[jimeng] Safety confirm handling skipped:', message);
@@ -681,7 +734,8 @@ class JimengService {
                 () => generatedVideoUrl,
                 assetTracker,
                 trimmedPrompt,
-                options.onProgress
+                options.onProgress,
+                options.signal,
             );
             await browserContext.close();
 
@@ -700,7 +754,14 @@ class JimengService {
             if (browserContext) {
                 await browserContext.close();
             }
+            if (options.signal?.aborted || error?.name === 'AbortError' || error?.message === 'Jimeng job cancelled.') {
+                return { success: false, error: 'Jimeng job cancelled.', cancelled: true };
+            }
             return { success: false, error: error.message };
+        } finally {
+            if (options.signal && abortHandler) {
+                options.signal.removeEventListener('abort', abortHandler);
+            }
         }
     }
 }

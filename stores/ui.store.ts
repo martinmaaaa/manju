@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import type { ContextMenuState, CharacterProfile } from '../types';
 import type { VideoSource } from '../components/VideoEditor';
 
-export type AppView = 'projects' | 'pipeline' | 'assets' | 'episodes' | 'workspace' | 'canvas';
+export type AppView = 'projects' | 'pipeline' | 'assets' | 'episodes' | 'jobs' | 'workspace' | 'canvas';
 
 interface UIState {
   // Application View

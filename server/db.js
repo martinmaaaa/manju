@@ -9,10 +9,23 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  workflow_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+  workflow_entities_version INTEGER NOT NULL DEFAULT 0,
   groups JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS workflow_state JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS workflow_entities_version INTEGER NOT NULL DEFAULT 0;
+
+UPDATE projects
+SET workflow_state = settings->'workflowState'
+WHERE workflow_state = '{}'::jsonb
+  AND jsonb_typeof(settings->'workflowState') = 'object';
 
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
@@ -41,6 +54,148 @@ CREATE TABLE IF NOT EXISTS connections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_connections_project_id ON connections(project_id);
+
+CREATE TABLE IF NOT EXISTS workflow_instances (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  template_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'idle',
+  parent_instance_id TEXT REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  current_stage_id TEXT,
+  stage_states JSONB NOT NULL DEFAULT '{}'::jsonb,
+  artifact_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_instances_project_id
+  ON workflow_instances(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_instances_project_scope
+  ON workflow_instances(project_id, scope);
+
+CREATE TABLE IF NOT EXISTS episodes (
+  workflow_instance_id TEXT PRIMARY KEY REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  series_instance_id TEXT REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  episode_number INTEGER NOT NULL DEFAULT 0,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'idle',
+  current_stage_id TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodes_project_series_episode_number
+  ON episodes(project_id, series_instance_id, episode_number);
+
+CREATE TABLE IF NOT EXISTS assets (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  current_version_id TEXT,
+  tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_assets_project_id
+  ON assets(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_assets_project_type
+  ON assets(project_id, type);
+
+CREATE TABLE IF NOT EXISTS asset_versions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL DEFAULT 1,
+  files JSONB NOT NULL DEFAULT '[]'::jsonb,
+  prompt_pack JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_versions_project_id
+  ON asset_versions(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_asset_versions_asset_id
+  ON asset_versions(asset_id);
+
+CREATE TABLE IF NOT EXISTS episode_asset_bindings (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workflow_instance_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  version_id TEXT NOT NULL REFERENCES asset_versions(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL DEFAULT 'follow_latest',
+  derived_from_version_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_episode_asset_bindings_project_id
+  ON episode_asset_bindings(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_episode_asset_bindings_workflow_instance_id
+  ON episode_asset_bindings(workflow_instance_id);
+
+CREATE TABLE IF NOT EXISTS continuity_states (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workflow_instance_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  state JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_continuity_states_project_id
+  ON continuity_states(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_continuity_states_workflow_instance_id
+  ON continuity_states(workflow_instance_id);
+
+CREATE TABLE IF NOT EXISTS generation_jobs (
+  id TEXT PRIMARY KEY,
+  legacy_job_id TEXT,
+  project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+  workflow_instance_id TEXT REFERENCES workflow_instances(id) ON DELETE SET NULL,
+  provider TEXT NOT NULL,
+  model TEXT,
+  capability TEXT NOT NULL DEFAULT 'video',
+  prompt TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'QUEUED',
+  phase TEXT NOT NULL DEFAULT 'QUEUED',
+  progress INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  result_url TEXT,
+  reference_files JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  result_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_status_created_at
+  ON generation_jobs(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_provider_status
+  ON generation_jobs(provider, status);
+
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_project_id
+  ON generation_jobs(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_workflow_instance_id
+  ON generation_jobs(workflow_instance_id);
 
 CREATE TABLE IF NOT EXISTS jimeng_jobs (
   id TEXT PRIMARY KEY,

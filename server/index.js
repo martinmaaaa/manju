@@ -6,20 +6,43 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import jimengService from './services/jimengService.js';
-import { enqueueJimengJob, getJimengJobStatus, initializeJimengJobWorker } from './services/jimengJobManager.js';
+import {
+    cancelJimengJob,
+    enqueueJimengJob,
+    ensureJimengJobWorker,
+    getJimengJobStatus,
+    initializeJimengJobWorker,
+} from './services/jimengJobManager.js';
 import { ensureDatabaseReady, getResolvedDatabaseUrl, initDatabase, markDatabaseUnavailable } from './db.js';
 import {
     batchUpdateNodesById,
+    cancelGenerationJobById,
     createConnectionForProject,
+    createGenerationJob,
     createNodeForProject,
     createProject,
     deleteConnectionById,
     deleteNodeById,
     deleteProjectById,
+    ensureGenerationJobBackfill,
+    ensureWorkflowEntityBackfill,
+    getGenerationJobById,
+    getProjectWorkflowEntitiesById,
+    listAssetsByProjectId,
+    listAssetVersionsByProjectId,
+    listContinuityStatesByProjectId,
+    listEpisodeAssetBindingsByProjectId,
+    listGenerationJobs,
+    getProjectDashboardById,
     getProjectById,
+    listEpisodesByProjectId,
     listProjects,
+    listWorkflowInstancesByProjectId,
+    requeueGenerationJobById,
+    retryGenerationJobById,
     saveProjectSnapshot,
     updateNodeById,
+    updateGenerationJobById,
     updateProject,
 } from './persistence.js';
 
@@ -65,8 +88,17 @@ async function requireDatabase(res) {
             success: false,
             error: 'Database is unavailable. Check DATABASE_URL and local Docker Postgres.',
         });
+        return false;
     }
-    return ready;
+
+    try {
+        await ensureWorkflowEntityBackfill();
+        await ensureGenerationJobBackfill();
+        return true;
+    } catch (error) {
+        sendError(res, error, 500);
+        return false;
+    }
 }
 
 function removeUploadedFiles(files = []) {
@@ -119,7 +151,7 @@ app.post('/api/projects', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Project title is required.' });
         }
 
-        const project = await createProject(title, req.body?.settings || {});
+        const project = await createProject(title, req.body?.settings || {}, req.body?.workflow_state);
         res.status(201).json({ success: true, data: project });
     } catch (error) {
         markDatabaseUnavailable();
@@ -142,12 +174,245 @@ app.get('/api/projects/:id', async (req, res) => {
     }
 });
 
+app.get('/api/projects/:id/dashboard', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const dashboard = await getProjectDashboardById(req.params.id);
+        if (!dashboard) {
+            return res.status(404).json({ success: false, error: 'Project not found.' });
+        }
+
+        res.json({ success: true, data: dashboard });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/workflow-instances', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const workflowInstances = await listWorkflowInstancesByProjectId(req.params.id);
+        res.json({ success: true, data: workflowInstances });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/episodes', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const episodes = await listEpisodesByProjectId(req.params.id);
+        res.json({ success: true, data: episodes });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/assets', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const assets = await listAssetsByProjectId(req.params.id);
+        res.json({ success: true, data: assets });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/asset-versions', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const assetVersions = await listAssetVersionsByProjectId(req.params.id);
+        res.json({ success: true, data: assetVersions });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/asset-bindings', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const assetBindings = await listEpisodeAssetBindingsByProjectId(req.params.id);
+        res.json({ success: true, data: assetBindings });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/continuity-states', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const continuityStates = await listContinuityStatesByProjectId(req.params.id);
+        res.json({ success: true, data: continuityStates });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/workflow-entities', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const workflowEntities = await getProjectWorkflowEntitiesById(req.params.id);
+        if (!workflowEntities) {
+            return res.status(404).json({ success: false, error: 'Project not found.' });
+        }
+
+        res.json({ success: true, data: workflowEntities });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/projects/:id/generation-jobs', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const jobs = await listGenerationJobs({
+            projectId: req.params.id,
+            status: typeof req.query?.status === 'string' ? req.query.status : undefined,
+            provider: typeof req.query?.provider === 'string' ? req.query.provider : undefined,
+            workflowInstanceId: typeof req.query?.workflowInstanceId === 'string' ? req.query.workflowInstanceId : undefined,
+            limit: typeof req.query?.limit === 'string' ? Number(req.query.limit) : undefined,
+        });
+        res.json({ success: true, data: jobs });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/generation-jobs', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const jobs = await listGenerationJobs({
+            status: typeof req.query?.status === 'string' ? req.query.status : undefined,
+            provider: typeof req.query?.provider === 'string' ? req.query.provider : undefined,
+            projectId: typeof req.query?.projectId === 'string' ? req.query.projectId : undefined,
+            workflowInstanceId: typeof req.query?.workflowInstanceId === 'string' ? req.query.workflowInstanceId : undefined,
+            limit: typeof req.query?.limit === 'string' ? Number(req.query.limit) : undefined,
+        });
+        res.json({ success: true, data: jobs });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/generation-jobs/:id', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const job = await getGenerationJobById(req.params.id);
+        if (!job) {
+            return res.status(404).json({ success: false, error: 'Generation job not found.' });
+        }
+
+        res.json({ success: true, data: job });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/generation-jobs', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const job = await createGenerationJob(req.body || {});
+        res.status(201).json({ success: true, data: job });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.put('/api/generation-jobs/:id', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const job = await updateGenerationJobById(req.params.id, req.body || {});
+        if (!job) {
+            return res.status(404).json({ success: false, error: 'Generation job not found.' });
+        }
+
+        res.json({ success: true, data: job });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/generation-jobs/:id/cancel', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const existingJob = await getGenerationJobById(req.params.id);
+        if (!existingJob) {
+            return res.status(404).json({ success: false, error: 'Generation job not found.' });
+        }
+
+        const job = existingJob.provider === 'jimeng'
+            ? await cancelJimengJob(req.params.id)
+            : await cancelGenerationJobById(req.params.id, req.body || {});
+
+        if (!job) {
+            return res.status(404).json({ success: false, error: 'Generation job not found.' });
+        }
+
+        res.json({ success: true, data: existingJob.provider === 'jimeng' ? await getGenerationJobById(req.params.id) : job });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/generation-jobs/:id/requeue', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const job = await requeueGenerationJobById(req.params.id, req.body || {});
+        if (!job) {
+            return res.status(404).json({ success: false, error: 'Generation job not found.' });
+        }
+
+        if (job.provider === 'jimeng') {
+            ensureJimengJobWorker();
+        }
+
+        res.json({ success: true, data: job });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/generation-jobs/:id/retry', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const job = await retryGenerationJobById(req.params.id, req.body || {});
+        if (!job) {
+            return res.status(404).json({ success: false, error: 'Generation job not found.' });
+        }
+
+        if (job.provider === 'jimeng') {
+            ensureJimengJobWorker();
+        }
+
+        res.json({ success: true, data: job });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
 app.put('/api/projects/:id', async (req, res) => {
     if (!(await requireDatabase(res))) return;
     try {
         const project = await updateProject(req.params.id, {
             title: typeof req.body?.title === 'string' ? req.body.title.trim() : undefined,
             settings: req.body?.settings,
+            workflow_state: req.body?.workflow_state,
         });
 
         if (!project) {
@@ -306,6 +571,13 @@ async function handleJimengJobCreation(req, res) {
             metadata: {
                 provider: 'jimeng',
                 model: 'seedance2',
+                capability: 'video',
+                ...(typeof req.body?.projectId === 'string' && req.body.projectId.trim()
+                    ? { projectId: req.body.projectId.trim() }
+                    : {}),
+                ...(typeof req.body?.workflowInstanceId === 'string' && req.body.workflowInstanceId.trim()
+                    ? { workflowInstanceId: req.body.workflowInstanceId.trim() }
+                    : {}),
             },
         });
 
@@ -343,6 +615,14 @@ console.log(`Tianti Sidecar Server running at http://localhost:${port}`);
 initDatabase()
     .then(() => {
         console.log('[db] PostgreSQL schema is ready');
+        return ensureWorkflowEntityBackfill();
+    })
+    .then((result) => {
+        console.log(`[db] Workflow entity backfill ready (v${result.version}, migrated ${result.migratedProjectCount} projects)`);
+        return ensureGenerationJobBackfill();
+    })
+    .then((result) => {
+        console.log(`[db] Generation job backfill ready (migrated ${result.migratedJobCount} jobs)`);
         return initializeJimengJobWorker();
     })
     .catch((error) => {

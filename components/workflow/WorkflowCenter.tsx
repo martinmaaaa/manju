@@ -44,7 +44,7 @@ import { WorkflowCenterSidebar } from './WorkflowCenterSidebar';
 import { SeriesWorkflowCard } from './SeriesWorkflowCard';
 import type { AppView } from '../../stores/ui.store';
 
-type ProjectWorkspaceView = Extract<AppView, 'pipeline' | 'assets' | 'episodes' | 'workspace' | 'canvas'>;
+type ProjectWorkspaceView = Extract<AppView, 'pipeline' | 'assets' | 'episodes' | 'jobs' | 'workspace' | 'canvas'>;
 
 interface WorkflowCenterProps {
   projectTitle: string;

@@ -37,7 +37,15 @@ import { useViewportCulling } from './hooks/useViewportCulling';
 import { useWindowSize } from './hooks/useWindowSize';
 import { useUIStore } from './stores/ui.store';
 import { useEditorStore } from './stores/editor.store';
-import { getProjects, getProject, createProject, updateProject, isApiAvailable, type ProjectDetail } from './services/api';
+import {
+  getProjects,
+  getProject,
+  getProjectWorkflowEntities,
+  createProject,
+  updateProject,
+  isApiAvailable,
+  type ProjectDetail,
+} from './services/api';
 import { initSync, setSyncProjectId, getSyncProjectId, createStoreSubscription, syncFullSnapshot, setOnlineStatus, subscribeToSyncStatus } from './services/syncMiddleware';
 import { useNodeActions } from './handlers/useNodeActions';
 import { useCanvasSnapshotActions } from './handlers/useWorkflowActions';
@@ -46,6 +54,7 @@ import { WorkflowCenter } from './components/workflow/WorkflowCenter';
 import { ProjectWorkspaceLayout } from './components/workflow/ProjectWorkspaceLayout';
 import { WorkflowAssetsView } from './components/workflow/views/WorkflowAssetsView';
 import { WorkflowEpisodesView } from './components/workflow/views/WorkflowEpisodesView';
+import { WorkflowJobsView } from './components/workflow/views/WorkflowJobsView';
 import { WorkflowWorkspaceView } from './components/workflow/views/WorkflowWorkspaceView';
 import { BRAND_LOGO_ALT, BRAND_NAME, BRAND_WORKSPACE_NAME } from './src/branding';
 import {
@@ -65,7 +74,9 @@ import {
   bindAssetToEpisode,
   createWorkflowInstance,
   getEpisodeInstances,
+  getWorkflowProjectEntityCollections,
   getSeriesInstances,
+  hydrateWorkflowProjectState,
   normalizeWorkflowProjectState,
   removeSeriesAssetBatchTemplate,
   setActiveEpisode,
@@ -89,6 +100,7 @@ import type {
   WorkflowStageStatus,
   WorkflowTemplateId,
 } from './services/workflow/domain/types';
+import type { WorkflowProjectEntityCollections } from './services/workflow/runtime/projectState';
 
 // Lazy load large components
 const VideoEditor = lazy(() => import('./components/VideoEditor').then(m => ({ default: m.VideoEditor })));
@@ -117,6 +129,10 @@ const SPRING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const SNAP_THRESHOLD = 8; // Pixels for magnetic snap
 const COLLISION_PADDING = 24; // Spacing when nodes bounce off each other
 type SaveIndicatorState = 'idle' | 'saving' | 'saved' | 'error' | 'local';
+type ActiveWorkflowEntityState = {
+  projectId: string;
+  collections: Required<WorkflowProjectEntityCollections>;
+};
 
 function getCanvasGraphBounds(nodes: AppNode[], groups: Group[]): {
   minX: number;
@@ -229,6 +245,7 @@ export const App = () => {
   const [saveIndicatorState, setSaveIndicatorState] = useState<SaveIndicatorState>('idle');
   const [saveIndicatorError, setSaveIndicatorError] = useState<string | null>(null);
   const [activeProject, setActiveProject] = useState<ProjectDetail | null>(null);
+  const [activeWorkflowEntityState, setActiveWorkflowEntityState] = useState<ActiveWorkflowEntityState | null>(null);
   const [isInitializingPipeline, setIsInitializingPipeline] = useState(false);
 
   // ========== Hooks: 画布状态管理 ==========
@@ -345,7 +362,18 @@ export const App = () => {
   const saveIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasHydratedCanvasRef = useRef(false);
-  const workflowProjectState = normalizeWorkflowProjectState(activeProject?.settings);
+  const workflowProjectStateBase = useMemo(() => normalizeWorkflowProjectState(
+    activeProject?.workflow_state
+      ? { workflowState: activeProject.workflow_state }
+      : activeProject?.settings,
+  ), [activeProject]);
+  const activeWorkflowCollections = activeWorkflowEntityState?.projectId === activeProject?.id
+    ? activeWorkflowEntityState.collections
+    : null;
+  const workflowProjectState = useMemo(
+    () => hydrateWorkflowProjectState(workflowProjectStateBase, activeWorkflowCollections),
+    [activeWorkflowCollections, workflowProjectStateBase],
+  );
   const activeWorkflowEpisode = useMemo(() => {
     if (workflowProjectState.activeEpisodeId) {
       return workflowProjectState.instances.find(instance => instance.id === workflowProjectState.activeEpisodeId) ?? null;
@@ -368,11 +396,26 @@ export const App = () => {
   const mergeProjectSettings = useCallback((
     settings: Record<string, unknown> | null | undefined,
     patch?: Record<string, unknown>,
-  ): Record<string, unknown> => ({
-    ...(settings && typeof settings === 'object' ? settings : {}),
-    ...normalizeProjectSettings(settings),
-    ...(patch || {}),
-  }), []);
+  ): Record<string, unknown> => {
+    const baseSettings = settings && typeof settings === 'object' ? { ...settings } : {};
+    delete (baseSettings as { workflowState?: unknown }).workflowState;
+
+    return {
+      ...baseSettings,
+      ...normalizeProjectSettings(settings),
+      ...(patch || {}),
+    };
+  }, []);
+
+  const syncActiveWorkflowCollections = useCallback((
+    projectId: string,
+    workflowState: WorkflowProjectState | null | undefined,
+  ) => {
+    setActiveWorkflowEntityState({
+      projectId,
+      collections: getWorkflowProjectEntityCollections(workflowState),
+    });
+  }, []);
 
   const clearSaveIndicatorTimers = useCallback(() => {
     if (saveIndicatorTimerRef.current) {
@@ -398,23 +441,76 @@ export const App = () => {
   const persistProjectSettings = useCallback(async (nextSettings: Record<string, unknown>) => {
     if (!activeProject) return;
 
-    setActiveProject(previous => previous ? { ...previous, settings: nextSettings } : previous);
+    const hasWorkflowStatePatch = typeof nextSettings?.workflowState === 'object' && nextSettings.workflowState !== null;
+    const sanitizedSettings = mergeProjectSettings(nextSettings);
+    const nextWorkflowState = hasWorkflowStatePatch
+      ? normalizeWorkflowProjectState({ workflowState: nextSettings.workflowState })
+      : activeProject.workflow_state;
+
+    setActiveProject(previous => previous ? {
+      ...previous,
+      settings: sanitizedSettings,
+      workflow_state: nextWorkflowState,
+    } : previous);
+    syncActiveWorkflowCollections(activeProject.id, nextWorkflowState);
 
     try {
-      const response = await updateProject(activeProject.id, { settings: nextSettings });
+      const response = await updateProject(activeProject.id, {
+        settings: sanitizedSettings,
+        workflow_state: nextWorkflowState,
+      });
       if (response.success && response.data) {
         setActiveProject(previous => previous ? {
           ...previous,
           settings: mergeProjectSettings({
-            ...nextSettings,
+            ...sanitizedSettings,
             ...(response.data.settings && typeof response.data.settings === 'object' ? response.data.settings : {}),
           }),
+          workflow_state: response.data.workflow_state ?? nextWorkflowState,
         } : previous);
+        syncActiveWorkflowCollections(activeProject.id, response.data.workflow_state ?? nextWorkflowState);
       }
     } catch (error) {
       console.warn('[App] Failed to persist project settings', error);
     }
-  }, [activeProject, mergeProjectSettings]);
+  }, [activeProject, mergeProjectSettings, syncActiveWorkflowCollections]);
+
+  useEffect(() => {
+    if (!activeProject?.id) {
+      setActiveWorkflowEntityState(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadWorkflowEntities = async () => {
+      const response = await getProjectWorkflowEntities(activeProject.id);
+      if (!response.success || !response.data || cancelled) {
+        return;
+      }
+
+      setActiveWorkflowEntityState({
+        projectId: activeProject.id,
+        collections: {
+          instances: response.data.instances,
+          assets: response.data.assets,
+          assetVersions: response.data.assetVersions,
+          assetBindings: response.data.assetBindings,
+          continuityStates: response.data.continuityStates,
+        },
+      });
+    };
+
+    loadWorkflowEntities().catch((error) => {
+      if (!cancelled) {
+        console.warn('[App] Failed to load workflow entity collections', error);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.id]);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -508,6 +604,7 @@ export const App = () => {
 
   const handleProjectSelect = async (projectId: string) => {
     setIsLoaded(false);
+    setActiveWorkflowEntityState(null);
     hasHydratedCanvasRef.current = false;
     clearSaveIndicatorTimers();
     setSaveIndicatorState('idle');
@@ -536,10 +633,15 @@ export const App = () => {
         setNodes(mappedNodes);
         setConnections(mappedConns);
         setGroups(dbGroups || []);
+        const normalizedWorkflowState = projectRes.data.workflow_state
+          ? normalizeWorkflowProjectState({ workflowState: projectRes.data.workflow_state })
+          : normalizeWorkflowProjectState(projectRes.data.settings);
         setActiveProject({
           ...projectRes.data,
           settings: mergeProjectSettings(projectRes.data.settings),
+          workflow_state: normalizedWorkflowState,
         });
+        syncActiveWorkflowCollections(projectId, normalizedWorkflowState);
 
         // 仍然加载 assets 和 workflows 从 IndexedDB（这些不在 PostgreSQL 中）
         const sAssets = await loadFromStorage<any[]>('assets'); if (sAssets) setAssetHistory(sAssets);
@@ -571,6 +673,7 @@ export const App = () => {
     setConnections([]);
     setGroups([]);
     setActiveProject(null);
+    setActiveWorkflowEntityState(null);
     setSyncProjectId(null);
     setCurrentView('projects');
   };
@@ -2567,6 +2670,34 @@ export const App = () => {
             onFocusSeries={handleFocusSeriesWorkflow}
             onUpdateSeriesSettings={handleUpdateSeriesWorkflowSettings}
             onBatchUpdateStages={handleBatchUpdateWorkflowStages}
+          />
+        </ProjectWorkspaceLayout>
+        <SettingsPanel
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+        />
+      </div>
+    );
+  }
+
+  if (currentView === 'jobs') {
+    return (
+      <div className="w-screen h-screen">
+        <ProjectWorkspaceLayout
+          projectTitle={projectWorkspaceTitle}
+          currentView={currentView}
+          hasActiveEpisode={Boolean(activeWorkflowEpisode)}
+          sectionLabel="Task Center"
+          sectionDescription="Track queued, running, completed, and failed generation work across the project, then jump back into the related episode workspace when execution needs intervention."
+          onChangeView={setCurrentView}
+          onBackToProjects={handleBackToProjects}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+        >
+          <WorkflowJobsView
+            projectId={activeProject?.id}
+            projectTitle={projectWorkspaceTitle}
+            workflowState={workflowProjectState}
+            onOpenEpisodeWorkspace={handleOpenEpisodeWorkspace}
           />
         </ProjectWorkspaceLayout>
         <SettingsPanel

@@ -24,6 +24,8 @@ interface UseNodeActionsParams {
     saveHistory: () => void;
     handleNodeUpdate: (id: string, data: any, size?: any, title?: string) => void;
     handleAssetGenerated: (type: 'image' | 'video' | 'audio', src: string, title: string) => void;
+    activeProjectId?: string;
+    activeWorkflowInstanceId?: string | null;
 }
 
 /**
@@ -35,8 +37,39 @@ async function saveVideoToDatabase(videoUrl: string, taskId: string, taskNumber:
 }
 
 export function useNodeActions(params: UseNodeActionsParams) {
-    const { nodesRef, connectionsRef, abortControllersRef, nodeQuery, saveHistory, handleNodeUpdate, handleAssetGenerated } = params;
+    const {
+        nodesRef,
+        connectionsRef,
+        abortControllersRef,
+        nodeQuery,
+        saveHistory,
+        handleNodeUpdate,
+        handleAssetGenerated,
+        activeProjectId,
+        activeWorkflowInstanceId,
+    } = params;
     const { nodes, setNodes, connections, setConnections, groups, setGroups } = useEditorStore();
+
+    const resolveGenerationJobScope = () => ({
+        projectId: activeProjectId,
+        workflowInstanceId: activeWorkflowInstanceId ?? undefined,
+    });
+
+    const createTrackedGenerationJob = async (payload: Record<string, unknown>) => {
+        const { createGenerationJob } = await import('../services/api/generationJobApi');
+        const response = await createGenerationJob(payload);
+        return response.success ? response.data : null;
+    };
+
+    const updateTrackedGenerationJob = async (id: string | undefined, payload: Record<string, unknown>) => {
+        if (!id) {
+            return null;
+        }
+
+        const { updateGenerationJob } = await import('../services/api/generationJobApi');
+        const response = await updateGenerationJob(id, payload);
+        return response.success ? response.data : null;
+    };
 
     const getVisualPromptPrefix = (style: string, genre?: string, setting?: string): string => {
         let base = '';
@@ -183,6 +216,35 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 return 'Cinematic, high quality, consistent style';
         }
     };
+
+    const buildSoraGenerationJobMetadata = (
+        nodeId: string,
+        taskGroup: SoraTaskGroup,
+        taskGroupIndex: number,
+    ) => ({
+        nodeId,
+        nodeType: NodeType.SORA_VIDEO_GENERATOR,
+        taskGroupId: taskGroup.id,
+        taskGroupIndex,
+        taskNumber: taskGroup.taskNumber,
+        triggerAction: 'generate-video',
+        cancelAction: 'cancel-generation-job',
+        source: 'sora-task-group',
+        soraProvider: taskGroup.provider || 'sora',
+    });
+
+    const resetSoraTaskGroupForExecution = (
+        taskGroup: SoraTaskGroup,
+        generationJobId: string | undefined,
+    ): SoraTaskGroup => ({
+        ...taskGroup,
+        generationJobId,
+        progress: 0,
+        error: undefined,
+        videoUrl: undefined,
+        videoUrlWatermarked: undefined,
+        videoMetadata: undefined,
+    });
 
     // --- Main Action Handler ---
     const handleNodeAction = useCallback(async (id: string, promptOverride?: string) => {
@@ -472,10 +534,53 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         throw new Error('请先生成提示词');
                     }
 
+                    const generationScope = resolveGenerationJobScope();
+                    const trackedJob = taskGroup.generationJobId
+                        ? await updateTrackedGenerationJob(taskGroup.generationJobId, {
+                            projectId: generationScope.projectId,
+                            workflowInstanceId: generationScope.workflowInstanceId,
+                            provider: 'sora',
+                            capability: 'video',
+                            prompt: taskGroup.soraPrompt,
+                            status: 'QUEUED',
+                            phase: 'QUEUED',
+                            progress: 0,
+                            error: null,
+                            resultUrl: null,
+                            resultPayload: {},
+                            metadata: buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
+                            sourcePayload: {
+                                taskGroupId: taskGroup.id,
+                                taskNumber: taskGroup.taskNumber,
+                                sora2Config: taskGroup.sora2Config,
+                                hasReferenceImage: Boolean(taskGroup.referenceImage),
+                            },
+                            startedAt: null,
+                            completedAt: null,
+                        })
+                        : await createTrackedGenerationJob({
+                            projectId: generationScope.projectId,
+                            workflowInstanceId: generationScope.workflowInstanceId,
+                            provider: 'sora',
+                            capability: 'video',
+                            prompt: taskGroup.soraPrompt,
+                            status: 'QUEUED',
+                            phase: 'QUEUED',
+                            progress: 0,
+                            metadata: buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
+                            sourcePayload: {
+                                taskGroupId: taskGroup.id,
+                                taskNumber: taskGroup.taskNumber,
+                                sora2Config: taskGroup.sora2Config,
+                                hasReferenceImage: Boolean(taskGroup.referenceImage),
+                            },
+                        });
+                    const generationJobId = trackedJob?.id ?? taskGroup.generationJobId;
+
                     // Set to uploading status
                     const updatedTaskGroups = [...taskGroups];
                     updatedTaskGroups[taskGroupIndex] = {
-                        ...taskGroup,
+                        ...resetSoraTaskGroupForExecution(taskGroup, generationJobId),
                         generationStatus: 'uploading' as const
                     };
                     handleNodeUpdate(id, { taskGroups: updatedTaskGroups });
@@ -483,13 +588,31 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                     try {
                         const { generateSoraVideo } = await import('../services/soraService');
+                        const abortController = new AbortController();
+                        if (generationJobId) {
+                            abortControllersRef.current.set(generationJobId, abortController);
+                        }
 
                         const result = await generateSoraVideo(
                             updatedTaskGroups[taskGroupIndex],
-                            (message, progress) => {
+                            async (message, progress) => {
+                                await updateTrackedGenerationJob(generationJobId, {
+                                    status: 'RUNNING',
+                                    phase: 'RUNNING',
+                                    progress,
+                                    error: null,
+                                    metadata: {
+                                        message,
+                                        ...buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
+                                    },
+                                });
                             },
-                            { nodeId: id, nodeType: node.type }
+                            { nodeId: id, nodeType: node.type },
+                            { signal: abortController.signal }
                         );
+                        if (generationJobId) {
+                            abortControllersRef.current.delete(generationJobId);
+                        }
 
                         console.log('[SORA] generateSoraVideo 返回结果:', {
                             status: result.status,
@@ -500,6 +623,21 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         });
 
                         if (result.status === 'completed') {
+                            await updateTrackedGenerationJob(generationJobId, {
+                                status: 'COMPLETED',
+                                phase: 'COMPLETED',
+                                progress: 100,
+                                error: null,
+                                resultUrl: result.videoUrl,
+                                resultPayload: {
+                                    taskId: result.taskId,
+                                    videoUrl: result.videoUrl,
+                                    videoUrlWatermarked: result.videoUrlWatermarked,
+                                    isCompliant: result.isCompliant,
+                                    violationReason: result.violationReason,
+                                },
+                                metadata: buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
+                            });
                             // 不保存到IndexedDB，直接使用 Sora URL
                             saveVideoToDatabase(
                                 result.videoUrl,
@@ -544,9 +682,11 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                             // Update task group with results
                             updatedTaskGroups[taskGroupIndex] = {
-                                ...taskGroup,
+                                ...resetSoraTaskGroupForExecution(taskGroup, generationJobId),
                                 generationStatus: 'completed' as const,
                                 progress: 100,
+                                videoUrl: result.videoUrl,
+                                videoUrlWatermarked: result.videoUrlWatermarked,
                                 videoMetadata: {
                                     duration: typeof result.duration === 'string' ? parseFloat(result.duration || '0') : result.duration || 0,
                                     resolution: '1080p',
@@ -572,8 +712,20 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 rawData: result._rawData
                             });
 
+                            await updateTrackedGenerationJob(generationJobId, {
+                                status: 'FAILED',
+                                phase: 'FAILED',
+                                progress: result.progress ?? 0,
+                                error: errorMessage,
+                                resultPayload: {
+                                    taskId: result.taskId,
+                                    rawData: result._rawData,
+                                },
+                                metadata: buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
+                            });
+
                             updatedTaskGroups[taskGroupIndex] = {
-                                ...taskGroup,
+                                ...resetSoraTaskGroupForExecution(taskGroup, generationJobId),
                                 generationStatus: 'failed' as const,
                                 error: errorMessage
                             };

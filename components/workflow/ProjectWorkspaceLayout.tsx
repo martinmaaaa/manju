@@ -3,7 +3,7 @@ import { ArrowLeft, Settings } from 'lucide-react';
 import { ProjectWorkspaceNav } from './ProjectWorkspaceNav';
 import type { AppView } from '../../stores/ui.store';
 
-type ProjectWorkspaceView = Extract<AppView, 'pipeline' | 'assets' | 'episodes' | 'workspace' | 'canvas'>;
+type ProjectWorkspaceView = Extract<AppView, 'pipeline' | 'assets' | 'episodes' | 'jobs' | 'workspace' | 'canvas'>;
 
 interface ProjectWorkspaceLayoutProps {
   projectTitle: string;
