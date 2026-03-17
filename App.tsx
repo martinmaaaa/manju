@@ -329,6 +329,7 @@ export const App = () => {
 
   // AbortController 存储（用于取消视频生成任务）
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const handleNodeActionRef = useRef<((id: string, promptOverride?: string) => Promise<void> | void) | null>(null);
 
   // 性能优化：创建轻量级的节点查询函数
   // 避免传递整个nodes数组导致所有节点重渲染
@@ -374,7 +375,8 @@ export const App = () => {
       ? { workflowState: activeProject.workflow_state }
       : activeProject?.settings,
   ), [activeProject]);
-  const activeWorkflowCollections = activeWorkflowEntityState?.projectId === activeProject?.id
+  const activeWorkflowCollections = activeWorkflowEntityState && activeProject
+    && activeWorkflowEntityState.projectId === activeProject.id
     ? activeWorkflowEntityState.collections
     : null;
   const workflowProjectState = useMemo(
@@ -1369,12 +1371,15 @@ export const App = () => {
         ...taskGroups[taskGroupIndex],
         generationJobId,
       };
-      nodesRef.current = nodesRef.current.map(candidate => (
-        candidate.id === nodeId
-          ? { ...candidate, data: { ...candidate.data, taskGroups } }
-          : candidate
-      ));
-      handleNodeUpdate(nodeId, { taskGroups });
+      setNodes(previous => {
+        const nextNodes = previous.map(candidate => (
+          candidate.id === nodeId
+            ? { ...candidate, data: { ...candidate.data, taskGroups } }
+            : candidate
+        ));
+        nodesRef.current = nextNodes;
+        return nextNodes;
+      });
       return;
     }
 
@@ -1387,14 +1392,17 @@ export const App = () => {
       || source === 'video-generator'
       || source === 'jimeng-video-generator'
     ) {
-      nodesRef.current = nodesRef.current.map(candidate => (
-        candidate.id === nodeId
-          ? { ...candidate, data: { ...candidate.data, generationJobId } }
-          : candidate
-      ));
-      handleNodeUpdate(nodeId, { generationJobId });
+      setNodes(previous => {
+        const nextNodes = previous.map(candidate => (
+          candidate.id === nodeId
+            ? { ...candidate, data: { ...candidate.data, generationJobId } }
+            : candidate
+        ));
+        nodesRef.current = nextNodes;
+        return nextNodes;
+      });
     }
-  }, [handleNodeUpdate, nodesRef]);
+  }, [nodesRef, setNodes]);
 
   const handleGenerationJobAction = useCallback(async (
     job: GenerationJob,
@@ -1410,7 +1418,7 @@ export const App = () => {
 
     try {
       if (nodeId && action === 'cancel' && cancelAction) {
-        await handleNodeAction(nodeId, cancelAction);
+        await handleNodeActionRef.current?.(nodeId, cancelAction);
         const cancelResponse = await cancelGenerationJob(job.id);
         return cancelResponse.success
           ? { success: true }
@@ -1430,7 +1438,7 @@ export const App = () => {
         }
 
         syncLocalGenerationJobBinding(nodeId, metadata, response.data.id);
-        await handleNodeAction(nodeId, triggerAction);
+        await handleNodeActionRef.current?.(nodeId, triggerAction);
         return { success: true };
       }
 
@@ -1449,7 +1457,7 @@ export const App = () => {
         error: error?.message || '任务操作失败',
       };
     }
-  }, [handleNodeAction, syncLocalGenerationJobBinding]);
+  }, [syncLocalGenerationJobBinding]);
 
   const handleCreateWorkflowAsset = useCallback(async (
     type: WorkflowAssetType,
@@ -2677,6 +2685,7 @@ export const App = () => {
     activeProjectId: activeProject?.id,
     activeWorkflowInstanceId: workflowProjectState.activeEpisodeId ?? workflowProjectState.activeSeriesId ?? null,
   });
+  handleNodeActionRef.current = handleNodeAction;
 
   // --- Canvas Snapshot Actions ---
   const { saveCurrentAsCanvasSnapshot, saveGroupAsCanvasSnapshot, loadCanvasSnapshot, deleteCanvasSnapshot, renameCanvasSnapshot } = useCanvasSnapshotActions({
