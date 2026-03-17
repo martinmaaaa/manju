@@ -1,10 +1,9 @@
 /**
- * useNodeActions - 节点动作处理 Hook
+ * useNodeActions - 闁煎搫鍊婚崑锝夊礉閵娿倗绋婂璺哄閹?Hook
  *
- * @developer 光波 (a@ggbo.com)
- * @copyright Copyright (c) 2025 光波. All rights reserved.
- * @description 从 App.tsx 提取的节点动作处理逻辑，包含 handleNodeAction 及其辅助函数
- */
+ * @developer 闁稿繐顦扮亸?(a@ggbo.com)
+ * @copyright Copyright (c) 2025 闁稿繐顦扮亸? All rights reserved.
+ * @description 濞?App.tsx 闁圭粯鍔曡ぐ鍥儍閸曨喖螡闁绘劗鎳撴慨鈺傛媴濠婂啴鎮堕崱娑掑亾閺勫繒甯嗛柨娑樿嫰鐎垫﹢宕?handleNodeAction 闁告瑥锕ら崣鐐綇閸涱厼袠闁告垼濮ら弳? */
 
 import React, { useCallback } from 'react';
 import { AppNode, NodeType, NodeStatus, Connection, SoraTaskGroup, CharacterProfile } from '../types';
@@ -15,6 +14,7 @@ import { saveImageNodeOutput, saveVideoNodeOutput, saveAudioNodeOutput, saveStor
 import { checkImageNodeCache, checkVideoNodeCache, checkAudioNodeCache } from '../utils/cacheChecker';
 import { createNodeQuery } from '../hooks/usePerformanceOptimization';
 import { getJimengReferenceValidationMessage, validateJimengReferenceFiles } from '../utils/jimengFiles';
+import type { WorkflowStageRunMutation } from '../services/api/workspaceApi';
 
 interface UseNodeActionsParams {
     nodesRef: React.MutableRefObject<AppNode[]>;
@@ -29,9 +29,7 @@ interface UseNodeActionsParams {
 }
 
 /**
- * 保存视频到服务器数据库
- * 注意：已禁用 IndexedDB 保存，直接使用 Sora URL 避免卡顿
- */
+ * 濞ｅ洦绻傞悺銊ф喆閸℃盯宕氶悧鍫熺疀闁告柡鈧櫕鐝ata閹? * 婵炲鍔嶉崜浼存晬濮橆剙鍤掔紒鍌欒兌閺?IndexedDB 濞ｅ洦绻傞悺銊╂晬瀹€鈧ú鍧楀箳閵夈倕鈻忛柣?Sora URL 闂侇剙鐏濋崢銈夊础閿熺姰鈧? */
 async function saveVideoToDatabase(videoUrl: string, taskId: string, taskNumber: number, soraPrompt: string): Promise<string> {
     return taskId;
 }
@@ -105,7 +103,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
             } else if (inputNode.type === NodeType.VIDEO_ANALYZER && inputNode.data.analysis) {
                 texts.push(inputNode.data.analysis);
             } else if (inputNode.type === NodeType.SCRIPT_EPISODE && inputNode.data.generatedEpisodes) {
-                texts.push(inputNode.data.generatedEpisodes.map(ep => `${ep.title}\n角色: ${ep.characters}`).join('\n'));
+                texts.push(inputNode.data.generatedEpisodes.map(ep => `${ep.title}\nCharacters: ${ep.characters}`).join('\n'));
             } else if (inputNode.type === NodeType.SCRIPT_PLANNER && inputNode.data.scriptOutline) {
                 // Include script outline (may contain character backstories)
                 texts.push(inputNode.data.scriptOutline);
@@ -113,26 +111,26 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const selected = inputNode.data.selectedFields || [];
                 if (selected.length > 0) {
                     const fieldLabels: Record<string, string> = {
-                        dramaIntroduction: '剧集介绍',
-                        worldview: '世界观分析',
-                        logicalConsistency: '逻辑自洽性',
-                        extensibility: '延展性分析',
-                        characterTags: '角色标签',
-                        protagonistArc: '主角弧光',
-                        audienceResonance: '受众共鸣点',
-                        artStyle: '画风分析'
+                        dramaIntroduction: 'Drama Introduction',
+                        worldview: 'Worldview',
+                        logicalConsistency: 'Logical Consistency',
+                        extensibility: 'Extensibility',
+                        characterTags: 'Character Tags',
+                        protagonistArc: 'Protagonist Arc',
+                        audienceResonance: 'Audience Resonance',
+                        artStyle: 'Art Style',
                     };
                     const parts = selected.map(fieldKey => {
                         const value = inputNode.data[fieldKey as keyof typeof inputNode.data] as string || '';
                         const label = fieldLabels[fieldKey] || fieldKey;
-                        return `【${label}】\n${value}`;
+                        return `[${label}]\n${value}`;
                     });
                     texts.push(parts.join('\n\n'));
                 }
             } else if (inputNode.type === NodeType.DRAMA_REFINED && inputNode.data.refinedContent) {
                 // Include refined content if available
                 const refined = inputNode.data.refinedContent as any;
-                if (refined.characterTags) texts.push(`角色标签: ${refined.characterTags.join(', ')}`);
+                if (refined.characterTags) texts.push(`Character Tags: ${refined.characterTags.join(', ')}`);
             }
 
             // Recursively collect from upstream nodes
@@ -540,13 +538,64 @@ export function useNodeActions(params: UseNodeActionsParams) {
         }
     };
 
+    const dedupeSplitShots = (splitShots: any[]) => {
+        const byId = new Map<string, any>();
+        for (const splitShot of splitShots) {
+            const shotId = typeof splitShot?.id === 'string' ? splitShot.id : null;
+            if (!shotId) {
+                continue;
+            }
+
+            if (!byId.has(shotId)) {
+                byId.set(shotId, splitShot);
+            }
+        }
+
+        return Array.from(byId.values());
+    };
+
+    const resolveRelevantWorkflowShots = (node: AppNode, inputs: AppNode[]) => {
+        const selectedCandidates: any[] = [];
+        const fallbackCandidates: any[] = [];
+
+        const collectSelectedShots = (candidateNode: AppNode | undefined) => {
+            if (!candidateNode) {
+                return;
+            }
+
+            const availableShots = Array.isArray(candidateNode.data?.availableShots)
+                ? candidateNode.data.availableShots
+                : [];
+            const selectedShotIds = Array.isArray(candidateNode.data?.selectedShotIds)
+                ? candidateNode.data.selectedShotIds
+                : [];
+
+            if (availableShots.length > 0 && selectedShotIds.length > 0) {
+                selectedCandidates.push(
+                    ...availableShots.filter((shot: any) => selectedShotIds.includes(shot.id)),
+                );
+            }
+        };
+
+        collectSelectedShots(node);
+        inputs.forEach(collectSelectedShots);
+
+        for (const inputNode of inputs) {
+            if (inputNode?.type === NodeType.STORYBOARD_SPLITTER && Array.isArray(inputNode.data?.splitShots)) {
+                fallbackCandidates.push(...inputNode.data.splitShots);
+            }
+        }
+
+        if (selectedCandidates.length > 0) {
+            return dedupeSplitShots(selectedCandidates);
+        }
+
+        return dedupeSplitShots(fallbackCandidates);
+    };
+
     const syncWorkflowStageRunOutputs = async (
         stageId: string,
-        patch: {
-            status?: string;
-            formData?: Record<string, unknown>;
-            outputs?: Record<string, unknown>;
-        },
+        patch: WorkflowStageRunMutation,
     ) => {
         if (!activeWorkflowInstanceId) {
             return null;
@@ -615,7 +664,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
     const handleNodeAction = useCallback(async (id: string, promptOverride?: string) => {
         const node = nodesRef.current.find(n => n.id === id);
         if (!node) {
-            console.error('[handleNodeAction] 未找到节点:', id);
+            console.error('[handleNodeAction] Node not found:', id);
             return;
         }
         handleNodeUpdate(id, { error: undefined });
@@ -626,12 +675,12 @@ export function useNodeActions(params: UseNodeActionsParams) {
             if (node.type === NodeType.PROMPT_INPUT && promptOverride === 'generate-storyboard') {
                 const episodeContent = node.data.prompt || '';
                 if (!episodeContent || episodeContent.trim().length < 5) {
-                    throw new Error('剧本内容字数太少，请提供更详细的场景描述（至少5个字符）');
+                    throw new Error('Storyboard content is too short. Provide at least 5 characters.');
                 }
 
                 // Extract episode title from content (first line or use default)
                 const lines = episodeContent.split('\n');
-                const episodeTitle = lines[0].replace(/^#+\s*/, '').trim() || '未命名剧集';
+                const episodeTitle = lines[0].replace(/^#+s*/, '').trim() || 'Untitled Episode';
 
                 // Find parent SCRIPT_EPISODE node and its connected SCRIPT_PLANNER to get configured duration
                 const parentEpisodeNode = nodesRef.current.find(n => n.type === NodeType.SCRIPT_EPISODE && n.id && node.inputs.includes(n.id));
@@ -666,7 +715,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     estimatedDuration,
                     visualStyle,
                     undefined,  // onShotGenerated callback (not used)
-                    getUserDefaultModel('text'),  // 总是使用最新的模型配置
+                    getUserDefaultModel('text'),
                     { nodeId: node.id, nodeType: node.type }  // context for API logging
                 );
 
@@ -689,7 +738,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const selectedFields = node.data.selectedFields || [];
 
                 if (selectedFields.length === 0) {
-                    throw new Error('请先勾选需要提取的分析项');
+                    throw new Error('Select at least one analysis field.');
                 }
 
                 // Call AI API to extract refined tags
@@ -703,7 +752,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     x: node.x + (node.width || 420) + 150,
                     y: node.y,
                     width: 420,
-                    title: '剧目精炼',
+                    title: 'Drama Refined',
                     status: NodeStatus.SUCCESS,
                     data: {
                         refinedContent,
@@ -741,7 +790,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const taskGroup = taskGroups[taskGroupIndex];
 
                     if (!taskGroup) {
-                        throw new Error(`未找到任务组 ${taskGroupIndex + 1}`);
+                        throw new Error(`闁哄牆顥濋柛鎺楊暒閹广垽宕濋敍鍕煁 ${taskGroupIndex + 1}`);
                     }
 
 
@@ -785,12 +834,16 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const taskGroup = taskGroups[taskGroupIndex];
 
                     if (!taskGroup) {
-                        throw new Error(`未找到任务组 ${taskGroupIndex + 1}`);
+                        throw new Error(`Task group ${taskGroupIndex + 1} not found`);
                     }
 
                     // Store the editing state in a temporary location (could use localStorage or a modal state)
                     // For now, we'll just log it - the actual editing UI will need to be implemented separately
-                    alert(`分镜编辑功能即将推出\n\n任务组 ${taskGroup.taskNumber} 包含 ${taskGroup.splitShots?.length || 0} 个分镜\n\n您可以先在分镜图拆解节点中编辑，然后重新生成提示词。`);
+                    alert(`Storyboard editing is not available yet.
+
+Task group ${taskGroup.taskNumber} contains ${taskGroup.splitShots?.length || 0} shots.
+
+Edit the splitter node first, then regenerate the prompt.`);
                     return;
                 }
 
@@ -800,20 +853,20 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const taskGroup = taskGroups[taskGroupIndex];
 
                     if (!taskGroup) {
-                        throw new Error(`未找到任务组 ${taskGroupIndex + 1}`);
+                        throw new Error(`Task group ${taskGroupIndex + 1} not found`);
                     }
 
                     if (!taskGroup.soraPrompt) {
-                        throw new Error('请先生成提示词');
+                        throw new Error('Generate the prompt first.');
                     }
 
 
-                    // 设置正在去敏感词状态
+                    // Set removing-sensitive-words state.
                     const updatedTaskGroups = [...taskGroups];
                     updatedTaskGroups[taskGroupIndex] = {
                         ...taskGroup,
                         isRemovingSensitiveWords: true,
-                        removeSensitiveWordsProgress: '正在调用AI模型...'
+                        removeSensitiveWordsProgress: 'Calling AI model...'
                     };
                     handleNodeUpdate(id, { taskGroups: updatedTaskGroups });
 
@@ -823,11 +876,11 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         const cleanedPrompt = await removeSensitiveWords(taskGroup.soraPrompt);
 
 
-                        // 计算优化统计
+                        // Compute optimization summary.
                         const wordCountDiff = taskGroup.soraPrompt.length - cleanedPrompt.length;
                         const successMessage = wordCountDiff > 0
-                            ? `✓ 已优化 ${wordCountDiff} 个字符`
-                            : `✓ 优化完成`;
+                            ? `Optimized ${wordCountDiff} characters`
+                            : 'Optimization completed';
 
                         // Update the task group's prompt
                         updatedTaskGroups[taskGroupIndex] = {
@@ -840,7 +893,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                         handleNodeUpdate(id, { taskGroups: updatedTaskGroups });
 
-                        // 3秒后清除成功消息
+                        // Clear success message after 3 seconds.
                         setTimeout(() => {
                             const currentTaskGroups = nodesRef.current.find(n => n.id === id)?.data?.taskGroups;
                             if (currentTaskGroups) {
@@ -856,7 +909,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             }
                         }, 3000);
                     } catch (error: any) {
-                        console.error('[去敏感词] ❌ 处理失败:', error);
+                        console.error('[removeSensitiveWords] Failed:', error);
 
                         updatedTaskGroups[taskGroupIndex] = {
                             ...taskGroup,
@@ -866,7 +919,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         };
                         handleNodeUpdate(id, { taskGroups: updatedTaskGroups });
 
-                        // 5秒后清除错误消息
+                        // Clear error message after 5 seconds.
                         setTimeout(() => {
                             const currentTaskGroups = nodesRef.current.find(n => n.id === id)?.data?.taskGroups;
                             if (currentTaskGroups) {
@@ -890,7 +943,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const taskGroup = Number.isFinite(taskGroupIndex) ? taskGroups[taskGroupIndex] : null;
 
                     if (!taskGroup) {
-                        throw new Error('未找到要取消的任务组');
+                        throw new Error('Task group to cancel was not found.');
                     }
 
                     const generationJobId = taskGroup.generationJobId;
@@ -929,12 +982,12 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const taskGroup = taskGroups[taskGroupIndex];
 
                     if (!taskGroup) {
-                        throw new Error(`未找到任务组 ${taskGroupIndex + 1}`);
+                        throw new Error(`Task group ${taskGroupIndex + 1} not found`);
                     }
 
 
                     if (!taskGroup.soraPrompt) {
-                        throw new Error('请先生成提示词');
+                        throw new Error('Generate the prompt first.');
                     }
 
                     const generationScope = resolveGenerationJobScope();
@@ -1017,7 +1070,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             abortControllersRef.current.delete(generationJobId);
                         }
 
-                        console.log('[SORA] generateSoraVideo 返回结果:', {
+                        console.log('[SORA] generateSoraVideo 閺夆晜鏌ㄥú鏍磼閹惧浜?', {
                             status: result.status,
                             taskId: result.taskId,
                             videoUrl: result.videoUrl,
@@ -1041,7 +1094,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 },
                                 metadata: buildSoraGenerationJobMetadata(id, taskGroup, taskGroupIndex),
                             });
-                            // 不保存到IndexedDB，直接使用 Sora URL
+                            // 濞戞挸绉崇换姘扁偓娑櫭崺瀛杗dexedDB闁挎稑鐬煎ú鍧楀箳閵夈倕鈻忛柣?Sora URL
                             saveVideoToDatabase(
                                 result.videoUrl,
                                 result.taskId,
@@ -1056,7 +1109,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 type: NodeType.SORA_VIDEO_CHILD,
                                 x: node.x + (node.width || 420) + 50,
                                 y: node.y + (taskGroupIndex * 150),
-                                title: `任务组 ${taskGroup.taskNumber}`,
+                                title: `Task Group ${taskGroup.taskNumber}`,
                                 status: NodeStatus.SUCCESS,
                                 data: {
                                     taskGroupId: taskGroup.id,
@@ -1078,9 +1131,9 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 to: childNodeId
                             };
 
-                            // 添加到历史记录
+                            // Add to asset history.
                             if (result.videoUrl) {
-                                handleAssetGenerated('video', result.videoUrl, `Sora 任务组 ${taskGroup.taskNumber}`);
+                                handleAssetGenerated('video', result.videoUrl, `Sora Task Group ${taskGroup.taskNumber}`);
                             }
 
                             // Update task group with results
@@ -1106,11 +1159,10 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             const rawError = result.violationReason ||
                                 result._rawData?.error ||
                                 result._rawData?.message ||
-                                '视频生成失败';
-                            // 确保 errorMessage 是字符串
+                                'Video generation failed';
                             const errorMessage = typeof rawError === 'string' ? rawError : JSON.stringify(rawError);
 
-                            console.error(`[SORA] 任务 ${taskGroup.taskNumber} 失败详情:`, {
+                            console.error(`[SORA] Task ${taskGroup.taskNumber} failed:`, {
                                 violationReason: result.violationReason,
                                 rawData: result._rawData
                             });
@@ -1143,7 +1195,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             abortControllersRef.current.delete(generationJobId);
                         }
                         const cancelled = error?.name === 'AbortError'
-                            || error?.message === '任务已取消'
+                            || error?.message === 'Task cancelled.'
                             || error?.message === 'Task cancelled.';
                         if (cancelled) {
                             await updateTrackedGenerationJob(generationJobId, {
@@ -1163,23 +1215,23 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                             return;
                         }
-                        const errorMessage = error.message || '生成失败';
+                        const errorMessage = error.message || 'Generation failed';
 
-                        // 更新任务组状态
+                        // Persist failed status to the task group.
                         updatedTaskGroups[taskGroupIndex] = {
                             ...taskGroup,
                             generationStatus: 'failed' as const,
                             error: errorMessage
                         };
 
-                        // 创建失败状态的子节点
+                        // Create a child node for the failed task.
                         const childNodeId = `n-sora-child-${Date.now()}`;
                         const childNode: AppNode = {
                             id: childNodeId,
                             type: NodeType.SORA_VIDEO_CHILD,
                             x: node.x + (node.width || 420) + 50,
                             y: node.y + (taskGroupIndex * 150),
-                            title: `任务组 ${taskGroup.taskNumber}`,
+                            title: `Task Group ${taskGroup.taskNumber}`,
                             status: NodeStatus.ERROR,
                             data: {
                                 taskGroupId: taskGroup.id,
@@ -1208,24 +1260,23 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 if (promptOverride === 'fuse-images') {
 
                     if (taskGroups.length === 0) {
-                        throw new Error('请先生成任务组和提示词');
+                        throw new Error('Generate storyboard prompts before fusing images.');
                     }
 
                     try {
-                        // 导入图片融合工具
+                        // 閻庣數鍘ч崣鍞卪age闁捐绉撮幃搴☆啅閵夈儱寰?
                         const { fuseMultipleTaskGroups } = await import('../utils/imageFusion');
 
-                        // 过滤出有splitShots的任务组
+                        // 閺夆晛娲﹂幎銈夊礄閻戞ɑ绠抯plitShots闁汇劌瀚幑銏ゅ礉閿涘嫮鐭?
                         const taskGroupsToFuse = taskGroups.filter(tg =>
                             tg.splitShots && tg.splitShots.length > 0
                         );
 
                         if (taskGroupsToFuse.length === 0) {
-                            throw new Error('没有可融合的分镜图');
+                            throw new Error('No task groups have split shots to fuse.');
                         }
 
-
-                        // 执行图片融合
+                        // Execute image fusion.
                         const fusionResults = await fuseMultipleTaskGroups(
                             taskGroupsToFuse,
                             (current, total, groupName) => {
@@ -1233,30 +1284,29 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         );
 
 
-                        // 导入OSS服务
                         const { getOSSConfig } = await import('../services/soraConfigService');
                         const { uploadFileToOSS } = await import('../services/ossService');
 
-                        // 检查是否配置了OSS
+                        // 婵☆偀鍋撻柡灞诲劜濡叉悂宕ラ敃鍌氬赋缂傚啰鍟奜SS
                         const ossConfig = getOSSConfig();
                         if (!ossConfig) {
-                            console.warn('[SORA_VIDEO_GENERATOR] OSS未配置，融合图将使用Base64格式，可能导致显示问题');
+                            console.warn('[SORA_VIDEO_GENERATOR] OSS is not configured. Using base64 reference image fallback.');
                         }
 
-                        // 更新任务组数据（如果配置了OSS，先上传）
+                        // Update task groups with fused images and optional OSS uploads.
                         const updatedTaskGroups = await Promise.all(taskGroups.map(async (tg) => {
                             const result = fusionResults.find(r => r.groupId === tg.id);
                             if (result) {
                                 let imageUrl = result.fusedImage;
 
-                                // 如果配置了OSS，上传融合图
+                                // 濠碘€冲€归悘濉﹐nfig濞存粌鎼礢S闁挎稑濂旂粭鍌涘閻樿櫣鈧椽宕ラ崼婵囩
                                 if (ossConfig) {
                                     try {
                                         const fileName = `sora-reference-${tg.id}-${Date.now()}.png`;
                                         imageUrl = await uploadFileToOSS(result.fusedImage, fileName, ossConfig);
                                     } catch (error: any) {
                                         console.error('[SORA_VIDEO_GENERATOR] Failed to upload reference image for task group', tg.taskNumber, ':', error);
-                                        // 上传失败，回退到Base64
+                                        // 濞戞挸锕ｇ槐鑸靛緞鏉堫偉袝闁挎稑鑻ú鏍焻閳ь剟宕氶惂鍢簊e64
                                         imageUrl = result.fusedImage;
                                     }
                                 }
@@ -1275,7 +1325,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     } catch (error: any) {
                         console.error('[SORA_VIDEO_GENERATOR] Image fusion failed:', error);
-                        throw new Error(`图片融合失败: ${error.message}`);
+                        throw new Error(`Image fusion failed: ${error.message}`);
                     }
                     return;
                 }
@@ -1288,7 +1338,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     );
 
                     if (taskGroupsToGenerate.length === 0) {
-                        throw new Error('没有可生成的任务组，请先完成提示词生成');
+                        throw new Error('No task groups are ready for video generation.');
                     }
 
                     // Update all task groups to 'uploading' status
@@ -1304,7 +1354,6 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const results = await generateMultipleSoraVideos(
                         taskGroupsToGenerate,
                         (index, message, progress) => {
-                            // 实时更新进度到节点状态
                             const tg = taskGroupsToGenerate[index];
                             if (tg) {
                                 handleNodeUpdate(id, {
@@ -1321,31 +1370,29 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const newChildNodes: AppNode[] = [];
                     const newConnections: Connection[] = [];
 
-                    // 使用 for...of 循环以支持 await
-                    // results 是 Map<taskGroupId, SoraVideoResult>，需要用 taskGroupId 查找对应的 taskGroup
+                    // 濞达綀娉曢弫?for...of 鐎垫澘绠氬ù鐘劜閺侇噣骞?await
+                    // results 闁?Map<taskGroupId, SoraVideoResult>闁挎稑鐭傚〒鍓佹啺娴ｇ儤鏆?taskGroupId 闁哄被鍎叉竟妯尖偓鐢垫嚀缁ㄦ煡鎯?taskGroup
                     let childIndex = 0;
                     for (const [taskGroupId, result] of results.entries()) {
                         const taskGroup = taskGroupsToGenerate.find(tg => tg.id === taskGroupId);
                         if (!taskGroup) continue;
                         if (result.status === 'completed' && result.videoUrl) {
-                            // 不保存到IndexedDB，直接使用 Sora URL
+                            // 濞戞挸绉崇换姘扁偓娑櫭崺瀛杗dexedDB闁挎稑鐬煎ú鍧楀箳閵夈倕鈻忛柣?Sora URL
                             saveVideoToDatabase(result.videoUrl, result.taskId, taskGroup.taskNumber, taskGroup.soraPrompt);
 
-                            // 🚀 保存视频到本地文件系统
                             try {
                                 const { getFileStorageService } = await import('../services/storage/index');
                                 const service = getFileStorageService();
 
                                 if (service.isEnabled()) {
-                                    // 使用 prefix 参数添加任务组 ID，便于后续查找
+                                    // Persist the result with a stable prefix when local storage is enabled.
                                     const saveResult = await service.saveFile(
                                         'default',
-                                        id, // 使用父节点 ID
-                                        'SORA_VIDEO_GENERATOR',
+                                        id,
                                         result.videoUrl,
                                         {
                                             updateMetadata: true,
-                                            prefix: `sora-video-${taskGroup.id}` // 文件名前缀
+                                            prefix: `sora-video-${taskGroup.id}` // 闁哄倸娲ｅ▎銏ゅ触瀹ュ懎顤呯紓鍌楀亾
                                         }
                                     );
 
@@ -1353,7 +1400,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                     }
                                 }
                             } catch (error) {
-                                console.error('[Sora2] 保存视频到本地失败:', error);
+                                console.error('[Sora2] 濞ｅ洦绻傞悺銊ф喆閸℃盯宕氶悧鍫熸嫳闁革附婢橀妵鎴犳嫻?', error);
                             }
 
                             // Create child node
@@ -1363,7 +1410,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 type: NodeType.SORA_VIDEO_CHILD,
                                 x: node.x + (node.width || 420) + 50,
                                 y: node.y + (childIndex * 150),
-                                title: `任务组 ${taskGroup.taskNumber}`,
+                                title: `Task Group ${taskGroup.taskNumber}`,
                                 status: NodeStatus.SUCCESS,
                                 data: {
                                     taskGroupId: taskGroup.id,
@@ -1389,16 +1436,14 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     const finalTaskGroups = taskGroups.map(tg => {
                         const result = results.get(tg.id);
                         if (result) {
-                            // 保留实际的进度值
                             const finalProgress = result.status === 'completed' ? 100 : result.progress;
 
-                            // 提取错误信息
+                            // 闁圭粯鍔曡ぐ鍥煥濞嗘帗绌遍埄鍐х礀
                             let errorMessage = undefined;
                             if (result.status === 'error') {
-                                const rawError = result.violationReason || result._rawData?.error || result._rawData?.message || '视频生成失败';
-                                // 确保 errorMessage 是字符串
+                                const rawError = result.violationReason || result._rawData?.error || result._rawData?.message || 'Video generation failed';
                                 errorMessage = typeof rawError === 'string' ? rawError : JSON.stringify(rawError);
-                                console.error(`[SORA] 任务 ${tg.taskNumber} 失败详情:`, {
+                                console.error(`[SORA] Task ${tg.taskNumber} failed:`, {
                                     violationReason: result.violationReason,
                                     rawData: result._rawData
                                 });
@@ -1411,8 +1456,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                         tg.generationStatus,
                                 progress: finalProgress,
                                 error: errorMessage,
-                                // 保存视频URL到taskGroup中
-                                videoUrl: result.videoUrl,
+                                // 濞ｅ洦绻傞悺銊ф喆閸℃瞼RL闁告帞娈瀉skGroup濞?                                videoUrl: result.videoUrl,
                                 videoUrlWatermarked: result.videoUrlWatermarked,
                                 videoMetadata: result.status === 'completed' ? {
                                     duration: typeof result.duration === 'string' ? parseFloat(result.duration || '0') : result.duration || 0,
@@ -1484,16 +1528,14 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         const finalTaskGroups = updatedTaskGroups.map((tg, index) => {
                             const result = results.get(tg.id);
                             if (result) {
-                                // 保留实际的进度值
                                 const finalProgress = result.status === 'completed' ? 100 : result.progress;
 
-                                // 提取错误信息
+                                // 闁圭粯鍔曡ぐ鍥煥濞嗘帗绌遍埄鍐х礀
                                 let errorMessage = undefined;
                                 if (result.status === 'error') {
-                                    const rawError = result.violationReason || result._rawData?.error || result._rawData?.message || '视频生成失败';
-                                    // 确保 errorMessage 是字符串
+                                    const rawError = result.violationReason || result._rawData?.error || result._rawData?.message || 'Video generation failed';
                                     errorMessage = typeof rawError === 'string' ? rawError : JSON.stringify(rawError);
-                                    console.error(`[SORA] 重新生成任务 ${tg.taskNumber} 失败详情:`, {
+                                    console.error(`[SORA] Batch task ${tg.taskNumber} failed:`, {
                                         violationReason: result.violationReason,
                                         rawData: result._rawData
                                     });
@@ -1521,17 +1563,17 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         const newChildNodes: AppNode[] = [];
                         const newConnections: Connection[] = [];
 
-                        // 使用 for...of 循环以支持 await
-                        // results 是 Map<taskGroupId, SoraVideoResult>
+                        // 濞达綀娉曢弫?for...of 鐎垫澘绠氬ù鐘劜閺侇噣骞?await
+                        // results 闁?Map<taskGroupId, SoraVideoResult>
                         let childIndex = 0;
                         for (const [taskGroupId, result] of results.entries()) {
-                            // 只有当状态完成且有有效videoUrl时才创建子节点
+                            // Only materialize child nodes for completed tasks that have a video URL.
                             if (result.status === 'completed' && result.videoUrl) {
                                 const childNodeId = `n-sora-child-${Date.now()}-${childIndex}`;
                                 const taskGroup = updatedTaskGroups.find(tg => tg.id === taskGroupId);
                                 if (!taskGroup) continue;
 
-                                // 不保存到IndexedDB，直接使用 Sora URL
+                                // Keep using the Sora URL directly instead of IndexedDB.
                                 saveVideoToDatabase(result.videoUrl, result.taskId, taskGroup.taskNumber, taskGroup.soraPrompt);
 
                                 const childNode: AppNode = {
@@ -1539,7 +1581,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                     type: NodeType.SORA_VIDEO_CHILD,
                                     x: node.x + (node.width || 420) + 50,
                                     y: node.y + (childIndex * 150),
-                                    title: `任务组 ${taskGroup.taskNumber}`,
+                                    title: `Task Group ${taskGroup.taskNumber}`,
                                     status: NodeStatus.SUCCESS,
                                     data: {
                                         taskGroupId: taskGroup.id,
@@ -1587,7 +1629,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const provider = node.data.provider || 'yunwu';
 
                 if (!soraTaskId) {
-                    throw new Error('未找到任务ID');
+                    throw new Error('闁哄牆顥濋柛鎺楊暒閹广垽宕滵');
                 }
 
 
@@ -1606,7 +1648,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                     const apiKey = getApiKey();
                     if (!apiKey) {
-                        throw new Error('请先配置API Key');
+                        throw new Error('閻犲洤鍢查崢娌渙nfigAPI Key');
                     }
 
                     // Call status API based on provider
@@ -1623,7 +1665,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         apiUrl = `http://localhost:3001/api/yijiapi/query/${encodeURIComponent(soraTaskId)}`;
                         requestBody = null;
                     } else {
-                        throw new Error('不支持的provider');
+                        throw new Error('Unsupported provider');
                     }
 
 
@@ -1653,7 +1695,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         newStatus = data.status;
                         newProgress = data.progress || 0;
                         if (newStatus === 'error' || newStatus === 'failed') {
-                            newViolationReason = data.error || '视频生成失败';
+                            newViolationReason = data.error || 'Video generation failed';
                         }
                     } else if (provider === 'sutu') {
                         newVideoUrl = data.data?.remote_url || data.data?.video_url;
@@ -1683,8 +1725,8 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                     handleNodeUpdate(id, updateData);
                 } catch (error: any) {
-                    console.error('[SORA_VIDEO_CHILD] ❌ Refresh failed:', error);
-                    throw new Error(`刷新失败: ${error.message}`);
+                    console.error('[SORA_VIDEO_CHILD] Refresh failed:', error);
+                    throw new Error(`Refresh failed: ${error.message}`);
                 }
                 return;
             }
@@ -1693,20 +1735,19 @@ export function useNodeActions(params: UseNodeActionsParams) {
             if (node.type === NodeType.SORA_VIDEO_CHILD && promptOverride === 'save-locally') {
                 const videoUrl = node.data.videoUrl;
                 if (!videoUrl) {
-                    throw new Error('未找到视频URL');
+                    throw new Error('No video URL found.');
                 }
-
 
                 // Get parent node to retrieve task group info
                 const parentNode = nodesRef.current.find(n => n.id === node.inputs[0]);
                 if (!parentNode || parentNode.type !== NodeType.SORA_VIDEO_GENERATOR) {
-                    throw new Error('未找到父节点');
+                    throw new Error('Parent SORA_VIDEO_GENERATOR node not found.');
                 }
 
                 const taskGroups = parentNode.data.taskGroups || [];
                 const taskGroup = taskGroups.find((tg: any) => tg.id === node.data.taskGroupId);
                 if (!taskGroup) {
-                    throw new Error('未找到任务组信息');
+                    throw new Error('Task group not found.');
                 }
 
                 // Save video file
@@ -1741,12 +1782,12 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     // Find upstream STORYBOARD_SPLITTER node
                     const splitterNode = inputs.find(n => n?.type === NodeType.STORYBOARD_SPLITTER);
                     if (!splitterNode) {
-                        throw new Error('请连接分镜拆解节点');
+                        throw new Error('Connect a STORYBOARD_SPLITTER node first.');
                     }
 
                     const splitShots = splitterNode.data.splitShots || [];
                     if (splitShots.length === 0) {
-                        throw new Error('分镜拆解节点中没有分镜数据');
+                        throw new Error('No split shots were found in the splitter node.');
                     }
 
                     // Find optional CHARACTER_NODE
@@ -1776,7 +1817,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                     const selectedShotIds = node.data.selectedShotIds || [];
                     if (selectedShotIds.length === 0) {
-                        throw new Error('请至少选择一个分镜');
+                        throw new Error('Select at least one shot first.');
                     }
 
                     // Get selected shots
@@ -1794,7 +1835,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     // Generate prompt using Generic format (no black screen for storyboard videos)
                     const generatedPrompt = await builder.build(selectedShots, {
                         visualStyle: stylePrompt,
-                        context: genre || setting ? `类型：${genre}，背景：${setting}` : undefined,
+                        context: genre || setting ? `缂侇偉顕ч悗鐑芥晬?{genre}闁挎稑鐭侀崕妤呭疾缁?{setting}` : undefined,
                         preserveDialogue: true
                     });
 
@@ -2106,8 +2147,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 if (n?.type === NodeType.PROMPT_INPUT) return n.data.prompt;
                 if (n?.type === NodeType.VIDEO_ANALYZER) return n.data.analysis;
                 if (n?.type === NodeType.SCRIPT_EPISODE && n.data.generatedEpisodes) {
-                    // 只传递角色列表和标题，不传完整剧本内容
-                    return n.data.generatedEpisodes.map(ep => `${ep.title}\n角色: ${ep.characters}`).join('\n');
+                    return n.data.generatedEpisodes.map(ep => `${ep.title}\nCharacters: ${ep.characters}`).join('\n');
                 }
                 if (n?.type === NodeType.SCRIPT_PLANNER) return n.data.scriptOutline;
                 if (n?.type === NodeType.DRAMA_ANALYZER) {
@@ -2115,20 +2155,20 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     if (selected.length === 0) return null;
 
                     const fieldLabels: Record<string, string> = {
-                        dramaIntroduction: '剧集介绍',
-                        worldview: '世界观分析',
-                        logicalConsistency: '逻辑自洽性',
-                        extensibility: '延展性分析',
-                        characterTags: '角色标签',
-                        protagonistArc: '主角弧光',
-                        audienceResonance: '受众共鸣点',
-                        artStyle: '画风分析'
+                        dramaIntroduction: 'Drama Introduction',
+                        worldview: 'Worldview',
+                        logicalConsistency: 'Logical Consistency',
+                        extensibility: 'Extensibility',
+                        characterTags: 'Character Tags',
+                        protagonistArc: 'Protagonist Arc',
+                        audienceResonance: 'Audience Resonance',
+                        artStyle: 'Art Style',
                     };
 
                     const parts = selected.map(fieldKey => {
                         const value = n.data[fieldKey as keyof typeof n.data] as string || '';
                         const label = fieldLabels[fieldKey] || fieldKey;
-                        return `【${label}】\n${value}`;
+                        return `[${label}]` + "`n" + value;
                     });
 
                     return parts.join('\n\n');
@@ -2164,7 +2204,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 // --- Drama Analyzer Logic ---
                 const dramaName = node.data.dramaName?.trim();
                 if (!dramaName) {
-                    throw new Error("请输入剧名");
+                    throw new Error("Enter a drama name first.");
                 }
 
                 const { analyzeDrama } = await import('../services/geminiService');
@@ -2192,26 +2232,26 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     if (n?.type === NodeType.PROMPT_INPUT) return n.data.prompt;
                     if (n?.type === NodeType.VIDEO_ANALYZER) return n.data.analysis;
                     if (n?.type === NodeType.SCRIPT_EPISODE && n.data.generatedEpisodes) {
-                        return n.data.generatedEpisodes.map(ep => `${ep.title}\n角色: ${ep.characters}`).join('\n');
+                        return n.data.generatedEpisodes.map(ep => `${ep.title}\n閻熸瑦甯熸竟? ${ep.characters}`).join('\n');
                     }
                     if (n?.type === NodeType.SCRIPT_PLANNER) return n.data.scriptOutline;
                     if (n?.type === NodeType.DRAMA_ANALYZER) {
                         const selected = n.data.selectedFields || [];
                         if (selected.length === 0) return null;
                         const fieldLabels: Record<string, string> = {
-                            dramaIntroduction: '剧集介绍',
-                            worldview: '世界观分析',
-                            logicalConsistency: '逻辑自洽性',
-                            extensibility: '延展性分析',
-                            characterTags: '角色标签',
-                            protagonistArc: '主角弧光',
-                            audienceResonance: '受众共鸣点',
-                            artStyle: '画风分析'
+                            dramaIntroduction: 'Drama Introduction',
+                            worldview: 'Worldview',
+                            logicalConsistency: 'Logical Consistency',
+                            extensibility: 'Extensibility',
+                            characterTags: 'Character Tags',
+                            protagonistArc: 'Protagonist Arc',
+                            audienceResonance: 'Audience Resonance',
+                            artStyle: 'Art Style',
                         };
                         const parts = selected.map(fieldKey => {
                             const value = n.data[fieldKey as keyof typeof n.data] as string || '';
                             const label = fieldLabels[fieldKey] || fieldKey;
-                            return `【${label}】\n${value}`;
+                            return `[${label}]` + "`n" + value;
                         });
                         return parts.join('\n\n');
                     }
@@ -2240,7 +2280,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                         return;
                     } else {
-                        throw new Error("请先连接剧本大纲或剧本分集节点");
+                        throw new Error('No upstream content is available to extract character names.');
                     }
                 }
 
@@ -2250,25 +2290,17 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const generatedChars = node.data.generatedCharacters || [];
                 const newGeneratedChars = [...generatedChars];
 
-                // 严格检查：只处理真正需要生成的角色
-                // 避免直接点击触发时重复生成已完成的角色
+                // Only generate characters that are missing or previously failed.
                 const charactersNeedingGeneration = names.filter(name => {
                     const existingChar = generatedChars.find(c => c.name === name);
-                    // 只有以下情况需要处理：
-                    // 1. 角色不存在
-                    // 2. 角色处于 ERROR 状态（需要重新生成）
-                    // 3. 角色没有任何基础信息（profile为空）
                     if (!existingChar) {
-                        return true; // 新角色，需要生成
+                        return true;
                     }
-                    // 对于 SUCCESS、IDLE、GENERATING、PENDING 状态的角色，跳过
-                    // 直接点击生成会通过 handleCharacterAction 单独处理，不通过这里
-                    return false;
+                    return existingChar.status === 'ERROR';
                 });
 
-                // 如果没有需要生成的角色，直接返回
+                // If there is nothing left to generate, keep the node successful and return.
                 if (charactersNeedingGeneration.length === 0) {
-                    // 更新状态为 SUCCESS（如果所有角色都已完成）
                     if (generatedChars.length > 0) {
                         const allDone = generatedChars.every(c =>
                             c.status === 'SUCCESS' || c.status === 'IDLE' || c.status === 'ERROR'
@@ -2296,7 +2328,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 for (const name of charactersNeedingGeneration) {
                     const config = configs[name] || { method: 'AI_AUTO' };
 
-                    // 设置为生成中状态（不可变更新）
+                    // config濞戞捁娅ｉ弫鎾诲箣閹邦亣鍘柣妯垮煐閳ь兛绶ょ槐娆愮▔瀹ュ懎璁查柛娆惿戝ú鍧楀棘鐢喚绀?
                     const existingIdx = newGeneratedChars.findIndex(c => c.name === name);
                     if (existingIdx >= 0) {
                         newGeneratedChars[existingIdx] = { ...newGeneratedChars[existingIdx], status: 'GENERATING' };
@@ -2316,7 +2348,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         */
                         throw new Error("Library method is not supported yet.");
                     } else if (config.method === ('SUPPORTING_ROLE' as any)) {
-                        // SUPPORTING CHARACTER: 只生成基础信息，不生成图片
+                        // SUPPORTING CHARACTER: 闁告瑦鏅搁柟瀛樺姇閻斺偓缁绢厸鍋撳ǎ鍥ｅ墲娴煎懘鏁嶇仦鑲╃憹generateimage
                         const context = recursiveUpstreamTexts.join('\n');
 
 
@@ -2348,32 +2380,26 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             const idx = newGeneratedChars.findIndex(c => c.name === name);
                             newGeneratedChars[idx] = { ...newGeneratedChars[idx], status: 'ERROR', error: e.message };
                         }
-                        // SUPPORTING_ROLE 分支不走 handleCharacterActionNew，需要手动更新
                         handleNodeUpdate(id, { generatedCharacters: [...newGeneratedChars] });
                     } else {
-                        // 主角：只生成基础信息，不自动生成表情和三视图
-                        // 表情和三视图需要用户额外点击生成
-
+                        // 濞戞挻妲掗柨娑欒壘瑜邦湱enerate闁糕晞娅ｅǎ鍥ｅ墲娴煎懘鏁嶇仦鑲╃憹闁煎嘲袟generate閻炴稏鍔嶉崕蹇涘椽鐏炶偐鐟忛悷娆忔濞?                        // 閻炴稏鍔嶉崕蹇涘椽鐏炶偐鐟忛悷娆忔濞存﹢妫侀埀顒傛啺娴ｇ儤鏆忛柟瀵稿厴濠㈣埖鐗滈崑锝夊礄閼姐倖鏅搁柟?
                         try {
 
-                            // 只调用 GENERATE_SINGLE，生成基础信息
                             const { handleCharacterAction: handleCharacterActionNew } = await import('../services/characterActionHandler');
                             await handleCharacterActionNew(
-                                id,                  // nodeId
-                                'GENERATE_SINGLE',   // action ← 只生成基础信息
-                                name,                // charName
-                                node,                // node
-                                nodesRef.current,    // allNodes
-                                handleNodeUpdate     // onNodeUpdate
+                                id,
+                                'GENERATE_SINGLE',
+                                name,
+                                node,
+                                nodesRef.current,
+                                handleNodeUpdate,
                             );
 
 
-                            // 从 nodesRef 获取最新的完整角色列表，同步到 newGeneratedChars
-                            // 这确保了 handleCharacterActionNew 内部通过 updateNodeUI 更新的所有角色数据都被保留
                             const latestNode = nodesRef.current.find(n => n.id === id);
                             const latestChars = latestNode?.data?.generatedCharacters || [];
                             if (latestChars.length > 0) {
-                                // 用最新数据替换 newGeneratedChars 中已有的角色
+                                // 闁活潿鍔嶅〒鍫曞棘閻楀牊娈堕柟瑙勭闁?newGeneratedChars 濞戞挸鍤掗柡鍫濐槺濞堟垹鎲撮幒鏇烆棌
                                 for (const latestChar of latestChars) {
                                     const idx = newGeneratedChars.findIndex(c => c.name === latestChar.name);
                                     if (idx >= 0) {
@@ -2397,11 +2423,9 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         }
                     }
 
-                    // handleCharacterActionNew 内部已通过 updateNodeUI 更新了 node.data
-                    // 不再在此处重复调用 handleNodeUpdate，避免用过时数据覆盖
-                }
+                    }
 
-                // 从最新的 node state 判断最终状态，避免使用过时的 newGeneratedChars
+                // 濞寸姴瀛╁〒鍫曞棘閹殿喗鐣?node state 闁告帇鍊栭弻鍥嫉閳ь剛绱掗崼銏犘﹂柟顑跨筏缁辨繈鏌嗛崹顔煎赋濞达綀娉曢弫銈嗘交閸ャ劍顦ч柣?newGeneratedChars
                 setNodes(p => p.map(n => {
                     if (n.id !== id) return n;
                     const chars = n.data.generatedCharacters || [];
@@ -2461,7 +2485,6 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 });
 
             } else if (node.type === NodeType.SCRIPT_PLANNER) {
-                // 检查是否有连接的 DRAMA_REFINED 节点
                 const refinedNode = inputs.find(n => n.type === NodeType.DRAMA_REFINED);
                 const refinedInfo = refinedNode?.data.refinedContent;
 
@@ -2472,8 +2495,8 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     setting: node.data.scriptSetting,
                     episodes: node.data.scriptEpisodes,
                     duration: node.data.scriptDuration,
-                    visualStyle: node.data.scriptVisualStyle // Pass Visual Style
-                } as Record<string, any>, refinedInfo as any, getUserDefaultModel('text')); // 传入精炼信息作为参考和模型，总是使用最新配置
+                    visualStyle: node.data.scriptVisualStyle,
+                } as Record<string, any>, refinedInfo as any, getUserDefaultModel('text'));
                 handleNodeUpdate(id, { scriptOutline: outline });
 
             } else if (node.type === NodeType.SCRIPT_EPISODE) {
@@ -2506,7 +2529,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     planner.data.scriptDuration || 1,
                     currentStyle, // Pass Visual Style
                     node.data.episodeModificationSuggestion, // Pass Modification Suggestion
-                    getUserDefaultModel('text'), // 总是使用最新的模型配置
+                    getUserDefaultModel('text'), // 闁诡剛绮Σ鍛婃媴鐠恒劍鏆忛柡鍫氬亾闁哄倹澹嗗▓鎴澪熼垾宕団偓绌媜nfig
                     previousEpisodes // Pass previous episodes for continuity
                 );
 
@@ -2525,13 +2548,13 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                         // Build formatted content with all episode information
                         let formattedContent = `## ${ep.title}\n\n`;
-                        formattedContent += `**角色**: ${ep.characters}\n`;
+                        formattedContent += `**閻熸瑦甯熸竟?*: ${ep.characters}\n`;
                         if (ep.keyItems) {
-                            formattedContent += `**关键物品**: ${ep.keyItems}\n`;
+                            formattedContent += `**闁稿繑濞婇弫顓㈡偋閳轰焦鎯?*: ${ep.keyItems}\n`;
                         }
                         formattedContent += `\n${ep.content}`;
                         if (ep.continuityNote) {
-                            formattedContent += `\n\n**连贯性说明**: ${ep.continuityNote}`;
+                            formattedContent += `\n\n**閺夆晝鍋犻悿顕€骞€瑜戦柡?*: ${ep.continuityNote}`;
                         }
 
                         newNodes.push({
@@ -2593,7 +2616,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                 const inputImages: string[] = [];
                 inputs.forEach(n => { if (n?.data.image) inputImages.push(n.data.image); });
-                const isStoryboard = /分镜|storyboard|sequence|shots|frames|json/i.test(finalPrompt);
+                const isStoryboard = /闁告帒妫濋弳鍘妔toryboard|sequence|shots|frames|json/i.test(finalPrompt);
                 if (isStoryboard) {
                     try {
                         const { planStoryboard } = await import('../services/geminiService');
@@ -2620,7 +2643,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 const newNodeId = `n-${Date.now()}-${index}`;
                                 newNodes.push({
                                     id: newNodeId, type: NodeType.IMAGE_GENERATOR, x: posX, y: posY, width: childWidth, height: childHeight,
-                                    title: `分镜 ${index + 1}`, status: NodeStatus.WORKING,
+                                    title: `闁告帒妫濋弳?${index + 1}`, status: NodeStatus.WORKING,
                                     data: { ...node.data, aspectRatio: ratio, prompt: shotPrompt, image: undefined, images: undefined, imageCount: 1 },
                                     inputs: [node.id]
                                 });
@@ -2631,7 +2654,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             const groupWidth = (Math.min(storyboard.length, COLUMNS) * childWidth) + ((Math.min(storyboard.length, COLUMNS) - 1) * gapX) + (groupPadding * 2);
                             const groupHeight = (totalRows * childHeight) + ((totalRows - 1) * gapY) + (groupPadding * 2);
 
-                            setGroups(prev => [...prev, { id: `g-${Date.now()}`, title: '分镜生成组', x: startX - groupPadding, y: startY - groupPadding, width: groupWidth, height: groupHeight }]);
+                            setGroups(prev => [...prev, { id: `g-${Date.now()}`, title: 'Generated Images', x: startX - groupPadding, y: startY - groupPadding, width: groupWidth, height: groupHeight }]);
                             setNodes(prev => [...prev, ...newNodes]);
                             setConnections(prev => [...prev, ...newConnections]);
                             handleNodeUpdate(id, { status: NodeStatus.SUCCESS });
@@ -2650,7 +2673,6 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     } catch (e) { console.warn("Storyboard planning failed", e); }
                 }
 
-                // ✅ 检查缓存
                 const cachedImages = await checkImageNodeCache(id);
                 const imageModel = getUserDefaultModel('image');
                 const generationMetadata = buildImageGenerationJobMetadata(id, imageModel);
@@ -2691,7 +2713,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
                 } else {
-                    // ❌ 没有缓存，调用 API
+                    // 闁?婵炲备鍓濆﹢浣虹磽閹惧磭鎽犻柨娑樼焷閻ㄧ喖鎮?API
                     handleNodeUpdate(id, {
                         progress: 0,
                         error: undefined,
@@ -2832,6 +2854,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                 const { getGenerationStrategy } = await import('../services/videoStrategies');
                 const strategy = await getGenerationStrategy(node, inputs, finalPrompt);
+                const relatedWorkflowShots = resolveRelevantWorkflowShots(node, inputs);
                 const generationMetadata = buildVideoGeneratorGenerationJobMetadata(
                     id,
                     node.data.model,
@@ -2873,6 +2896,28 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         cacheLocation: 'filesystem',
                         isWorking: false,
                         generationJobId,
+                    });
+                    await persistSelectedShotOutputs(relatedWorkflowShots, {
+                        generationJobId,
+                        url: cachedVideo,
+                        provider: 'gemini',
+                        label: node.title || 'Video Generator',
+                        outputType: 'video',
+                        metadata: {
+                            cached: true,
+                            nodeId: id,
+                            generationMode: strategy.generationMode,
+                        },
+                    });
+                    await syncWorkflowStageRunOutputs('video', {
+                        status: 'completed',
+                        outputs: {
+                            generationJobId,
+                            resultUrl: cachedVideo,
+                            nodeId: id,
+                            provider: 'gemini',
+                            generationMode: strategy.generationMode,
+                        },
                     });
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
@@ -2940,6 +2985,29 @@ export function useNodeActions(params: UseNodeActionsParams) {
                             isWorking: false,
                             generationJobId,
                         });
+                        await persistSelectedShotOutputs(relatedWorkflowShots, {
+                            generationJobId,
+                            url: res.uri,
+                            provider: 'gemini',
+                            label: `${node.title || 'Video Generator'} Preview`,
+                            outputType: 'image',
+                            metadata: {
+                                fallbackImage: true,
+                                nodeId: id,
+                                generationMode: strategy.generationMode,
+                            },
+                        });
+                        await syncWorkflowStageRunOutputs('video', {
+                            status: 'completed',
+                            outputs: {
+                                generationJobId,
+                                resultUrl: res.uri,
+                                nodeId: id,
+                                provider: 'gemini',
+                                generationMode: strategy.generationMode,
+                                fallbackImage: true,
+                            },
+                        });
                         setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                         return;
                     }
@@ -2969,6 +3037,30 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     });
                     const videoUris = res.uris || [res.uri];
                     await saveVideoNodeOutput(id, videoUris, 'VIDEO_GENERATOR');
+                    await persistSelectedShotOutputs(relatedWorkflowShots, {
+                        generationJobId,
+                        url: res.uri,
+                        provider: 'gemini',
+                        label: node.title || 'Video Generator',
+                        outputType: 'video',
+                        metadata: {
+                            cached: false,
+                            nodeId: id,
+                            generationMode: strategy.generationMode,
+                            uriCount: videoUris.length,
+                            hasVideoMetadata: Boolean(res.videoMetadata),
+                        },
+                    });
+                    await syncWorkflowStageRunOutputs('video', {
+                        status: 'completed',
+                        outputs: {
+                            generationJobId,
+                            resultUrl: res.uri,
+                            nodeId: id,
+                            provider: 'gemini',
+                            generationMode: strategy.generationMode,
+                        },
+                    });
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
                 } catch (error: any) {
@@ -3050,7 +3142,6 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const stylePrefix = stylePresetNode?.data.stylePrompt || '';
                 const finalPrompt = stylePrefix ? `${stylePrefix}, ${prompt}` : prompt;
 
-                // ✅ 检查缓存
                 const cachedAudio = await checkAudioNodeCache(id);
                 const audioModel = node.data.model || getUserDefaultModel('audio');
                 const generationMetadata = buildAudioGenerationJobMetadata(id, audioModel);
@@ -3090,7 +3181,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
                 } else {
-                    // ❌ 没有缓存，调用 API
+                    // 闁?婵炲备鍓濆﹢浣虹磽閹惧磭鎽犻柨娑樼焷閻ㄧ喖鎮?API
                     handleNodeUpdate(id, {
                         progress: 0,
                         error: undefined,
@@ -3195,7 +3286,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     episodeContent = contexts.join('\n\n');
                 }
 
-                if (!episodeContent.trim()) throw new Error("请连接包含剧本内容或大纲的节点 (Input Node)");
+                if (!episodeContent.trim()) throw new Error("閻犲洨鏌夌换娑㈠箳閵夈儱鐦堕柛姘挃闁哄牆鏁堕悗纭咁潐閸ㄣ劍寰勮缂堜即鎯冮崟顔嘉濋柣?(Input Node)");
 
                 const { generateCinematicStoryboard } = await import('../services/geminiService');
                 const shots = await generateCinematicStoryboard(
@@ -3303,23 +3394,23 @@ export function useNodeActions(params: UseNodeActionsParams) {
                                 cameraAngle: shot.cameraAngle || '',
                                 cameraMovement: shot.cameraMovement || '',
                                 visualDescription: shot.visualDescription || '',
-                                dialogue: shot.dialogue || '无',
+                                dialogue: shot.dialogue || '',
                                 visualEffects: shot.visualEffects || '',
                                 audioEffects: shot.audioEffects || '',
                                 startTime: shot.startTime || 0,
                                 endTime: shot.endTime || (shot.startTime || 0) + (shot.duration || 3)
                             }))
-                        }, null, 2); // 使用格式化输出，便于调试
+                        }, null, 2); // 濞达綀娉曢弫銈夊冀閻撳海纭€闁告牗鐗炵欢顓㈠礄閻氬绀夊〒姘仒缁剛鎷崘顓犳Ц
                     }
 
                     if (!storyboardContent) {
-                        throw new Error("请输入分镜描述或连接剧本分集子节点");
+                        throw new Error('No storyboard content was found from upstream nodes.');
                     }
 
 
                     // Extract shots with full structured data
                     // Try to parse as JSON first (from generateDetailedStoryboard)
-                    // 直接尝试解析整个字符串作为JSON
+                    // 闁烩晛鐡ㄧ敮瀵镐焊濠靛﹦妲搁悷娆欑稻閻庝粙寮紙鐘诲殝閻庢稒顨堝☉鎾瑰紦缂嶆梹绋夌弧鎿睴N
                     try {
                         const parsed = JSON.parse(storyboardContent);
                         if (parsed.shots && Array.isArray(parsed.shots) && parsed.shots.length > 0) {
@@ -3327,8 +3418,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         }
                     } catch (e) {
                         console.warn('[STORYBOARD_IMAGE] Failed to parse JSON as whole, trying regex fallback:', e);
-                        // 如果整体解析失败，尝试提取shots部分
-                        const jsonMatch = storyboardContent.match(/\{[\s\S]*"shots"[\s\S]*\}/);
+                        const jsonMatch = storyboardContent.match(/{[sS]*"shots"[sS]*}/);
                         if (jsonMatch) {
                             try {
                                 const parsed = JSON.parse(jsonMatch[0]);
@@ -3343,10 +3433,10 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                     // Fallback: Parse text descriptions
                     if (extractedShots.length === 0) {
-                        const numberedMatches = storyboardContent.match(/^\d+[.、)]\s*(.+)$/gm);
+                        const numberedMatches = storyboardContent.match(/^\d+[.]\s*(.+)$/gm);
                         if (numberedMatches && numberedMatches.length > 0) {
                             extractedShots = numberedMatches.map(m => ({
-                                visualDescription: m.replace(/^\d+[.、)]\s*/, '').trim()
+                                visualDescription: m.replace(/^\d+[.]\s*/, '').trim()
                             }));
                         } else {
                             extractedShots = storyboardContent.split(/\n+/)
@@ -3358,7 +3448,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 }
 
                 if (extractedShots.length === 0) {
-                    throw new Error("未能从内容中提取分镜描述，请检查格式");
+                    throw new Error('No valid shots could be extracted from the storyboard content.');
                 }
 
 
@@ -3373,11 +3463,9 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const resolution = node.data.storyboardResolution || '1k';
                 const resolutionConfig = STORYBOARD_RESOLUTIONS.find(r => r.quality === resolution) || STORYBOARD_RESOLUTIONS[0];
 
-                // 🔧 修复：计算网格行列（用于后续尺寸计算）
                 const cols = gridConfig.cols;
                 const rows = gridConfig.rows;
 
-                // 计算整体图片宽高比
                 let panelWidthUnits: number;
                 let panelHeightUnits: number;
 
@@ -3392,14 +3480,12 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const totalWidthUnits = cols * panelWidthUnits;
                 const totalHeightUnits = rows * panelHeightUnits;
 
-                // 简化到最简
                 const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
                 const divisor = gcd(totalWidthUnits, totalHeightUnits);
                 const simplifiedWidth = totalWidthUnits / divisor;
                 const simplifiedHeight = totalHeightUnits / divisor;
                 const calculatedRatio = `${simplifiedWidth}:${simplifiedHeight}`;
 
-                // 映射到 API 支持的比例
                 const supportedRatios = ['1:1', '4:3', '3:4', '16:9', '9:16', '21:9', '9:21'];
                 const findClosestRatio = (targetRatio: string, supportedRatios: string[]): string => {
                     const [targetW, targetH] = targetRatio.split(':').map(Number);
@@ -3421,35 +3507,32 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                 const imageAspectRatio = findClosestRatio(calculatedRatio, supportedRatios);
 
-                // 🔧 修复：根据 imageAspectRatio 动态计算输出尺寸
-                // 保持分辨率级别的像素总数（约 2K = 5-6M 像素）
-                const targetMegapixels = resolutionConfig.width * resolutionConfig.height;  // 总像素数
+                const targetMegapixels = resolutionConfig.width * resolutionConfig.height;
                 const [ratioW, ratioH] = imageAspectRatio.split(':').map(Number);
                 const ratioValue = ratioW / ratioH;
 
-                // 计算符合宽高比的尺寸
+                // 閻犱緤绱曢悾鑽ょ箔閿曗偓閹海鈧€涚矙閻濐喖袙閺冨倹鐣遍悘蹇撴惈
                 let totalWidth: number;
                 let totalHeight: number;
 
                 if (ratioValue > 1) {
-                    // 横屏 (16:9, 4:3, 21:9)
+                    // 婵☆垳娼?(16:9, 4:3, 21:9)
                     totalWidth = Math.sqrt(targetMegapixels * ratioValue);
                     totalHeight = totalWidth / ratioValue;
                 } else if (ratioValue < 1) {
-                    // 竖屏 (9:16, 3:4, 9:21)
+                    // 缂佹梹鐗曢惈?(9:16, 3:4, 9:21)
                     totalHeight = Math.sqrt(targetMegapixels / ratioValue);
                     totalWidth = totalHeight * ratioValue;
                 } else {
-                    // 正方形 (1:1)
+                    // 婵繐绲鹃弻鐔汇亹?(1:1)
                     totalWidth = Math.sqrt(targetMegapixels);
                     totalHeight = totalWidth;
                 }
 
-                // 取整为 8 的倍数（优化编码）
+                // 闁告瑦鐗楅弳锝嗙▔?8 闁汇劌瀚埀顒€绉甸弳鐔兼晬閸粎鍠橀柛鏍ㄧ墱缁鳖亪鎯嶆笟濠勭
                 totalWidth = Math.round(totalWidth / 8) * 8;
                 totalHeight = Math.round(totalHeight / 8) * 8;
 
-                // 计算单个面板尺寸
                 const panelWidth = Math.floor(totalWidth / cols);
                 const panelHeight = Math.floor(totalHeight / rows);
 
@@ -3517,7 +3600,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 // Extract character reference images from upstream CHARACTER_NODE (for all cases)
                 const characterReferenceImages: string[] = [];
                 const characterNames: string[] = [];  // Track character names for prompt
-                const characterNameMap = new Map<string, string>();  // Chinese name → English code (Character A, B, C...)
+                const characterNameMap = new Map<string, string>();  // Chinese name 闁?English code (Character A, B, C...)
                 const characterNode = inputs.find(n => n.type === NodeType.CHARACTER_NODE);
 
                 if (characterNode?.data.generatedCharacters) {
@@ -3529,7 +3612,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         } else if (char.expressionSheet) {
                             characterReferenceImages.push(char.expressionSheet);
                         }
-                        // Build Chinese name → English code mapping
+                        // Build Chinese name 闁?English code mapping
                         if (char.name) {
                             const code = `Character ${charLabels[idx] || idx + 1}`;
                             characterNameMap.set(char.name, code);
@@ -3540,7 +3623,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 }
 
                 // Helper: Replace Chinese character names with English codes in text
-                // Preserves Chinese text inside quotes (e.g. signboard text like "天下第一")
+                // Preserves Chinese text inside quotes (e.g. signboard text like "濠㈠灈鏅欑粭鍛箔缁?)
                 const sanitizeChineseNames = (text: string): string => {
                     let result = text;
                     for (const [cnName, enCode] of characterNameMap) {
@@ -3554,12 +3637,12 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 const buildDetailedShotPrompt = (shot: any, index: number, globalIndex: number): string => {
                     const parts: string[] = [];
 
-                    // 1. Visual description (most important) — sanitize Chinese names
+                    // 1. Visual description (most important)
                     if (shot.visualDescription) {
                         parts.push(sanitizeChineseNames(shot.visualDescription));
                     }
 
-                    // 2. Shot size mapping (景别)
+                    // 2. Shot size mapping
                     const shotSizeMap: Record<string, string> = {
                         '大远景': 'extreme long shot, vast environment, figures small like ants',
                         '远景': 'long shot, small figure visible, action and environment',
@@ -3575,7 +3658,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         parts.push(shotSizeMap[shot.shotSize]);
                     }
 
-                    // 3. Camera angle mapping (拍摄角度)
+                    // 3. Camera angle mapping
                     const cameraAngleMap: Record<string, string> = {
                         '视平': 'eye-level angle, neutral and natural perspective',
                         '高位俯拍': 'high angle shot, looking down at subject, makes them appear vulnerable',
@@ -3589,7 +3672,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         parts.push(cameraAngleMap[shot.cameraAngle]);
                     }
 
-                    // 4. Scene context — sanitize Chinese names
+                    // 4. Scene context
                     if (shot.scene) {
                         parts.push(`environment: ${sanitizeChineseNames(shot.scene)}`);
                     }
@@ -3612,8 +3695,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         });
                     }
 
-                    // 注意：totalWidth, totalHeight, panelWidth, panelHeight, imageAspectRatio 已在函数开头计算
-
+                    // 婵炲鍔嶉崜浼存晬濮濈talWidth, totalHeight, panelWidth, panelHeight, imageAspectRatio 鐎瑰憡褰冨﹢顏堝礄閼恒儲娈剁€殿喒鍋撳鍓侇棎缂?
                     // Build detailed panel descriptions with clear numbering and uniqueness
                     // IMPORTANT: Use format that won't be rendered as text in images
                     const panelDescriptions = pageShots.map((shot, idx) => {
@@ -3641,7 +3723,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         }
                     });
 
-                    // Build scene consistency section — use Location N instead of Chinese scene names
+                    // Build scene consistency section 闁?use Location N instead of Chinese scene names
                     let sceneConsistencySection = '';
                     if (sceneGroups.size > 0) {
                         let locationIndex = 1;
@@ -3672,11 +3754,9 @@ This ensures visual continuity - multiple panels showing the same scene should l
                     }
 
                     // Build comprehensive prompt with configured resolution
-                    // 🔧 优化：计算方向关键词
                     const [ratioW, ratioH] = imageAspectRatio.split(':').map(Number);
                     const orientation = ratioW > ratioH ? 'landscape' : 'portrait';
 
-                    // 🔧 优化：基于宽度计算基础分辨率
                     const baseWidth = resolution === '1k' ? 1024 : resolution === '2k' ? 2048 : 4096;
 
                     const gridPrompt = `
@@ -3684,7 +3764,7 @@ Create a professional cinematic storyboard ${gridLayout} grid layout at ${(resol
 
 OVERALL IMAGE SPECS:
 - Output Aspect Ratio: ${imageAspectRatio} (${orientation})
-- Grid Layout: ${shotsPerGrid} panels arranged in ${gridLayout} formation (${cols} columns × ${rows} rows)
+- Grid Layout: ${shotsPerGrid} panels arranged in ${gridLayout} formation (${cols} columns 閼?${rows} rows)
 - Each panel: ${panelOrientation} aspect ratio (${panelOrientation === '16:9' ? 'landscape/horizontal' : 'portrait/vertical'})
 - CRITICAL: ALL panels must be ${orientation} orientation (${panelOrientation} aspect ratio)
 - Panel borders: EXACTLY 4 pixels wide black lines (NOT percentage-based, ABSOLUTE FIXED SIZE)
@@ -3720,7 +3800,7 @@ CRITICAL NEGATIVE CONSTRAINTS (MUST FOLLOW):
 ${stylePrefix ? `ART STYLE: ${stylePrefix}\n` : ''}
 
 ${characterReferenceImages.length > 0 ? `CHARACTER CONSISTENCY (CRITICAL):
-⚠️ MANDATORY: You MUST use the provided character reference images as the ONLY source of truth for character appearance.
+闁宠法濯寸粭?MANDATORY: You MUST use the provided character reference images as the ONLY source of truth for character appearance.
 
 ${characterNames.map((code, i) => `${code} = reference image ${i + 1}`).join('\n')}
 Number of character references provided: ${characterReferenceImages.length}
@@ -3764,7 +3844,7 @@ Everything else must be purely visual with no text whatsoever.
 
                         // Add timeout wrapper (5 minutes per page)
                         const timeoutPromise = new Promise<never>((_, reject) => {
-                            setTimeout(() => reject(new Error('页面生成超时（5分钟）')), 5 * 60 * 1000);
+                            setTimeout(() => reject(new Error('Page generation timed out (5 minutes).')), 5 * 60 * 1000);
                         });
 
                         const { generateImageWithFallback } = await import('../services/geminiServiceWithFallback');
@@ -3774,8 +3854,8 @@ Everything else must be purely visual with no text whatsoever.
                                 primaryImageModel,
                                 characterReferenceImages,
                                 {
-                                    aspectRatio: imageAspectRatio, // 使用基于网格布局计算的整体图片比例
-                                    resolution: resolutionConfig.quality.toUpperCase(), // 使用配置的分辨率 (1K/2K/4K)
+                                    aspectRatio: imageAspectRatio, // Use the overall grid aspect ratio.
+                                    resolution: resolutionConfig.quality.toUpperCase(), // Use configured resolution (1K/2K/4K).
                                     count: 1
                                 },
                                 { nodeId: id, nodeType: node.type }
@@ -3955,7 +4035,7 @@ Everything else must be purely visual with no text whatsoever.
                 // 1. Get split shots from STORYBOARD_SPLITTER input nodes
                 const splitterNodes = inputs.filter(n => n?.type === NodeType.STORYBOARD_SPLITTER) as AppNode[];
                 if (splitterNodes.length === 0) {
-                    throw new Error('请连接分镜图拆解节点 (STORYBOARD_SPLITTER)');
+                    throw new Error('Connect a STORYBOARD_SPLITTER node first.');
                 }
 
                 // Collect all split shots from all connected splitter nodes
@@ -3967,7 +4047,7 @@ Everything else must be purely visual with no text whatsoever.
                 });
 
                 if (allSplitShots.length === 0) {
-                    throw new Error('未找到任何分镜数据，请确保拆解节点包含分镜');
+                    throw new Error('No split shots were found. Make sure the splitter node contains shots.');
                 }
 
                 const { DEFAULT_SORA2_CONFIG } = await import('../services/soraConfigService');
@@ -4035,7 +4115,7 @@ Everything else must be purely visual with no text whatsoever.
                             blackScreenDuration: 0.5
                         });
                         tg.promptGenerated = true;
-                        // 保留任务组创建时设置的 Sora2 配置（用户选择的时长）
+                        // 濞ｅ洦绻勯弳鈧ù鐘侯嚙婵喓绱掗崟顐㈢仭鐎点倗鍎ゅ淇nfig闁?Sora2 config闁挎稑鐗忛弫銈夊箣閻戣В鍋撴径瀣仴闁汇劌瀚鍌炴⒐閸栵紕绀?
                         if (!tg.sora2Config) {
                             tg.sora2Config = { ...DEFAULT_SORA2_CONFIG };
                         }
@@ -4046,7 +4126,7 @@ Everything else must be purely visual with no text whatsoever.
                         const { buildSoraStoryPrompt } = await import('../services/soraService');
                         tg.soraPrompt = buildSoraStoryPrompt(tg.splitShots);
                         tg.promptGenerated = true;
-                        // 保留任务组创建时设置的 Sora2 配置（用户选择的时长）
+                        // 濞ｅ洦绻勯弳鈧ù鐘侯嚙婵喓绱掗崟顐㈢仭鐎点倗鍎ゅ淇nfig闁?Sora2 config闁挎稑鐗忛弫銈夊箣閻戣В鍋撴径瀣仴闁汇劌瀚鍌炴⒐閸栵紕绀?
                         if (!tg.sora2Config) {
                             tg.sora2Config = { ...DEFAULT_SORA2_CONFIG };
                         }
@@ -4090,10 +4170,11 @@ Everything else must be purely visual with no text whatsoever.
                 }
 
                 if (!prompt) {
-                    throw new Error('请输入即梦视频提示词');
+                    throw new Error('Enter a Jimeng video prompt first.');
                 }
 
                 const { acceptedFiles, sourcePayload } = await collectJimengReferenceFiles(node, inputs);
+                const relatedWorkflowShots = resolveRelevantWorkflowShots(node, inputs);
                 const generationMetadata = buildJimengGenerationJobMetadata(id);
                 const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
                     provider: 'jimeng',
@@ -4125,7 +4206,7 @@ Everything else must be purely visual with no text whatsoever.
                     });
 
                     if (!created.success || !created.job) {
-                        throw new Error(created.error || '创建即梦任务失败');
+                        throw new Error(created.error || '闁告帗绋戠紓鎻搃meng濞寸姾顕ф慨鐔稿緞鏉堫偉袝');
                     }
 
                     const abortController = new AbortController();
@@ -4189,11 +4270,11 @@ Everything else must be purely visual with no text whatsoever.
                     abortControllersRef.current.delete(id);
 
                     if (!result.success || !result.job) {
-                        throw new Error(result.error || '获取即梦任务结果失败');
+                        throw new Error(result.error || 'Failed to fetch Jimeng job result');
                     }
 
                     if (result.job.status !== 'SUCCEEDED' || !result.job.videoUrl) {
-                        throw new Error(result.job.error || '即梦任务未成功完成');
+                        throw new Error(result.job.error || 'Jimeng job did not complete successfully');
                     }
 
                     await updateTrackedGenerationJob(generationJobId, {
@@ -4224,7 +4305,30 @@ Everything else must be purely visual with no text whatsoever.
                         jimengJobUpdatedAt: result.job.updated_at,
                         generationJobId,
                     });
-                    handleAssetGenerated('video', result.job.videoUrl, `即梦视频: ${prompt.substring(0, 10)}...`);
+                    handleAssetGenerated('video', result.job.videoUrl, `Jimeng Video: ${prompt.substring(0, 10)}...`);
+                    await persistSelectedShotOutputs(relatedWorkflowShots, {
+                        generationJobId,
+                        url: result.job.videoUrl,
+                        provider: 'jimeng',
+                        label: node.title || 'Jimeng Video',
+                        outputType: 'video',
+                        metadata: {
+                            nodeId: id,
+                            model: node.data.model || 'seedance-2.0',
+                            jimengJobId: result.job.id,
+                            jimengPhase: result.job.phase,
+                        },
+                    });
+                    await syncWorkflowStageRunOutputs('video', {
+                        status: 'completed',
+                        outputs: {
+                            generationJobId,
+                            resultUrl: result.job.videoUrl,
+                            nodeId: id,
+                            provider: 'jimeng',
+                            jimengJobId: result.job.id,
+                        },
+                    });
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
                 } catch (error: any) {
@@ -4233,7 +4337,7 @@ Everything else must be purely visual with no text whatsoever.
 
                     const errorMessage = typeof error?.message === 'string'
                         ? error.message
-                        : '即梦生成失败';
+                        : 'Jimeng generation failed';
                     const isCancelled = error?.name === 'AbortError'
                         || errorMessage === 'Task cancelled.'
                         || /cancel/i.test(errorMessage)
@@ -4281,7 +4385,7 @@ Everything else must be purely visual with no text whatsoever.
 
             } else if (node.type === NodeType.VIDEO_ANALYZER) {
                 const vid = node.data.videoUri || inputs.find(n => n?.data.videoUri)?.data.videoUri;
-                if (!vid) throw new Error("未找到视频输入");
+                if (!vid) throw new Error("No video input found");
                 const { urlToBase64, analyzeVideo } = await import('../services/geminiService');
                 let vidData = vid;
                 if (vid.startsWith('http')) vidData = await urlToBase64(vid);
