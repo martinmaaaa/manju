@@ -28,18 +28,22 @@ export { createNode, updateNode, batchUpdateNodes, deleteNode } from './nodeApi'
 export { createConnection, deleteConnection } from './connectionApi';
 
 export {
+  createEpisodeAssetBinding,
   createEpisodeShot,
   createShotOutput,
+  deleteEpisodeAssetBinding,
   deleteWorkflowShot,
   getEpisodeWorkspace,
   listEpisodeShots,
   listShotOutputs,
   listWorkflowStageRuns,
   selectShotOutput,
+  updateEpisodeAssetBinding,
   updateWorkflowShot,
   updateWorkflowStageRun,
 } from './workspaceApi';
 export type {
+  EpisodeAssetBindingMutation,
   EpisodeWorkspaceData,
   WorkflowShotMutation,
   WorkflowShotOutputMutation,

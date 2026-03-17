@@ -27,6 +27,13 @@ export interface WorkflowStageRunMutation {
   updatedAt?: string | null;
 }
 
+export interface EpisodeAssetBindingMutation {
+  assetId?: string;
+  versionId?: string | null;
+  mode?: EpisodeAssetBinding['mode'];
+  derivedFromVersionId?: string | null;
+}
+
 export interface WorkflowShotMutation {
   id?: string;
   stageRunId?: string | null;
@@ -108,6 +115,43 @@ export async function listEpisodeShots(
   if (unavailable) return unavailable;
 
   return apiRequest<WorkflowShot[]>(`/episodes/${workflowInstanceId}/shots`);
+}
+
+export async function createEpisodeAssetBinding(
+  workflowInstanceId: string,
+  payload: EpisodeAssetBindingMutation,
+): Promise<ApiResponse<EpisodeAssetBinding>> {
+  const unavailable = await requireWorkspaceApi<EpisodeAssetBinding>('Creating episode asset bindings requires the local API server.');
+  if (unavailable) return unavailable;
+
+  return apiRequest<EpisodeAssetBinding>(`/episodes/${workflowInstanceId}/bindings`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateEpisodeAssetBinding(
+  bindingId: string,
+  payload: EpisodeAssetBindingMutation,
+): Promise<ApiResponse<EpisodeAssetBinding>> {
+  const unavailable = await requireWorkspaceApi<EpisodeAssetBinding>('Updating episode asset bindings requires the local API server.');
+  if (unavailable) return unavailable;
+
+  return apiRequest<EpisodeAssetBinding>(`/episode-bindings/${bindingId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteEpisodeAssetBinding(
+  bindingId: string,
+): Promise<ApiResponse<void>> {
+  const unavailable = await requireWorkspaceApi<void>('Deleting episode asset bindings requires the local API server.');
+  if (unavailable) return unavailable;
+
+  return apiRequest<void>(`/episode-bindings/${bindingId}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function createEpisodeShot(

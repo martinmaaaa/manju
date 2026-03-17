@@ -1727,6 +1727,223 @@ export async function listEpisodeAssetBindingsByWorkflowInstanceId(workflowInsta
   return result.rows.map(mapEpisodeAssetBindingRow);
 }
 
+async function getEpisodeAssetBindingRow(client, id) {
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at
+     FROM episode_asset_bindings
+     WHERE id = $1`,
+    [id],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function getEpisodeAssetBindingRowByWorkflowAndAsset(client, workflowInstanceId, assetId) {
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at
+     FROM episode_asset_bindings
+     WHERE workflow_instance_id = $1
+       AND asset_id = $2
+     ORDER BY created_at ASC, id ASC
+     LIMIT 1`,
+    [workflowInstanceId, assetId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function syncProjectWorkflowAssetBindings(client, projectId) {
+  const project = await getProjectRow(client, projectId);
+  if (!project) {
+    return null;
+  }
+
+  const bindingsResult = await client.query(
+    `SELECT id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at
+     FROM episode_asset_bindings
+     WHERE project_id = $1
+     ORDER BY created_at ASC, id ASC`,
+    [projectId],
+  );
+
+  const workflowState = getWorkflowProjectState(project);
+  const nextWorkflowState = {
+    ...workflowState,
+    assetBindings: bindingsResult.rows.map(mapEpisodeAssetBindingRow),
+  };
+
+  await client.query(
+    `UPDATE projects
+     SET workflow_state = $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [projectId, JSON.stringify(nextWorkflowState)],
+  );
+
+  return nextWorkflowState;
+}
+
+async function resolveEpisodeAssetBindingVersion(client, projectId, assetId, requestedVersionId, fallbackVersionId = null) {
+  const assetResult = await client.query(
+    `SELECT id, current_version_id
+     FROM assets
+     WHERE id = $1
+       AND project_id = $2`,
+    [assetId, projectId],
+  );
+  const asset = assetResult.rows[0];
+  if (!asset) {
+    throw new Error('Asset not found.');
+  }
+
+  const versionId = requestedVersionId ?? asset.current_version_id ?? fallbackVersionId ?? null;
+  if (!versionId) {
+    throw new Error('Asset has no version available for binding.');
+  }
+
+  const versionResult = await client.query(
+    `SELECT id
+     FROM asset_versions
+     WHERE id = $1
+       AND asset_id = $2`,
+    [versionId, assetId],
+  );
+  if ((versionResult.rowCount ?? 0) === 0) {
+    throw new Error('Asset version not found.');
+  }
+
+  return {
+    asset,
+    versionId,
+  };
+}
+
+export async function upsertEpisodeAssetBindingByWorkflowInstanceId(workflowInstanceId, payload = {}) {
+  return withTransaction(async (client) => {
+    const workflowInstance = await getWorkflowInstanceRow(client, workflowInstanceId);
+    if (!workflowInstance) {
+      return null;
+    }
+
+    const assetId = String(payload.assetId ?? '').trim();
+    if (!assetId) {
+      throw new Error('Asset id is required.');
+    }
+
+    const existing = await getEpisodeAssetBindingRowByWorkflowAndAsset(client, workflowInstanceId, assetId);
+    const { versionId } = await resolveEpisodeAssetBindingVersion(
+      client,
+      workflowInstance.project_id,
+      assetId,
+      payload.versionId ?? null,
+      existing?.version_id ?? null,
+    );
+
+    const mode = String(payload.mode ?? existing?.mode ?? 'follow_latest').trim() || 'follow_latest';
+    const derivedFromVersionId = mode === 'derived'
+      ? (payload.derivedFromVersionId ?? existing?.derived_from_version_id ?? null)
+      : null;
+
+    if (derivedFromVersionId) {
+      await resolveEpisodeAssetBindingVersion(
+        client,
+        workflowInstance.project_id,
+        assetId,
+        derivedFromVersionId,
+      );
+    }
+
+    const result = existing
+      ? await client.query(
+          `UPDATE episode_asset_bindings
+           SET version_id = $2,
+               mode = $3,
+               derived_from_version_id = $4
+           WHERE id = $1
+           RETURNING id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at`,
+          [existing.id, versionId, mode, derivedFromVersionId],
+        )
+      : await client.query(
+          `INSERT INTO episode_asset_bindings (
+             id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8
+           )
+           RETURNING id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at`,
+          [
+            createEntityId(),
+            workflowInstance.project_id,
+            workflowInstanceId,
+            assetId,
+            versionId,
+            mode,
+            derivedFromVersionId,
+            payload.createdAt ? toIsoString(payload.createdAt) : new Date().toISOString(),
+          ],
+        );
+
+    await syncProjectWorkflowAssetBindings(client, workflowInstance.project_id);
+    return mapEpisodeAssetBindingRow(result.rows[0]);
+  });
+}
+
+export async function updateEpisodeAssetBindingById(id, patch = {}) {
+  return withTransaction(async (client) => {
+    const existing = await getEpisodeAssetBindingRow(client, id);
+    if (!existing) {
+      return null;
+    }
+
+    const { versionId } = await resolveEpisodeAssetBindingVersion(
+      client,
+      existing.project_id,
+      existing.asset_id,
+      patch.versionId ?? null,
+      existing.version_id,
+    );
+
+    const mode = String(patch.mode ?? existing.mode ?? 'follow_latest').trim() || 'follow_latest';
+    const derivedFromVersionId = mode === 'derived'
+      ? (patch.derivedFromVersionId ?? existing.derived_from_version_id ?? null)
+      : null;
+
+    if (derivedFromVersionId) {
+      await resolveEpisodeAssetBindingVersion(
+        client,
+        existing.project_id,
+        existing.asset_id,
+        derivedFromVersionId,
+      );
+    }
+
+    const result = await client.query(
+      `UPDATE episode_asset_bindings
+       SET version_id = $2,
+           mode = $3,
+           derived_from_version_id = $4
+       WHERE id = $1
+       RETURNING id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at`,
+      [id, versionId, mode, derivedFromVersionId],
+    );
+
+    await syncProjectWorkflowAssetBindings(client, existing.project_id);
+    return mapEpisodeAssetBindingRow(result.rows[0]);
+  });
+}
+
+export async function deleteEpisodeAssetBindingById(id) {
+  return withTransaction(async (client) => {
+    const existing = await getEpisodeAssetBindingRow(client, id);
+    if (!existing) {
+      return null;
+    }
+
+    await client.query('DELETE FROM episode_asset_bindings WHERE id = $1', [id]);
+    await syncProjectWorkflowAssetBindings(client, existing.project_id);
+    return mapEpisodeAssetBindingRow(existing);
+  });
+}
+
 export async function listContinuityStatesByProjectId(projectId) {
   const pool = getPool();
   const continuityStatesByProjectId = await listContinuityStatesForProjectIds(pool, [projectId]);

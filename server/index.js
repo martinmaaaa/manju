@@ -21,6 +21,7 @@ import {
     createGenerationJob,
     createNodeForProject,
     createProject,
+    deleteEpisodeAssetBindingById,
     createShotForWorkflowInstance,
     createShotOutputForShot,
     deleteConnectionById,
@@ -50,11 +51,13 @@ import {
     retryGenerationJobById,
     saveProjectSnapshot,
     selectShotOutputById,
+    updateEpisodeAssetBindingById,
     updateNodeById,
     updateGenerationJobById,
     updateProject,
     updateShotById,
     upsertWorkflowStageRunByWorkflowInstanceId,
+    upsertEpisodeAssetBindingByWorkflowInstanceId,
 } from './persistence.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -331,6 +334,49 @@ app.get('/api/episodes/:id/bindings', async (req, res) => {
     try {
         const bindings = await listEpisodeAssetBindingsByWorkflowInstanceId(req.params.id);
         res.json({ success: true, data: bindings });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/episodes/:id/bindings', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const binding = await upsertEpisodeAssetBindingByWorkflowInstanceId(req.params.id, req.body || {});
+        if (!binding) {
+            return res.status(404).json({ success: false, error: 'Episode not found.' });
+        }
+
+        res.status(201).json({ success: true, data: binding });
+    } catch (error) {
+        sendError(res, error, 400);
+    }
+});
+
+app.patch('/api/episode-bindings/:id', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const binding = await updateEpisodeAssetBindingById(req.params.id, req.body || {});
+        if (!binding) {
+            return res.status(404).json({ success: false, error: 'Episode binding not found.' });
+        }
+
+        res.json({ success: true, data: binding });
+    } catch (error) {
+        sendError(res, error, 400);
+    }
+});
+
+app.delete('/api/episode-bindings/:id', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const binding = await deleteEpisodeAssetBindingById(req.params.id);
+        if (!binding) {
+            return res.status(404).json({ success: false, error: 'Episode binding not found.' });
+        }
+
+        res.json({ success: true, data: binding });
     } catch (error) {
         markDatabaseUnavailable();
         sendError(res, error, 500);

@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Clapperboard, Layers3, Loader2 } from 'lucide-react';
 import {
+  createEpisodeAssetBinding,
   createEpisodeShot,
+  deleteEpisodeAssetBinding,
   deleteWorkflowShot,
   getEpisodeWorkspace,
   selectShotOutput,
@@ -77,6 +79,34 @@ function upsertShot(
   return {
     ...current,
     shots: [...nextShots].sort((left, right) => left.shotNumber - right.shotNumber),
+  };
+}
+
+function upsertAssetBinding(
+  current: EpisodeWorkspaceData | null,
+  binding: EpisodeWorkspaceData['assetBindings'][number],
+): EpisodeWorkspaceData | null {
+  if (!current) return current;
+
+  const nextBindings = current.assetBindings.some((candidate) => candidate.id === binding.id)
+    ? current.assetBindings.map((candidate) => candidate.id === binding.id ? binding : candidate)
+    : [...current.assetBindings, binding];
+
+  return {
+    ...current,
+    assetBindings: [...nextBindings].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+  };
+}
+
+function removeAssetBinding(
+  current: EpisodeWorkspaceData | null,
+  bindingId: string,
+): EpisodeWorkspaceData | null {
+  if (!current) return current;
+
+  return {
+    ...current,
+    assetBindings: current.assetBindings.filter((binding) => binding.id !== bindingId),
   };
 }
 
@@ -255,6 +285,32 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
     });
   }, []);
 
+  const handleWorkspaceBindAsset = useCallback(async (
+    episodeId: string,
+    assetId: string,
+    mode: WorkflowBindingMode,
+  ) => {
+    const response = await createEpisodeAssetBinding(episodeId, { assetId, mode });
+    if (!response.success || !response.data) {
+      setWorkspaceError(response.error || 'Failed to bind asset.');
+      return;
+    }
+
+    onBindAsset(episodeId, assetId, mode);
+    setWorkspaceData((current) => upsertAssetBinding(current, response.data));
+  }, [onBindAsset]);
+
+  const handleWorkspaceUnbindAsset = useCallback(async (bindingId: string) => {
+    const response = await deleteEpisodeAssetBinding(bindingId);
+    if (!response.success) {
+      setWorkspaceError(response.error || 'Failed to unbind asset.');
+      return;
+    }
+
+    onUnbindAsset(bindingId);
+    setWorkspaceData((current) => removeAssetBinding(current, bindingId));
+  }, [onUnbindAsset]);
+
   if (!activeEpisode) {
     return (
       <section className="tianti-surface rounded-[32px] border border-dashed p-10 text-center">
@@ -272,7 +328,7 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
   }
 
   const activeEpisodeStages = getWorkflowTemplate(activeEpisode.templateId).stages;
-  const activeEpisodeBindings = getEpisodeBindings(workflowState, activeEpisode.id);
+  const activeEpisodeBindings = workspaceData?.assetBindings ?? getEpisodeBindings(workflowState, activeEpisode.id);
   const activeEpisodeContinuity = getEpisodeContinuityStates(workflowState, activeEpisode.id);
 
   return (
@@ -346,8 +402,8 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
         stageRuns={workspaceData?.stageRuns ?? []}
         shots={workspaceData?.shots ?? []}
         shotOutputs={workspaceData?.shotOutputs ?? []}
-        onBindAsset={onBindAsset}
-        onUnbindAsset={onUnbindAsset}
+        onBindAsset={handleWorkspaceBindAsset}
+        onUnbindAsset={handleWorkspaceUnbindAsset}
         onUpdateStage={handleWorkspaceStageUpdate}
         onMaterializeWorkflow={onMaterializeWorkflow}
         selectedShotId={selectedShotId}
