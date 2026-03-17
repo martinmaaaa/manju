@@ -75,10 +75,3 @@ coverage/
 .vercel/
 .netlify/
 .serverless/
-
-# === Tauri ===
-src-tauri/target/
-src-tauri/binaries/server-bundle.mjs
-src-tauri/binaries/node_modules/
-src-tauri/binaries/aiyou-server-*
-src-tauri/binaries/.env

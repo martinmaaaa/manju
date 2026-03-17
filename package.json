@@ -11,8 +11,7 @@
   "copyright": "Copyright (c) 2025 光波. All rights reserved.",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
-      "@tauri-apps/cli"
+      "esbuild"
     ]
   },
   "scripts": {
@@ -22,14 +21,11 @@
     "check:text-integrity": "node ./scripts/check-text-integrity.mjs",
     "check:create-project-flow": "node ./scripts/check-create-project-flow.mjs",
     "fix:text-encoding": "node ./scripts/normalize-text-encoding.mjs",
-    "prepare:tauri-sidecar": "node ./scripts/prepare-tauri-sidecar.mjs",
     "build": "node ./scripts/check-text-integrity.mjs && vite build",
     "preview": "vite preview",
     "test": "node ./scripts/check-text-integrity.mjs && vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
@@ -49,8 +45,6 @@
   "devDependencies": {
     "@sentry/react": "^10.32.1",
     "@tailwindcss/vite": "^4.1.18",
-    "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/cli": "^2.10.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.14.0",

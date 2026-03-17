@@ -1,153 +1,60 @@
-# 🎬 添梯 - 给创作者一把向上走的梯子
+# AIYOU Online Workflow
 
-<p align="center">
-  <strong>从创意到成片，一个人就是一个团队</strong>
-</p>
+在线版漫剧生产系统，采用 `Project Workflow + Canvas Studio` 双模式。
 
----
+## 核心结构
 
-## ✨ 项目简介
+- `Project Workflow`
+  - 项目创建与剧本上传
+  - 剧本拆解与故事圣经
+  - 资产锁定
+  - 剧集列表
+  - 单集工作台
+- `Canvas Studio`
+  - 文本、图片、音频、视频多模态沙盒
+  - 可复制导入项目资产
+  - 不回写项目主数据
 
-**添梯** 是一款 AI 驱动的创作工作流平台，核心隐喻是“给创作者一把向上走的梯子”。它把剧本、人物资产、分镜、提示词和视频生成整理成逐级向上的固定流程，让创作者能够稳步推进从灵感到成片的全过程。
+## 本地开发
 
-## ✨ 核心功能
-
-### 📝 剧本创作
-- **剧本大纲生成** — AI 自动生成完整剧本架构
-- **分集剧本** — 自动拆分为多集，每集包含详细对白和场景描述
-- **风格预设** — 设定画面风格，统一全剧视觉调性
-
-### 🎨 视觉创作
-- **文字生图** — 支持多模型（Gemini Imagen、GPT Image、FLUX 等），可配置分辨率、比例、画质
-- **角色设计** — AI 生成角色三视图和多种表情
-- **分镜生成** — 根据剧本自动生成分镜画面
-- **图片裁剪 & 融合** — 内置图片编辑工具
-
-### 🎬 视频制作
-- **图生视频** — 将分镜画面转化为动态视频片段
-- **Sora 2 集成** — 接入 OpenAI Sora 进行高质量视频生成
-- **视频编辑器** — 内置剪辑工具，支持片段拼接和导出
-- **配音 & 音效** — Sonic Studio 音频生成
-
-### ⚙️ 工作流引擎
-- **节点式画布** — 拖拽连线，自由组合创作流程
-- **工作流模板** — 保存和复用常用创作流程
-- **多项目管理** — 支持多个项目独立管理
-- **智能模型降级** — 主模型不可用时自动切换备选模型
-
-## 🛠️ 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 前端框架 | React + TypeScript |
-| 构建工具 | Vite |
-| 状态管理 | Zustand |
-| 桌面端 | Tauri (Windows / macOS) |
-| AI 模型 | Gemini、GPT、FLUX、Sora 2、Kling、Luma、Runway |
-| 在线部署 | Vercel |
-
-## 🚀 快速开始
-
-### 环境要求
-
-- Node.js ≥ 18.0.0
-- npm ≥ 8.0.0
-- 现代浏览器（Chrome / Edge / Safari）
-
-### 安装运行
+### 前端
 
 ```bash
-# 克隆项目
-git clone https://github.com/martinmaaaa/manju.git
-cd manju
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
 ```
 
-访问 http://localhost:5173 即可使用。
+默认地址：`http://localhost:5173`
 
-### 本地数据库模式（Docker + PostgreSQL）
-
-项目现在支持把项目数据落到本地 Docker 里的 PostgreSQL，便于后续迁移到线上数据库平台。
+### 服务端
 
 ```bash
-# 1) 启动本地 PostgreSQL（默认映射到 localhost:5433）
-docker compose -f docker-compose.db.yml up -d
-
-# 2) 安装服务端依赖
 npm --prefix server install
-
-# 3) 启动本地 API
 npm run server:dev
-
-# 4) 另开一个终端启动前端
-npm run dev
 ```
 
-默认配置：
+默认接口：`http://localhost:3001/api`
 
-- 前端 API 地址：`http://localhost:3001/api`
-- 数据库连接串：`postgresql://postgres:postgres@localhost:5433/aiyou`
-- 健康检查：`http://localhost:3001/api/health`
-
-如果需要自定义，请参考：
-
-- 根目录环境变量模板：`.env.example`
-- 服务端环境变量模板：`server/.env.example`
-
-### 配置 API Key
-
-首次使用需要配置 AI 模型的 API Key：
-
-1. 打开项目列表页，点击右上角 **⚙ 系统设置**
-2. 在「基础设置」中选择 API 提供商（Gemini / 云雾 / 自定义）
-3. 输入对应的 API Key 并保存
-
-## 📁 项目结构
-
-```
-tianti-studio/
-├── App.tsx              # 主应用组件
-├── components/          # UI 组件
-│   ├── nodes/           # 节点组件（核心）
-│   ├── SettingsPanel.tsx # 全局设置面板
-│   └── ...
-├── handlers/            # 节点动作处理器
-├── services/            # AI 服务层（Gemini、LLM Providers）
-├── stores/              # 状态管理 (Zustand)
-├── hooks/               # 自定义 Hooks
-├── utils/               # 工具函数
-├── src/i18n/            # 国际化（中/英文）
-├── src-tauri/           # Tauri 桌面端配置
-└── public/              # 静态资源
-```
-
-## 🌐 部署
-
-### Vercel（在线版）
-
-项目已配置 `vercel.json`，连接 GitHub 后可一键部署。
-
-如果你要把“项目/节点/连线”这些数据也上线保存，需要同时部署 `server/` 这个 Node API，并配置：
-
-- 前端：`VITE_API_BASE=https://你的后端域名/api`
-- 后端：`DATABASE_URL=你的线上 PostgreSQL 连接串`
-
-### Tauri（桌面版）
+### 数据库
 
 ```bash
-# 需要安装 Rust 环境
-npm run tauri build
+docker compose -f docker-compose.db.yml up -d
 ```
 
-支持 Windows (.exe) 和 macOS (.dmg) 打包。
+默认连接串：`postgresql://postgres:postgres@localhost:5433/aiyou`
 
-## 📄 许可证
+## 环境变量
 
-本项目基于 [MIT License](./LICENSE) 开源。
+- 根目录：`.env.example`
+- 服务端：`server/.env.example`
 
-原项目来自 [AIYOU](https://github.com/yubowen123/AIYOU_open-ai-video-drama-generator)，由光波开发。
+## 当前实现要点
+
+- 在线端优先，不再包含桌面端壳子
+- 最小登录体系：`email + password + session cookie`
+- 模型按能力选择，不使用全局 current provider
+- Seedance 2.0 技能包作为第一版官方技能库来源
+
+## License
+
+[MIT](./LICENSE)

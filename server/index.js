@@ -5,60 +5,46 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import jimengService from './services/jimengService.js';
 import {
-    cancelJimengJob,
-    enqueueJimengJob,
-    ensureJimengJobWorker,
-    getJimengJobStatus,
-    initializeJimengJobWorker,
-} from './services/jimengJobManager.js';
-import { ensureDatabaseReady, getResolvedDatabaseUrl, initDatabase, markDatabaseUnavailable } from './db.js';
+  clearSessionCookie,
+  getSessionUser,
+  loginUser,
+  logoutUser,
+  registerUser,
+  setSessionCookie,
+} from './auth.js';
+import { ensureDatabaseReady, getResolvedDatabaseUrl } from './db.js';
+import { runCapability } from './capabilityEngine.js';
+import { CAPABILITIES, MODELS, REVIEW_POLICIES, SKILL_PACKS, buildDefaultStageConfig, getCapability, getSkillPack } from './registries.js';
+import { extractScriptContent, extractTitle } from './scriptExtraction.js';
 import {
-    batchUpdateNodesById,
-    cancelGenerationJobById,
-    createConnectionForProject,
-    createGenerationJob,
-    createNodeForProject,
-    createProject,
-    deleteEpisodeAssetBindingById,
-    createShotForWorkflowInstance,
-    createShotOutputForShot,
-    deleteConnectionById,
-    deleteNodeById,
-    deleteProjectById,
-    deleteShotById,
-    ensureGenerationJobBackfill,
-    ensureWorkflowEntityBackfill,
-    getEpisodeWorkspaceByWorkflowInstanceId,
-    getGenerationJobById,
-    getProjectWorkflowEntitiesById,
-    listAssetsByProjectId,
-    listAssetVersionsByProjectId,
-    listContinuityStatesByProjectId,
-    listEpisodeAssetBindingsByProjectId,
-    listEpisodeAssetBindingsByWorkflowInstanceId,
-    listGenerationJobs,
-    listShotOutputsByShotId,
-    listShotsByWorkflowInstanceId,
-    listWorkflowStageRunsByWorkflowInstanceId,
-    getProjectDashboardById,
-    getProjectById,
-    listEpisodesByProjectId,
-    listProjects,
-    listWorkflowInstancesByProjectId,
-    requeueGenerationJobById,
-    retryGenerationJobById,
-    saveProjectSnapshot,
-    selectShotOutputById,
-    updateEpisodeAssetBindingById,
-    updateNodeById,
-    updateGenerationJobById,
-    updateProject,
-    updateShotById,
-    upsertWorkflowStageRunByWorkflowInstanceId,
-    upsertEpisodeAssetBindingByWorkflowInstanceId,
-} from './persistence.js';
+  createOrUpdateAsset,
+  createProject,
+  createStudioWorkspace,
+  getAssetById,
+  getEpisodeById,
+  getEpisodeContext,
+  getEpisodeWorkspace,
+  getProjectById,
+  getProjectMember,
+  getProjectSetup,
+  getStoryBible,
+  getStudioWorkspace,
+  getUserWithPasswordByEmail,
+  listStudioWorkspaces,
+  listAssetsByProjectId,
+  listEpisodesByProjectId,
+  listProjectMembers,
+  listProjectsForUser,
+  setAssetLockState,
+  touchProject,
+  updateEpisodeStatus,
+  updateProjectSetup,
+  updateStudioWorkspace,
+  upsertProjectMember,
+  upsertEpisodeWorkspace,
+  upsertScriptSource,
+} from './workflowStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,779 +54,675 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 const app = express();
 const port = Number(process.env.PORT || 3001);
 
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, origin || true);
+  },
+  credentials: true,
+}));
+app.use(express.json({ limit: '2mb' }));
 
-// Set up Multer for file uploads
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+  fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        cb(null, `${Date.now()}-${file.originalname}`);
-    }
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadDir),
+    filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+  }),
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+  },
 });
-const upload = multer({ storage });
 
 function sendError(res, error, status = 500) {
-    console.error(error);
-    res.status(status).json({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-    });
+  console.error(error);
+  res.status(status).json({
+    success: false,
+    error: error instanceof Error ? error.message : String(error),
+  });
 }
 
 async function requireDatabase(res) {
-    const ready = await ensureDatabaseReady();
-    if (!ready) {
-        res.status(503).json({
-            success: false,
-            error: 'Database is unavailable. Check DATABASE_URL and local Docker Postgres.',
-        });
-        return false;
-    }
+  const ready = await ensureDatabaseReady();
+  if (!ready) {
+    res.status(503).json({
+      success: false,
+      error: 'Database is unavailable. Check DATABASE_URL and local Docker Postgres.',
+    });
+    return false;
+  }
 
-    try {
-        await ensureWorkflowEntityBackfill();
-        await ensureGenerationJobBackfill();
-        return true;
-    } catch (error) {
-        sendError(res, error, 500);
-        return false;
-    }
+  return true;
 }
 
-function removeUploadedFiles(files = []) {
-    for (const file of files) {
-        if (file?.path && fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-        }
+async function authRequired(req, res, next) {
+  if (!(await requireDatabase(res))) return;
+
+  try {
+    const sessionContext = await getSessionUser(req);
+    if (!sessionContext?.user) {
+      return res.status(401).json({
+        success: false,
+        error: '请先登录。',
+      });
     }
+
+    req.user = sessionContext.user;
+    next();
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+async function requireProjectAccess(req, res, next) {
+  if (!(await requireDatabase(res))) return;
+  const projectId = req.params.id || req.params.projectId;
+
+  try {
+    const member = await getProjectMember(projectId, req.user.id);
+    if (!member) {
+      return res.status(404).json({
+        success: false,
+        error: '项目不存在或无访问权限。',
+      });
+    }
+
+    req.projectMember = member;
+    next();
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+async function requireOwnerOrAdminByAsset(req, res, next) {
+  if (!(await requireDatabase(res))) return;
+
+  try {
+    const asset = await getAssetById(req.params.id);
+    if (!asset) {
+      return res.status(404).json({ success: false, error: '资产不存在。' });
+    }
+
+    const member = await getProjectMember(asset.projectId, req.user.id);
+    if (!member || !['owner', 'admin'].includes(member.role)) {
+      return res.status(403).json({ success: false, error: '只有 owner/admin 可以解锁资产。' });
+    }
+
+    req.asset = asset;
+    req.projectMember = member;
+    next();
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+function removeUploadedFile(file) {
+  if (file?.path && fs.existsSync(file.path)) {
+    fs.unlinkSync(file.path);
+  }
 }
 
 app.get('/api/health', async (_req, res) => {
-    let dbReady = false;
-    try {
-        dbReady = await ensureDatabaseReady();
-    } catch {
-        dbReady = false;
+  const dbReady = await ensureDatabaseReady();
+  res.status(200).json({
+    success: true,
+    data: {
+      server: true,
+      database: dbReady,
+      databaseHost: getResolvedDatabaseUrl().replace(/:[^:@/]+@/, ':****@'),
+    },
+  });
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  if (!(await requireDatabase(res))) return;
+
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const name = String(req.body?.name || '').trim();
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: '邮箱和密码不能为空。' });
     }
 
-    res.status(200).json({
-        success: true,
-        data: {
-            server: true,
-            database: dbReady,
-            databaseHost: getResolvedDatabaseUrl().replace(/:[^:@/]+@/, ':****@'),
+    const user = await registerUser({ email, password, name });
+    const session = await loginUser({ email, password });
+    setSessionCookie(res, session.token, session.expiresAt);
+    res.status(201).json({ success: true, data: session.user || user });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  if (!(await requireDatabase(res))) return;
+
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const session = await loginUser({ email, password });
+    setSessionCookie(res, session.token, session.expiresAt);
+    res.json({ success: true, data: session.user });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/auth/logout', authRequired, async (req, res) => {
+  try {
+    await logoutUser(req);
+    clearSessionCookie(res);
+    res.json({ success: true, data: { loggedOut: true } });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.get('/api/me', authRequired, async (req, res) => {
+  res.json({ success: true, data: req.user });
+});
+
+app.get('/api/models', authRequired, async (_req, res) => {
+  res.json({ success: true, data: MODELS });
+});
+
+app.get('/api/capabilities', authRequired, async (_req, res) => {
+  res.json({ success: true, data: CAPABILITIES });
+});
+
+app.get('/api/skill-packs', authRequired, async (req, res) => {
+  const stageKind = String(req.query.stageKind || '').trim();
+  const items = stageKind ? SKILL_PACKS.filter((item) => item.stageKind === stageKind) : SKILL_PACKS;
+  res.json({ success: true, data: items });
+});
+
+app.get('/api/review-policies', authRequired, async (_req, res) => {
+  res.json({ success: true, data: REVIEW_POLICIES });
+});
+
+app.get('/api/projects', authRequired, async (req, res) => {
+  try {
+    const projects = await listProjectsForUser(req.user.id);
+    res.json({ success: true, data: projects });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.post('/api/projects', authRequired, async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim();
+    if (!title) {
+      return res.status(400).json({ success: false, error: '项目标题不能为空。' });
+    }
+
+    const project = await createProject({ title, ownerUserId: req.user.id });
+    const detail = await getProjectById(project.id);
+    res.status(201).json({ success: true, data: detail });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.get('/api/projects/:id', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const project = await getProjectById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ success: false, error: '项目不存在。' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...project,
+        currentRole: req.projectMember.role,
+      },
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.get('/api/projects/:id/members', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const members = await listProjectMembers(req.params.id);
+    res.json({ success: true, data: members });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.post('/api/projects/:id/members', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    if (!['owner', 'admin'].includes(req.projectMember.role)) {
+      return res.status(403).json({ success: false, error: '只有 owner/admin 可以维护项目成员。' });
+    }
+
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const role = String(req.body?.role || 'editor').trim();
+    if (!email || !['owner', 'admin', 'editor'].includes(role)) {
+      return res.status(400).json({ success: false, error: '请提供有效邮箱和角色。' });
+    }
+
+    const userRow = await getUserWithPasswordByEmail(email);
+    if (!userRow) {
+      return res.status(404).json({ success: false, error: '目标用户不存在，请先注册。' });
+    }
+
+    const member = await upsertProjectMember({
+      projectId: req.params.id,
+      userId: userRow.id,
+      role,
+    });
+
+    res.status(201).json({ success: true, data: member });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/projects/:id/script-source', authRequired, requireProjectAccess, upload.single('file'), async (req, res) => {
+  try {
+    const textContent = String(req.body?.textContent || '').trim();
+    if (!req.file && !textContent) {
+      return res.status(400).json({ success: false, error: '请提供文本或上传文件。' });
+    }
+
+    const contentText = await extractScriptContent({
+      filePath: req.file?.path,
+      mimeType: req.file?.mimetype,
+      originalName: req.file?.originalname,
+      textContent,
+    });
+
+    if (!contentText) {
+      return res.status(400).json({ success: false, error: '未能从剧本中提取有效文本。' });
+    }
+
+    const source = await upsertScriptSource({
+      projectId: req.params.id,
+      sourceType: req.file ? 'upload' : 'text',
+      mimeType: req.file?.mimetype || 'text/plain',
+      originalName: req.file?.originalname || null,
+      contentText,
+      metadata: {
+        extractedTitle: extractTitle(contentText),
+      },
+      createdBy: req.user.id,
+    });
+
+    await touchProject(req.params.id);
+    res.status(201).json({ success: true, data: source });
+  } catch (error) {
+    sendError(res, error, 400);
+  } finally {
+    removeUploadedFile(req.file);
+  }
+});
+
+app.get('/api/projects/:id/setup', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const [setup, storyBible, latestSource] = await Promise.all([
+      getProjectSetup(req.params.id),
+      getStoryBible(req.params.id),
+      getProjectById(req.params.id),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        setup,
+        storyBible: storyBible?.content ?? null,
+        latestScriptSource: latestSource?.latestScriptSource ?? null,
+      },
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.patch('/api/projects/:id/setup', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const setup = await updateProjectSetup(req.params.id, req.body || {});
+    res.json({ success: true, data: setup });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.get('/api/projects/:id/stage-config', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const setup = await getProjectSetup(req.params.id);
+    res.json({
+      success: true,
+      data: setup?.stageConfig || buildDefaultStageConfig(),
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.patch('/api/projects/:id/stage-config', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const current = await getProjectSetup(req.params.id);
+    const stageConfig = {
+      ...(current?.stageConfig || buildDefaultStageConfig()),
+      ...(req.body || {}),
+    };
+    const setup = await updateProjectSetup(req.params.id, { stageConfig });
+    res.json({ success: true, data: setup.stageConfig });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.get('/api/projects/:id/assets', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const assets = await listAssetsByProjectId(req.params.id);
+    res.json({ success: true, data: assets });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.post('/api/projects/:id/assets', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const type = String(req.body?.type || '').trim();
+    const name = String(req.body?.name || '').trim();
+    if (!type || !name) {
+      return res.status(400).json({ success: false, error: '资产类型和名称不能为空。' });
+    }
+
+    const created = await createOrUpdateAsset({
+      projectId: req.params.id,
+      type,
+      name,
+      description: String(req.body?.description || '').trim(),
+      metadata: req.body?.metadata || {},
+      promptText: String(req.body?.promptText || '').trim(),
+      previewUrl: req.body?.previewUrl || null,
+      createdBy: req.user.id,
+    });
+    res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/assets/:id/lock', authRequired, async (req, res) => {
+  try {
+    const asset = await getAssetById(req.params.id);
+    if (!asset) {
+      return res.status(404).json({ success: false, error: '资产不存在。' });
+    }
+
+    const member = await getProjectMember(asset.projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: '无权锁定该资产。' });
+    }
+
+    const lockedAsset = await setAssetLockState(asset.id, { locked: true, userId: req.user.id });
+    res.json({ success: true, data: lockedAsset });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/assets/:id/unlock', authRequired, requireOwnerOrAdminByAsset, async (req, res) => {
+  try {
+    const unlockedAsset = await setAssetLockState(req.params.id, { locked: false, userId: req.user.id });
+    res.json({ success: true, data: unlockedAsset });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.get('/api/projects/:id/episodes', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const episodes = await listEpisodesByProjectId(req.params.id);
+    const contexts = await Promise.all(episodes.map((episode) => getEpisodeContext(episode.id)));
+    res.json({
+      success: true,
+      data: episodes.map((episode, index) => ({
+        ...episode,
+        context: contexts[index],
+      })),
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.post('/api/projects/:projectId/episodes/:episodeId/analyze', authRequired, async (req, res) => {
+  try {
+    const member = await getProjectMember(req.params.projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: '无权分析该剧集。' });
+    }
+
+    const project = await getProjectById(req.params.projectId);
+    const skillPackId = req.body?.skillPackId
+      || project?.setup?.stageConfig?.episode_expand?.skillPackId
+      || 'seedance-director-v1';
+    const modelId = req.body?.modelId
+      || project?.setup?.stageConfig?.episode_expand?.modelId
+      || 'google-gemini-2.5-pro-text';
+
+    const run = await runCapability({
+      capabilityId: 'episode_expand',
+      modelId,
+      skillPackId,
+      inputPayload: {
+        projectId: req.params.projectId,
+        episodeId: req.params.episodeId,
+      },
+      user: req.user,
+    });
+
+    const [context, workspace, updatedEpisode] = await Promise.all([
+      getEpisodeContext(req.params.episodeId),
+      getEpisodeWorkspace(req.params.episodeId),
+      updateEpisodeStatus(req.params.episodeId, 'ready'),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        run,
+        context,
+        workspace,
+        episode: updatedEpisode,
+      },
+    });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.get('/api/episodes/:id/context', authRequired, async (req, res) => {
+  try {
+    const episode = await getEpisodeById(req.params.id);
+    if (!episode) {
+      return res.status(404).json({ success: false, error: '剧集不存在。' });
+    }
+    const member = await getProjectMember(episode.projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: '无权访问该剧集。' });
+    }
+
+    const context = await getEpisodeContext(req.params.id);
+    res.json({ success: true, data: context });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.get('/api/episodes/:id/workspace', authRequired, async (req, res) => {
+  try {
+    const episode = await getEpisodeById(req.params.id);
+    if (!episode) {
+      return res.status(404).json({ success: false, error: '剧集不存在。' });
+    }
+    const member = await getProjectMember(episode.projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: '无权访问该剧集。' });
+    }
+
+    const workspace = await getEpisodeWorkspace(req.params.id);
+    res.json({ success: true, data: workspace });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.patch('/api/episodes/:id/workspace', authRequired, async (req, res) => {
+  try {
+    const episode = await getEpisodeById(req.params.id);
+    if (!episode) {
+      return res.status(404).json({ success: false, error: '剧集不存在。' });
+    }
+    const member = await getProjectMember(episode.projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: '无权编辑该剧集。' });
+    }
+
+    const workspace = await upsertEpisodeWorkspace({
+      episodeId: episode.id,
+      projectId: episode.projectId,
+      content: req.body?.content || {},
+    });
+    res.json({ success: true, data: workspace });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.get('/api/studio/workspaces', authRequired, async (req, res) => {
+  try {
+    let workspaces = await listStudioWorkspaces(req.user.id);
+    if (workspaces.length === 0) {
+      workspaces = [await createStudioWorkspace({
+        userId: req.user.id,
+        title: '我的 Studio',
+        content: {
+          nodes: [],
         },
+        importedAssets: [],
+      })];
+    }
+    res.json({ success: true, data: workspaces });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.post('/api/studio/workspaces', authRequired, async (req, res) => {
+  try {
+    const workspace = await createStudioWorkspace({
+      userId: req.user.id,
+      title: String(req.body?.title || '我的 Studio'),
+      content: req.body?.content || { nodes: [] },
+      importedAssets: req.body?.importedAssets || [],
     });
+    res.status(201).json({ success: true, data: workspace });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
 });
 
-app.head('/api/projects', async (_req, res) => {
-    const dbReady = await ensureDatabaseReady();
-    res.sendStatus(dbReady ? 200 : 503);
-});
-
-app.get('/api/projects', async (_req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const projects = await listProjects();
-        res.json({ success: true, data: projects });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
+app.get('/api/studio/workspaces/:id', authRequired, async (req, res) => {
+  try {
+    const workspace = await getStudioWorkspace(req.params.id, req.user.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, error: 'Studio 不存在。' });
     }
+    res.json({ success: true, data: workspace });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
 });
 
-app.post('/api/projects', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const title = String(req.body?.title || '').trim();
-        if (!title) {
-            return res.status(400).json({ success: false, error: 'Project title is required.' });
-        }
-
-        const project = await createProject(title, req.body?.settings || {}, req.body?.workflow_state);
-        res.status(201).json({ success: true, data: project });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
+app.patch('/api/studio/workspaces/:id', authRequired, async (req, res) => {
+  try {
+    const workspace = await updateStudioWorkspace(req.params.id, req.user.id, req.body || {});
+    if (!workspace) {
+      return res.status(404).json({ success: false, error: 'Studio 不存在。' });
     }
+    res.json({ success: true, data: workspace });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
 });
 
-app.get('/api/projects/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const project = await getProjectById(req.params.id);
-        if (!project) {
-            return res.status(404).json({ success: false, error: 'Project not found.' });
-        }
-
-        res.json({ success: true, data: project });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
+app.post('/api/studio/workspaces/:id/import-project-assets', authRequired, async (req, res) => {
+  try {
+    const workspace = await getStudioWorkspace(req.params.id, req.user.id);
+    if (!workspace) {
+      return res.status(404).json({ success: false, error: 'Studio 不存在。' });
     }
-});
 
-app.get('/api/projects/:id/dashboard', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const dashboard = await getProjectDashboardById(req.params.id);
-        if (!dashboard) {
-            return res.status(404).json({ success: false, error: 'Project not found.' });
-        }
-
-        res.json({ success: true, data: dashboard });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
+    const projectId = String(req.body?.projectId || '').trim();
+    const member = await getProjectMember(projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: '无权导入该项目资产。' });
     }
-});
 
-app.get('/api/projects/:id/workflow-instances', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const workflowInstances = await listWorkflowInstancesByProjectId(req.params.id);
-        res.json({ success: true, data: workflowInstances });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/projects/:id/episodes', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const episodes = await listEpisodesByProjectId(req.params.id);
-        res.json({ success: true, data: episodes });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/projects/:id/assets', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const assets = await listAssetsByProjectId(req.params.id);
-        res.json({ success: true, data: assets });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/projects/:id/asset-versions', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const assetVersions = await listAssetVersionsByProjectId(req.params.id);
-        res.json({ success: true, data: assetVersions });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/projects/:id/asset-bindings', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const assetBindings = await listEpisodeAssetBindingsByProjectId(req.params.id);
-        res.json({ success: true, data: assetBindings });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/projects/:id/continuity-states', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const continuityStates = await listContinuityStatesByProjectId(req.params.id);
-        res.json({ success: true, data: continuityStates });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/projects/:id/workflow-entities', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const workflowEntities = await getProjectWorkflowEntitiesById(req.params.id);
-        if (!workflowEntities) {
-            return res.status(404).json({ success: false, error: 'Project not found.' });
-        }
-
-        res.json({ success: true, data: workflowEntities });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/workflows/:id/stages', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const stageRuns = await listWorkflowStageRunsByWorkflowInstanceId(req.params.id);
-        res.json({ success: true, data: stageRuns });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.patch('/api/workflows/:id/stages/:stageKey', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const stageRun = await upsertWorkflowStageRunByWorkflowInstanceId(
-            req.params.id,
-            req.params.stageKey,
-            req.body || {},
-        );
-        if (!stageRun) {
-            return res.status(404).json({ success: false, error: 'Workflow instance not found.' });
-        }
-
-        res.json({ success: true, data: stageRun });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/episodes/:id/workspace', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const workspace = await getEpisodeWorkspaceByWorkflowInstanceId(req.params.id);
-        if (!workspace) {
-            return res.status(404).json({ success: false, error: 'Episode workspace not found.' });
-        }
-
-        res.json({ success: true, data: workspace });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/episodes/:id/bindings', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const bindings = await listEpisodeAssetBindingsByWorkflowInstanceId(req.params.id);
-        res.json({ success: true, data: bindings });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/episodes/:id/bindings', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const binding = await upsertEpisodeAssetBindingByWorkflowInstanceId(req.params.id, req.body || {});
-        if (!binding) {
-            return res.status(404).json({ success: false, error: 'Episode not found.' });
-        }
-
-        res.status(201).json({ success: true, data: binding });
-    } catch (error) {
-        sendError(res, error, 400);
-    }
-});
-
-app.patch('/api/episode-bindings/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const binding = await updateEpisodeAssetBindingById(req.params.id, req.body || {});
-        if (!binding) {
-            return res.status(404).json({ success: false, error: 'Episode binding not found.' });
-        }
-
-        res.json({ success: true, data: binding });
-    } catch (error) {
-        sendError(res, error, 400);
-    }
-});
-
-app.delete('/api/episode-bindings/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const binding = await deleteEpisodeAssetBindingById(req.params.id);
-        if (!binding) {
-            return res.status(404).json({ success: false, error: 'Episode binding not found.' });
-        }
-
-        res.json({ success: true, data: binding });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/episodes/:id/shots', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const shots = await listShotsByWorkflowInstanceId(req.params.id);
-        res.json({ success: true, data: shots });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/episodes/:id/shots', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const shot = await createShotForWorkflowInstance(req.params.id, req.body || {});
-        if (!shot) {
-            return res.status(404).json({ success: false, error: 'Episode not found.' });
-        }
-
-        res.status(201).json({ success: true, data: shot });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.patch('/api/shots/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const shot = await updateShotById(req.params.id, req.body || {});
-        if (!shot) {
-            return res.status(404).json({ success: false, error: 'Shot not found.' });
-        }
-
-        res.json({ success: true, data: shot });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.delete('/api/shots/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const deleted = await deleteShotById(req.params.id);
-        if (!deleted) {
-            return res.status(404).json({ success: false, error: 'Shot not found.' });
-        }
-
-        res.json({ success: true });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/shots/:id/outputs', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const outputs = await listShotOutputsByShotId(req.params.id);
-        res.json({ success: true, data: outputs });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/shots/:id/outputs', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const url = String(req.body?.url || '').trim();
-        if (!url) {
-            return res.status(400).json({ success: false, error: 'Output url is required.' });
-        }
-
-        const output = await createShotOutputForShot(req.params.id, req.body || {});
-        if (!output) {
-            return res.status(404).json({ success: false, error: 'Shot not found.' });
-        }
-
-        res.status(201).json({ success: true, data: output });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/shot-outputs/:id/select', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const output = await selectShotOutputById(req.params.id);
-        if (!output) {
-            return res.status(404).json({ success: false, error: 'Shot output not found.' });
-        }
-
-        res.json({ success: true, data: output });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/projects/:id/generation-jobs', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const jobs = await listGenerationJobs({
-            projectId: req.params.id,
-            status: typeof req.query?.status === 'string' ? req.query.status : undefined,
-            provider: typeof req.query?.provider === 'string' ? req.query.provider : undefined,
-            workflowInstanceId: typeof req.query?.workflowInstanceId === 'string' ? req.query.workflowInstanceId : undefined,
-            limit: typeof req.query?.limit === 'string' ? Number(req.query.limit) : undefined,
-        });
-        res.json({ success: true, data: jobs });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/generation-jobs', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const jobs = await listGenerationJobs({
-            status: typeof req.query?.status === 'string' ? req.query.status : undefined,
-            provider: typeof req.query?.provider === 'string' ? req.query.provider : undefined,
-            projectId: typeof req.query?.projectId === 'string' ? req.query.projectId : undefined,
-            workflowInstanceId: typeof req.query?.workflowInstanceId === 'string' ? req.query.workflowInstanceId : undefined,
-            limit: typeof req.query?.limit === 'string' ? Number(req.query.limit) : undefined,
-        });
-        res.json({ success: true, data: jobs });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.get('/api/generation-jobs/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const job = await getGenerationJobById(req.params.id);
-        if (!job) {
-            return res.status(404).json({ success: false, error: 'Generation job not found.' });
-        }
-
-        res.json({ success: true, data: job });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/generation-jobs', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const job = await createGenerationJob(req.body || {});
-        res.status(201).json({ success: true, data: job });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.put('/api/generation-jobs/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const job = await updateGenerationJobById(req.params.id, req.body || {});
-        if (!job) {
-            return res.status(404).json({ success: false, error: 'Generation job not found.' });
-        }
-
-        res.json({ success: true, data: job });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/generation-jobs/:id/cancel', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const existingJob = await getGenerationJobById(req.params.id);
-        if (!existingJob) {
-            return res.status(404).json({ success: false, error: 'Generation job not found.' });
-        }
-
-        const job = existingJob.provider === 'jimeng'
-            ? await cancelJimengJob(req.params.id)
-            : await cancelGenerationJobById(req.params.id, req.body || {});
-
-        if (!job) {
-            return res.status(404).json({ success: false, error: 'Generation job not found.' });
-        }
-
-        res.json({ success: true, data: existingJob.provider === 'jimeng' ? await getGenerationJobById(req.params.id) : job });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/generation-jobs/:id/requeue', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const job = await requeueGenerationJobById(req.params.id, req.body || {});
-        if (!job) {
-            return res.status(404).json({ success: false, error: 'Generation job not found.' });
-        }
-
-        if (job.provider === 'jimeng') {
-            ensureJimengJobWorker();
-        }
-
-        res.json({ success: true, data: job });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/generation-jobs/:id/retry', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const job = await retryGenerationJobById(req.params.id, req.body || {});
-        if (!job) {
-            return res.status(404).json({ success: false, error: 'Generation job not found.' });
-        }
-
-        if (job.provider === 'jimeng') {
-            ensureJimengJobWorker();
-        }
-
-        res.json({ success: true, data: job });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.put('/api/projects/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const project = await updateProject(req.params.id, {
-            title: typeof req.body?.title === 'string' ? req.body.title.trim() : undefined,
-            settings: req.body?.settings,
-            workflow_state: req.body?.workflow_state,
-        });
-
-        if (!project) {
-            return res.status(404).json({ success: false, error: 'Project not found.' });
-        }
-
-        res.json({ success: true, data: project });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.delete('/api/projects/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        await deleteProjectById(req.params.id);
-        res.json({ success: true });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.put('/api/projects/:id/snapshot', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const success = await saveProjectSnapshot(req.params.id, {
-            nodes: req.body?.nodes || [],
-            connections: req.body?.connections || [],
-            groups: req.body?.groups || [],
-        });
-
-        if (!success) {
-            return res.status(404).json({ success: false, error: 'Project not found.' });
-        }
-
-        res.json({ success: true });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/nodes', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const node = await createNodeForProject(req.body || {});
-        res.status(201).json({ success: true, data: node });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.put('/api/nodes/batch/update', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        await batchUpdateNodesById(req.body?.nodes || []);
-        res.json({ success: true });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.put('/api/nodes/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const node = await updateNodeById(req.params.id, req.body || {});
-        if (!node) {
-            return res.status(404).json({ success: false, error: 'Node not found.' });
-        }
-
-        res.json({ success: true, data: node });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.delete('/api/nodes/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        await deleteNodeById(req.params.id);
-        res.json({ success: true });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.post('/api/connections', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        const connection = await createConnectionForProject(req.body || {});
-        res.status(201).json({ success: true, data: connection });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-app.delete('/api/connections/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-    try {
-        await deleteConnectionById(req.params.id);
-        res.json({ success: true });
-    } catch (error) {
-        markDatabaseUnavailable();
-        sendError(res, error, 500);
-    }
-});
-
-// API to trigger Jimeng Login
-app.get('/api/jimeng/login', async (req, res) => {
-    try {
-        const success = await jimengService.login();
-        if (success) {
-            res.json({ success: true });
-            return;
-        }
-
-        res.status(400).json({
-            success: false,
-            error: '即梦登录未完成，未检测到可用的生成页面。',
-        });
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// API to generate Seedance 2.0 video
-async function handleJimengJobCreation(req, res) {
-    if (!(await requireDatabase(res))) return;
-
-    const files = req.files || [];
-    const uploadedFiles = files.map((file) => ({
-        path: file.path,
-        mimetype: file.mimetype,
-        originalname: file.originalname,
-        size: file.size,
+    const assets = await listAssetsByProjectId(projectId);
+    const importedAssets = assets.map((asset) => ({
+      id: asset.id,
+      name: asset.name,
+      type: asset.type,
+      projectId,
+      copiedAt: new Date().toISOString(),
+      sourceVersionId: asset.currentVersionId,
     }));
-
-    try {
-        const prompt = String(req.body.prompt || '').trim();
-        if (!prompt) {
-            removeUploadedFiles(uploadedFiles);
-            return res.status(400).json({ success: false, error: 'Prompt is required.' });
-        }
-
-        const job = await enqueueJimengJob({
-            prompt,
-            referenceFiles: uploadedFiles,
-            metadata: {
-                provider: 'jimeng',
-                model: 'seedance2',
-                capability: 'video',
-                ...(typeof req.body?.projectId === 'string' && req.body.projectId.trim()
-                    ? { projectId: req.body.projectId.trim() }
-                    : {}),
-                ...(typeof req.body?.workflowInstanceId === 'string' && req.body.workflowInstanceId.trim()
-                    ? { workflowInstanceId: req.body.workflowInstanceId.trim() }
-                    : {}),
-            },
-        });
-
-        res.status(202).json({ success: true, data: job });
-    } catch (error) {
-        console.error('Generate error:', error);
-        removeUploadedFiles(uploadedFiles);
-        res.status(500).json({ success: false, error: error.message });
-    }
-}
-
-app.post('/api/jimeng/generate/seedance2', upload.array('files'), handleJimengJobCreation);
-app.post('/api/jimeng/jobs/seedance2', upload.array('files'), handleJimengJobCreation);
-
-app.get('/api/jimeng/jobs/:id', async (req, res) => {
-    if (!(await requireDatabase(res))) return;
-
-    try {
-        const job = await getJimengJobStatus(req.params.id);
-        if (!job) {
-            return res.status(404).json({ success: false, error: 'Jimeng job not found.' });
-        }
-
-        res.json({ success: true, data: job });
-    } catch (error) {
-        console.error('Jimeng job status error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-app.listen(port, () => {
-console.log(`Tianti Sidecar Server running at http://localhost:${port}`);
-});
-
-initDatabase()
-    .then(() => {
-        console.log('[db] PostgreSQL schema is ready');
-        return ensureWorkflowEntityBackfill();
-    })
-    .then((result) => {
-        console.log(`[db] Workflow entity backfill ready (v${result.version}, migrated ${result.migratedProjectCount} projects)`);
-        return ensureGenerationJobBackfill();
-    })
-    .then((result) => {
-        console.log(`[db] Generation job backfill ready (migrated ${result.migratedJobCount} jobs)`);
-        return initializeJimengJobWorker();
-    })
-    .catch((error) => {
-        const message = error?.message || error?.code || String(error);
-        console.warn('[db] PostgreSQL init skipped:', message);
+    const updated = await updateStudioWorkspace(req.params.id, req.user.id, {
+      importedAssets: [...workspace.importedAssets, ...importedAssets],
     });
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/capability-runs', authRequired, async (req, res) => {
+  try {
+    const capabilityId = String(req.body?.capabilityId || '').trim();
+    const capability = getCapability(capabilityId);
+    if (!capability) {
+      return res.status(400).json({ success: false, error: '未知能力。' });
+    }
+
+    const projectId = req.body?.projectId || null;
+    if (projectId) {
+      const member = await getProjectMember(projectId, req.user.id);
+      if (!member) {
+        return res.status(403).json({ success: false, error: '无权操作该项目。' });
+      }
+    }
+
+    const run = await runCapability({
+      capabilityId,
+      modelId: req.body?.modelId || capability.defaultModelId,
+      skillPackId: req.body?.skillPackId
+        || getSkillPack(req.body?.skillPackId)?.id
+        || null,
+      inputPayload: req.body || {},
+      user: req.user,
+    });
+    res.status(201).json({ success: true, data: run });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.listen(port, async () => {
+  const initialized = await ensureDatabaseReady();
+  const host = getResolvedDatabaseUrl().replace(/:[^:@/]+@/, ':****@');
+  console.log(`[workflow] online server listening on http://localhost:${port}`);
+  console.log(`[workflow] database ${initialized ? 'ready' : 'unavailable'} -> ${host}`);
+});
