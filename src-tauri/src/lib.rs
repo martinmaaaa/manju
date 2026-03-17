@@ -34,7 +34,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let shell = handle.shell();
 
-                // Resolve resource directory where server-bundle.cjs and node_modules live
+                // Resolve resource directory where the bundled server script and node_modules live.
                 let resource_dir = handle
                     .path()
                     .resource_dir()
@@ -47,12 +47,9 @@ pub fn run() {
                     .sidecar("aiyou-server")
                     .expect("failed to create sidecar command");
 
-                // On Windows, the sidecar is a copy of node.exe — pass server-bundle.cjs as arg
-                #[cfg(target_os = "windows")]
-                {
-                    let bundle_path = binaries_res.join("server-bundle.cjs");
-                    cmd = cmd.args([bundle_path.to_string_lossy().to_string()]);
-                }
+                // The sidecar is a copied Node runtime, so pass the bundled server entrypoint as the first arg.
+                let bundle_path = binaries_res.join("server-bundle.mjs");
+                cmd = cmd.args([bundle_path.to_string_lossy().to_string()]);
 
                 // Set environment variables for the sidecar
                 cmd = cmd

@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.hahahome.app",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm run prepare:tauri-sidecar && pnpm dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm run prepare:tauri-sidecar && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -37,10 +37,10 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/hahahome-server"
+      "binaries/aiyou-server"
     ],
     "resources": [
-      "binaries/server-bundle.cjs",
+      "binaries/server-bundle.mjs",
       "binaries/node_modules/**/*"
     ],
     "macOS": {
@@ -57,8 +57,8 @@
       "open": true,
       "scope": [
         {
-          "name": "hahahome-server",
-          "cmd": "binaries/hahahome-server",
+          "name": "aiyou-server",
+          "cmd": "binaries/aiyou-server",
           "args": true
         }
       ]
