@@ -28,6 +28,8 @@ const DEFAULT_WORKFLOW_PROJECT_STATE: WorkflowProjectState = {
   continuityStates: [],
 };
 
+const DEFAULT_MANJU_PROJECT_WORKFLOW_NAME = '漫剧工作流';
+
 export interface WorkflowProjectEntityCollections {
   instances?: WorkflowProjectState['instances'];
   assets?: WorkflowProjectState['assets'];
@@ -326,6 +328,26 @@ export function createWorkflowInstance(
       ...overrides?.metadata,
     },
     ...overrides,
+  };
+}
+
+export function createInitialManjuProjectWorkflowState(
+  projectTitle: string,
+): WorkflowProjectState {
+  const seriesWorkflow = createWorkflowInstance(
+    'manju-series',
+    `${projectTitle} · ${DEFAULT_MANJU_PROJECT_WORKFLOW_NAME}`,
+  );
+
+  return {
+    version: 1,
+    instances: [seriesWorkflow],
+    activeSeriesId: seriesWorkflow.id,
+    activeEpisodeId: null,
+    assets: [],
+    assetVersions: [],
+    assetBindings: [],
+    continuityStates: [],
   };
 }
 
@@ -786,79 +808,28 @@ export function getSeriesWorkflowOverview(
   const videoCompletedEpisodeCount = episodes.filter(episode => episode.stageStates.video?.status === 'completed').length;
 
   let nextAction: WorkflowSeriesNextAction;
+  const scriptPendingEpisode = episodes.find(episode => episode.stageStates['episode-script']?.status !== 'completed');
 
-  if (state.assets.length === 0) {
-    nextAction = {
-      key: 'create_series_assets',
-      label: '先沉淀系列资产',
-      description: '优先创建主角、常驻场景和高频道具，后续单集才能稳定复用。',
-    };
-  } else if (assetBatchTemplates.length === 0) {
-    nextAction = {
-      key: 'organize_asset_templates',
-      label: '整理资产模板',
-      description: '把已创建资产归入主角组、常驻场景、高频道具等模板，后续新单集可自动预铺。',
-    };
-  } else if (episodes.length === 0) {
+  if (episodes.length === 0) {
     nextAction = {
       key: 'create_episodes',
-      label: '开始铺开单集',
-      description: '先创建一批单集执行单元，把系列规划真正落到可执行流程里。',
+      label: '先铺开单集',
+      description: '先把分集执行单元铺出来，再逐集推进剧本。',
     };
+  } else if (scriptPendingEpisode) {
+    nextAction = createEpisodeStageAction(
+      'open_episode_script',
+      `继续 ${scriptPendingEpisode.title} 的剧本`,
+      '优先把单集剧本写完整，再决定资产绑定和后续执行。',
+      scriptPendingEpisode.id,
+      'episode-script',
+    );
   } else {
-    const scriptPendingEpisode = episodes.find(episode => episode.stageStates['episode-script']?.status !== 'completed');
-    const assetPendingEpisode = episodes.find(episode => episode.stageStates['episode-script']?.status === 'completed' && episode.stageStates['episode-assets']?.status !== 'completed');
-    const storyboardPendingEpisode = episodes.find(episode => episode.stageStates['episode-assets']?.status === 'completed' && episode.stageStates.storyboard?.status !== 'completed');
-    const promptPendingEpisode = episodes.find(episode => episode.stageStates.storyboard?.status === 'completed' && episode.stageStates.prompt?.status !== 'completed');
-    const videoPendingEpisode = episodes.find(episode => episode.stageStates.prompt?.status === 'completed' && episode.stageStates.video?.status !== 'completed');
-
-    if (scriptPendingEpisode) {
-      nextAction = createEpisodeStageAction(
-        'open_episode_script',
-        `继续 ${scriptPendingEpisode.title} 的剧本`,
-        '优先把单集剧本写完整，再推进资产绑定与分镜。',
-        scriptPendingEpisode.id,
-        'episode-script',
-      );
-    } else if (assetPendingEpisode) {
-      nextAction = createEpisodeStageAction(
-        'open_episode_assets',
-        `补齐 ${assetPendingEpisode.title} 的资产绑定`,
-        '把人物、场景、道具和风格版本绑定完整，才能稳定推进分镜。',
-        assetPendingEpisode.id,
-        'episode-assets',
-      );
-    } else if (storyboardPendingEpisode) {
-      nextAction = createEpisodeStageAction(
-        'open_episode_storyboard',
-        `推进 ${storyboardPendingEpisode.title} 的分镜`,
-        '当前单集已经具备脚本和资产，可以进入分镜拆解。',
-        storyboardPendingEpisode.id,
-        'storyboard',
-      );
-    } else if (promptPendingEpisode) {
-      nextAction = createEpisodeStageAction(
-        'open_episode_prompt',
-        `整理 ${promptPendingEpisode.title} 的提示词`,
-        '把分镜转成稳定的提示词包，方便后续直接投放到视频节点。',
-        promptPendingEpisode.id,
-        'prompt',
-      );
-    } else if (videoPendingEpisode) {
-      nextAction = createEpisodeStageAction(
-        'open_episode_video',
-        `生成 ${videoPendingEpisode.title} 的视频`,
-        '当前单集已具备提示词，可以进入即梦视频执行环节。',
-        videoPendingEpisode.id,
-        'video',
-      );
-    } else {
-      nextAction = {
-        key: 'materialize_series',
-        label: '投放到原始画布执行',
-        description: '当前流程链路已基本打通，可以投放到画布做批量执行和高级调试。',
-      };
-    }
+    nextAction = {
+      key: 'materialize_series',
+      label: '进入下一阶段',
+      description: '系列设定、分集规划和单集剧本已具备，可以切到 Assets 或画布继续执行。',
+    };
   }
 
   return {

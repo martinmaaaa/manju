@@ -16,7 +16,7 @@ import { createProject, deleteProject, getProjects } from '../services/api';
 import type { ProjectSummary } from '../services/api';
 import type { WorkflowProjectState } from '../services/workflow/domain/types';
 import {
-  createWorkflowInstance,
+  createInitialManjuProjectWorkflowState,
   withWorkflowProjectState,
 } from '../services/workflow/runtime/projectState';
 import type {
@@ -53,22 +53,31 @@ type ProjectCardState = {
 
 const PRIMARY_WORKFLOW_TITLE = '漫剧工作流';
 
-function buildInitialWorkflowState(projectTitle: string): WorkflowProjectState {
-  const seriesWorkflow = createWorkflowInstance(
-    'manju-series',
-    `${projectTitle} · ${PRIMARY_WORKFLOW_TITLE}`,
-  );
+const DIRTY_PROJECT_NAME_PATTERNS = [
+  /^playwright-\d+/i,
+  /^uxtrim/i,
+  /^ux-check/i,
+  /^ui-save-check/i,
+  /^fullflow-\d+/i,
+  /^utf8/i,
+  /^docker db/i,
+];
 
-  return {
-    version: 1,
-    instances: [seriesWorkflow],
-    activeSeriesId: seriesWorkflow.id,
-    activeEpisodeId: null,
-    assets: [],
-    assetVersions: [],
-    assetBindings: [],
-    continuityStates: [],
-  };
+function isDirtyProjectCard({ project, dashboard }: ProjectCardState): boolean {
+  const normalizedTitle = (project.title || '').trim();
+  const hasZeroWorkflowData =
+    dashboard.totals.workflowCount === 0
+    && dashboard.totals.episodeCount === 0
+    && dashboard.totals.assetCount === 0
+    && dashboard.totals.videoCompletedEpisodeCount === 0
+    && dashboard.phase === 'empty';
+  const hasEncodingNoise =
+    normalizedTitle.includes('\uFFFD')
+    || /\?{3,}/.test(normalizedTitle)
+    || /[\uFFFD]/.test(normalizedTitle);
+  const matchesDirtyPattern = DIRTY_PROJECT_NAME_PATTERNS.some((pattern) => pattern.test(normalizedTitle));
+
+  return hasZeroWorkflowData || hasEncodingNoise || matchesDirtyPattern;
 }
 
 const PROJECT_PHASE_META: Record<
@@ -135,6 +144,8 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [isCleaningDirtyProjects, setIsCleaningDirtyProjects] = useState(false);
+  const [showDirtyProjects, setShowDirtyProjects] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<ProjectSummary | null>(null);
   const [newProjectName, setNewProjectName] = useState('');
   const [toast, setToast] = useState<ToastState>(null);
@@ -144,18 +155,31 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
     [projects],
   );
 
-  const latestProject = useMemo(
-    () => projectCards.reduce<ProjectCardState | null>((latest, current) => {
-      if (!latest) return current;
-      return new Date(current.project.updated_at).getTime() > new Date(latest.project.updated_at).getTime()
-        ? current
-        : latest;
-    }, null),
+  const cleanProjectCards = useMemo(
+    () => projectCards.filter((card) => !isDirtyProjectCard(card)),
     [projectCards],
   );
 
+  const dirtyProjectCards = useMemo(
+    () => projectCards.filter(isDirtyProjectCard),
+    [projectCards],
+  );
+
+  const latestProject = useMemo(
+    () => {
+      const source = cleanProjectCards.length > 0 ? cleanProjectCards : projectCards;
+      return source.reduce<ProjectCardState | null>((latest, current) => {
+        if (!latest) return current;
+        return new Date(current.project.updated_at).getTime() > new Date(latest.project.updated_at).getTime()
+          ? current
+          : latest;
+      }, null);
+    },
+    [cleanProjectCards, projectCards],
+  );
+
   const workflowTotals = useMemo(
-    () => projectCards.reduce((accumulator, current) => ({
+    () => cleanProjectCards.reduce((accumulator, current) => ({
       workflowCount: accumulator.workflowCount + current.dashboard.totals.workflowCount,
       seriesCount: accumulator.seriesCount + current.dashboard.totals.seriesCount,
       episodeCount: accumulator.episodeCount + current.dashboard.totals.episodeCount,
@@ -169,7 +193,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
       assetCount: 0,
       videoCompletedEpisodeCount: 0,
     }),
-    [projectCards],
+    [cleanProjectCards],
   );
 
   const showToast = (type: NonNullable<ToastState>['type'], message: string) => {
@@ -240,7 +264,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
 
     try {
       setIsSubmitting(true);
-      const initialWorkflowState = buildInitialWorkflowState(trimmedProjectName);
+      const initialWorkflowState = createInitialManjuProjectWorkflowState(trimmedProjectName);
       const nextSettings = withWorkflowProjectState(DEFAULT_PROJECT_SETTINGS, initialWorkflowState);
       const response = await createProject(trimmedProjectName, nextSettings, initialWorkflowState);
 
@@ -301,6 +325,35 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
       showToast('error', '删除项目失败，请稍后重试。');
     } finally {
       setDeletingProjectId(null);
+    }
+  };
+
+  const handleCleanDirtyProjects = async () => {
+    if (dirtyProjectCards.length === 0 || isCleaningDirtyProjects) return;
+
+    try {
+      setIsCleaningDirtyProjects(true);
+      const projectIds = dirtyProjectCards.map((card) => card.project.id);
+      const results = await Promise.all(projectIds.map((projectId) => deleteProject(projectId)));
+      const deletedCount = results.filter((result) => result.success).length;
+      const failedCount = results.length - deletedCount;
+
+      if (deletedCount > 0) {
+        setProjects((currentProjects) =>
+          currentProjects.filter((project) => !projectIds.includes(project.id)),
+        );
+      }
+
+      if (failedCount === 0) {
+        showToast('success', `已清理 ${deletedCount} 条首页脏数据。`);
+      } else {
+        showToast('error', `清理完成 ${deletedCount} 条，仍有 ${failedCount} 条未删除。`);
+      }
+    } catch (error) {
+      console.error('Failed to clean dirty projects', error);
+      showToast('error', '清理脏数据失败，请稍后重试。');
+    } finally {
+      setIsCleaningDirtyProjects(false);
     }
   };
 
@@ -407,9 +460,11 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
 
             <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
               <div className="tianti-stat-card px-5 py-5">
-                <div className="text-xs uppercase tracking-[0.18em] text-white/45">项目总数</div>
-                <div className="mt-3 text-3xl font-semibold text-white">{projects.length}</div>
-                <div className="mt-2 text-sm text-slate-400">工作区入口</div>
+                <div className="text-xs uppercase tracking-[0.18em] text-white/45">有效项目</div>
+                <div className="mt-3 text-3xl font-semibold text-white">{cleanProjectCards.length}</div>
+                <div className="mt-2 text-sm text-slate-400">
+                  {dirtyProjectCards.length > 0 ? `已隐藏 ${dirtyProjectCards.length} 条脏数据` : '工作区入口'}
+                </div>
               </div>
               <div className="tianti-stat-card px-5 py-5">
                 <div className="text-xs uppercase tracking-[0.18em] text-white/45">最近更新</div>
@@ -439,11 +494,11 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 <h3 className="mt-2 text-2xl font-semibold text-white">项目仓库</h3>
               </div>
               <div className="text-sm text-slate-400">
-                按更新时间排序，共 {projects.length} 个项目
+                按更新时间排序，展示 {cleanProjectCards.length} 个有效项目
               </div>
             </div>
 
-            {projectCards.length === 0 ? (
+            {cleanProjectCards.length === 0 ? (
               <div className="tianti-surface flex min-h-[360px] flex-col items-center justify-center rounded-[32px] px-8 py-12 text-center">
                 <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-500">
                   <FolderHeart size={40} />
@@ -463,7 +518,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {projectCards.map(({ project, dashboard }) => {
+                {cleanProjectCards.map(({ project, dashboard }) => {
                   const phaseMeta = PROJECT_PHASE_META[dashboard.phase];
                   const episodeProgressLabel = dashboard.totals.plannedEpisodeCount > 0
                     ? `${dashboard.totals.episodeCount}/${dashboard.totals.plannedEpisodeCount}`
@@ -560,6 +615,61 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                   );
                 })}
               </div>
+            )}
+
+            {dirtyProjectCards.length > 0 && (
+              <section className="mt-8 rounded-[28px] border border-amber-500/15 bg-amber-500/8 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.22em] text-amber-100/80">Dirty Data</div>
+                    <h4 className="mt-2 text-xl font-semibold text-white">首页脏数据已隐藏</h4>
+                    <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">
+                      已把旧测试项目、乱码标题和未初始化的空项目从首页主列表移走，避免干扰当前 v2 主链路。
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowDirtyProjects((current) => !current)}
+                      className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
+                    >
+                      {showDirtyProjects ? '收起脏数据' : `查看脏数据 ${dirtyProjectCards.length}`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCleanDirtyProjects}
+                      disabled={isCleaningDirtyProjects}
+                      className="tianti-button px-4 py-2 text-sm font-semibold text-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      style={{
+                        borderColor: 'rgba(251, 191, 36, 0.24)',
+                        background: 'rgba(245, 158, 11, 0.16)',
+                      }}
+                    >
+                      {isCleaningDirtyProjects && <Loader2 size={16} className="animate-spin" />}
+                      {isCleaningDirtyProjects ? '清理中...' : '一键清理脏数据'}
+                    </button>
+                  </div>
+                </div>
+
+                {showDirtyProjects && (
+                  <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {dirtyProjectCards.map(({ project, dashboard }) => (
+                      <article
+                        key={`dirty-${project.id}`}
+                        className="rounded-[22px] border border-amber-500/15 bg-black/20 p-4"
+                      >
+                        <div className="text-sm font-semibold text-white">{project.title || '未命名项目'}</div>
+                        <div className="mt-2 text-xs text-slate-400">
+                          阶段 {PROJECT_PHASE_META[dashboard.phase].label} · 更新时间 {formatDate(project.updated_at)}
+                        </div>
+                        <div className="mt-3 text-xs leading-6 text-slate-500">
+                          这类项目通常来自旧测试、乱码数据或未初始化的空壳项目。
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             )}
           </section>
         </div>

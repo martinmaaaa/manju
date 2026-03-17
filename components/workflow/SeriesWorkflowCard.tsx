@@ -1,13 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type {
-  WorkflowAssetBatchTemplate,
-  WorkflowAssetBatchTemplateSuggestion,
   WorkflowBindingMode,
   WorkflowInstance,
 } from '../../services/workflow/domain/types';
 import {
   countCompletedStages,
-  getSeriesAssetCoverage,
   getSeriesWorkflowOverview,
 } from '../../services/workflow/runtime/projectState';
 import { getWorkflowTemplate } from '../../services/workflow/registry';
@@ -19,9 +16,6 @@ import { SeriesStageRail } from './SeriesStageRail';
 interface SeriesCardProps {
   instance: WorkflowInstance;
   episodes: WorkflowInstance[];
-  assetCoverage: ReturnType<typeof getSeriesAssetCoverage>;
-  assetBatchTemplates: WorkflowAssetBatchTemplate[];
-  suggestedAssetBatchTemplates: WorkflowAssetBatchTemplateSuggestion[];
   workflowOverview: NonNullable<ReturnType<typeof getSeriesWorkflowOverview>>;
   isFocused?: boolean;
   onAddEpisode: (seriesInstanceId: string) => void;
@@ -35,42 +29,11 @@ interface SeriesCardProps {
   ) => void;
   onSelectEpisode: (episodeId: string) => void;
   onMaterializeWorkflow: (workflowInstanceId: string) => void;
-  onSyncAssetCoverage: (
-    assetId: string,
-    scopedEpisodeIds: string[],
-    desiredEpisodeIds: string[],
-    mode: WorkflowBindingMode,
-  ) => void;
-  onBatchSyncAssetCoverage: (
-    assetIds: string[],
-    scopedEpisodeIds: string[],
-    desiredEpisodeIds: string[],
-    mode: WorkflowBindingMode,
-  ) => void;
-  onSaveSeriesAssetBatchTemplate: (
-    name: string,
-    assetIds: string[],
-    templateId?: string,
-    autoApplyToNewEpisodes?: boolean,
-  ) => void;
-  onSaveSeriesAssetBatchTemplates: (
-    templates: Array<{
-      id?: string;
-      name: string;
-      assetIds: string[];
-      autoApplyToNewEpisodes?: boolean;
-    }>,
-  ) => void;
-  onDeleteSeriesAssetBatchTemplate: (templateId: string) => void;
-  onFocusAssetCenter: () => void;
 }
 
 export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
   instance,
   episodes,
-  assetCoverage,
-  assetBatchTemplates,
-  suggestedAssetBatchTemplates,
   workflowOverview,
   isFocused = false,
   onAddEpisode,
@@ -78,22 +41,7 @@ export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
   onUpdateSeriesSettings,
   onSelectEpisode,
   onMaterializeWorkflow,
-  onSyncAssetCoverage,
-  onBatchSyncAssetCoverage,
-  onSaveSeriesAssetBatchTemplate,
-  onSaveSeriesAssetBatchTemplates,
-  onDeleteSeriesAssetBatchTemplate,
-  onFocusAssetCenter,
 }) => {
-  void assetCoverage;
-  void assetBatchTemplates;
-  void suggestedAssetBatchTemplates;
-  void onSyncAssetCoverage;
-  void onBatchSyncAssetCoverage;
-  void onSaveSeriesAssetBatchTemplate;
-  void onSaveSeriesAssetBatchTemplates;
-  void onDeleteSeriesAssetBatchTemplate;
-
   const completedStages = countCompletedStages(instance);
   const plannedEpisodeCount = instance.metadata?.plannedEpisodeCount ?? 0;
   const remainingEpisodeCount = plannedEpisodeCount > 0
@@ -135,10 +83,6 @@ export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
 
   const handleNextAction = () => {
     switch (workflowOverview.nextAction.key) {
-      case 'create_series_assets':
-      case 'organize_asset_templates':
-        onFocusAssetCenter();
-        return;
       case 'create_episodes':
         onAddEpisode(instance.id);
         return;
@@ -160,9 +104,6 @@ export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
 
   const nextActionButtonLabel = (() => {
     switch (workflowOverview.nextAction.key) {
-      case 'create_series_assets':
-      case 'organize_asset_templates':
-        return '去资产中心';
       case 'create_episodes':
         return '新增单集';
       case 'materialize_series':

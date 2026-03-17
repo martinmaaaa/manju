@@ -97,6 +97,7 @@ import {
   upsertSeriesAssetBatchTemplate,
   updateWorkflowStageState,
   batchUpdateWorkflowStageStates,
+  createInitialManjuProjectWorkflowState,
   upsertContinuityState,
   withWorkflowProjectState,
 } from './services/workflow/runtime/projectState';
@@ -427,6 +428,17 @@ export const App = () => {
     });
   }, []);
 
+  const clearSaveIndicatorTimers = useCallback(() => {
+    if (saveIndicatorTimerRef.current) {
+      clearTimeout(saveIndicatorTimerRef.current);
+      saveIndicatorTimerRef.current = null;
+    }
+    if (localSaveTimerRef.current) {
+      clearTimeout(localSaveTimerRef.current);
+      localSaveTimerRef.current = null;
+    }
+  }, []);
+
   const handleOpenCreatedProject = useCallback((
     project: ProjectSummary,
     workflowState: WorkflowProjectState,
@@ -460,17 +472,6 @@ export const App = () => {
     setNodes,
     syncActiveWorkflowCollections,
   ]);
-
-  const clearSaveIndicatorTimers = useCallback(() => {
-    if (saveIndicatorTimerRef.current) {
-      clearTimeout(saveIndicatorTimerRef.current);
-      saveIndicatorTimerRef.current = null;
-    }
-    if (localSaveTimerRef.current) {
-      clearTimeout(localSaveTimerRef.current);
-      localSaveTimerRef.current = null;
-    }
-  }, []);
 
   const scheduleIdleSaveIndicator = useCallback((state: Exclude<SaveIndicatorState, 'idle' | 'saving'>, duration: number) => {
     clearSaveIndicatorTimers();
@@ -588,22 +589,20 @@ export const App = () => {
         setIsRemoteSyncEnabled(apiOnline);
 
         const projectsRes = await getProjects();
-        let projectId: string | null = null;
 
         if (projectsRes.success && projectsRes.data && projectsRes.data.length > 0) {
           // 项目列表已存在，保留在 projects 视图
           return;
         } else {
           // 没有项目，创建默认项目并进入
-          const createRes = await createProject(`${BRAND_NAME} 项目`, DEFAULT_PROJECT_SETTINGS);
+          const defaultProjectTitle = `${BRAND_NAME} 项目`;
+          const initialWorkflowState = createInitialManjuProjectWorkflowState(defaultProjectTitle);
+          const nextSettings = withWorkflowProjectState(DEFAULT_PROJECT_SETTINGS, initialWorkflowState);
+          const createRes = await createProject(defaultProjectTitle, nextSettings, initialWorkflowState);
           if (createRes.success && createRes.data) {
-            projectId = createRes.data.id;
+            handleOpenCreatedProject(createRes.data, initialWorkflowState);
+            return;
           }
-        }
-
-        if (projectId) {
-          handleProjectSelect(projectId);
-          return;
         }
 
         // 如果 API 在线但项目为空，上传本地数据作为初始快照
@@ -635,7 +634,7 @@ export const App = () => {
     };
 
     checkStorageConfig();
-  }, []);
+  }, [handleOpenCreatedProject]);
 
   useEffect(() => {
     if (currentView !== 'canvas') {

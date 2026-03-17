@@ -6,6 +6,7 @@ import {
   appendEpisodeInstanceToSeries,
   appendEpisodeInstancesToSeries,
   bindAssetToEpisode,
+  createInitialManjuProjectWorkflowState,
   createEpisodeInstance,
   createEpisodeInstances,
   createWorkflowInstance,
@@ -30,6 +31,15 @@ import {
 } from './projectState';
 
 describe('workflow project state runtime', () => {
+  it('creates an initial manju project workflow state with one focused series', () => {
+    const state = createInitialManjuProjectWorkflowState('测试项目');
+
+    expect(state.instances).toHaveLength(1);
+    expect(state.instances[0].templateId).toBe('manju-series');
+    expect(state.activeSeriesId).toBe(state.instances[0].id);
+    expect(state.instances[0].title).toBe('测试项目 · 漫剧工作流');
+  });
+
   it('creates a series workflow with planned episode metadata', () => {
     const workflowInstance = createWorkflowInstance('manju-series', '测试漫剧');
 
@@ -322,10 +332,10 @@ describe('workflow project state runtime', () => {
       continuityStates: [],
     };
 
-    expect(getSeriesWorkflowOverview(baseState, seriesInstance.id)?.nextAction.key).toBe('create_series_assets');
+    expect(getSeriesWorkflowOverview(baseState, seriesInstance.id)?.nextAction.key).toBe('create_episodes');
 
     const withAsset = appendWorkflowAsset(baseState, 'project-1', 'character', 'hero', ['主角']);
-    expect(getSeriesWorkflowOverview(withAsset, seriesInstance.id)?.nextAction.key).toBe('organize_asset_templates');
+    expect(getSeriesWorkflowOverview(withAsset, seriesInstance.id)?.nextAction.key).toBe('create_episodes');
 
     const withTemplate = upsertSeriesAssetBatchTemplate(withAsset, seriesInstance.id, {
       name: '主角组',
@@ -374,7 +384,41 @@ describe('workflow project state runtime', () => {
         : instance),
     };
 
-    expect(getSeriesWorkflowOverview(scriptCompletedState, seriesInstance.id)?.nextAction.key).toBe('open_episode_assets');
+    expect(getSeriesWorkflowOverview(scriptCompletedState, seriesInstance.id)?.nextAction.key).toBe('materialize_series');
+  });
+
+  it('moves to the next phase after scripts are complete even when assets are still empty', () => {
+    const seriesInstance = createWorkflowInstance('manju-series', 'test series');
+    const baseState = {
+      version: 1 as const,
+      instances: [seriesInstance],
+      activeSeriesId: seriesInstance.id,
+      activeEpisodeId: null,
+      assets: [],
+      assetVersions: [],
+      assetBindings: [],
+      continuityStates: [],
+    };
+    const appended = appendEpisodeInstanceToSeries(baseState, seriesInstance.id);
+    const episode = appended.episode!;
+
+    const scriptCompletedState = {
+      ...appended.state,
+      instances: appended.state.instances.map(instance => instance.id === episode.id
+        ? {
+            ...instance,
+            stageStates: {
+              ...instance.stageStates,
+              'episode-script': {
+                ...instance.stageStates['episode-script'],
+                status: 'completed' as const,
+              },
+            },
+          }
+        : instance),
+    };
+
+    expect(getSeriesWorkflowOverview(scriptCompletedState, seriesInstance.id)?.nextAction.key).toBe('materialize_series');
   });
 
   it('keeps asset bindings only within the selected episode range', () => {

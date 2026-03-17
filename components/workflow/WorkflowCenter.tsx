@@ -7,9 +7,6 @@ import {
 } from 'lucide-react';
 import type {
   ContinuityState,
-  WorkflowAssetBatchTemplate,
-  WorkflowAssetBatchTemplateSuggestion,
-  WorkflowAssetBatchTemplateTarget,
   WorkflowAssetType,
   WorkflowBindingMode,
   WorkflowInstance,
@@ -21,13 +18,9 @@ import type {
   WorkflowTemplateId,
 } from '../../services/workflow/domain/types';
 import {
-  getAssetSummaryForState,
   getEpisodeInstances,
-  getSeriesAssetCoverage,
   getSeriesInstances,
   getSeriesWorkflowOverview,
-  getSuggestedAssetBatchTemplateTargetsForAsset,
-  getSuggestedSeriesAssetBatchTemplates,
 } from '../../services/workflow/runtime/projectState';
 import { getWorkflowTemplate } from '../../services/workflow/registry';
 import { EpisodeStagePanel } from './panels/EpisodeStagePanel';
@@ -158,48 +151,27 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
   onUpdateStage,
 }) => {
   const seriesInstances = getSeriesInstances(workflowState);
-  const assetSummary = getAssetSummaryForState(workflowState);
-  const assetCenterRef = useRef<HTMLDivElement | null>(null);
   const seriesCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingScrollSeriesIdRef = useRef<string | null>(null);
   const seriesSnapshots = useMemo(() => seriesInstances.map((seriesInstance) => {
     const episodes = getEpisodeInstances(workflowState, seriesInstance.id);
-    const assetCoverage = getSeriesAssetCoverage(workflowState, seriesInstance.id);
-    const assetBatchTemplates = seriesInstance.metadata?.assetBatchTemplates ?? [];
-    const suggestedAssetBatchTemplates = getSuggestedSeriesAssetBatchTemplates(workflowState, seriesInstance.id);
     const workflowOverview = getSeriesWorkflowOverview(workflowState, seriesInstance.id);
 
     return workflowOverview
       ? {
         instance: seriesInstance,
         episodes,
-        assetCoverage,
-        assetBatchTemplates,
-        suggestedAssetBatchTemplates,
         workflowOverview,
       }
       : null;
   }).filter((snapshot): snapshot is {
     instance: WorkflowInstance;
     episodes: WorkflowInstance[];
-    assetCoverage: ReturnType<typeof getSeriesAssetCoverage>;
-    assetBatchTemplates: WorkflowAssetBatchTemplate[];
-    suggestedAssetBatchTemplates: WorkflowAssetBatchTemplateSuggestion[];
     workflowOverview: WorkflowSeriesOverview;
   } => Boolean(snapshot)), [seriesInstances, workflowState]);
   const activeSeriesSnapshot = useMemo(() => (
     seriesSnapshots.find(snapshot => snapshot.instance.id === workflowState.activeSeriesId) ?? seriesSnapshots[0] ?? null
   ), [seriesSnapshots, workflowState.activeSeriesId]);
-  const assetCenterSeries = activeSeriesSnapshot?.instance ?? null;
-  const assetCenterTemplates = activeSeriesSnapshot?.assetBatchTemplates ?? [];
-  const assetCenterTargetsByAssetId = useMemo(() => {
-    if (!assetCenterSeries) return {} as Record<string, WorkflowAssetBatchTemplateTarget[]>;
-
-    return workflowState.assets.reduce<Record<string, WorkflowAssetBatchTemplateTarget[]>>((accumulator, asset) => {
-      accumulator[asset.id] = getSuggestedAssetBatchTemplateTargetsForAsset(workflowState, assetCenterSeries.id, asset.id);
-      return accumulator;
-    }, {});
-  }, [assetCenterSeries, workflowState]);
 
   const activeEpisode = useMemo(() => {
     if (workflowState.activeEpisodeId) {
@@ -232,11 +204,6 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
     if (!target) return;
 
     switch (target.workflowOverview.nextAction.key) {
-      case 'create_series_assets':
-      case 'organize_asset_templates':
-        handleFocusSeries(seriesInstanceId);
-        assetCenterRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        return;
       case 'create_episodes':
         onAddEpisode(seriesInstanceId);
         return;
@@ -279,7 +246,14 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
     ? getWorkflowTemplate(activeEpisode.templateId).stages
     : [];
 
+  void onCreateAsset;
+  void onCreateAssetVersion;
   void onBindAsset;
+  void onSyncAssetCoverage;
+  void onBatchSyncAssetCoverage;
+  void onSaveSeriesAssetBatchTemplate;
+  void onSaveSeriesAssetBatchTemplates;
+  void onDeleteSeriesAssetBatchTemplate;
   void onUnbindAsset;
   void onUpdateContinuity;
 
@@ -334,42 +308,7 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
         <div className="tianti-shell-container grid h-full w-full grid-cols-[320px_minmax(0,1fr)] gap-8 overflow-hidden px-6 py-8 lg:px-8">
           <WorkflowCenterSidebar
             templates={templates}
-            assetSummary={assetSummary}
-            assets={workflowState.assets}
-            assetVersions={workflowState.assetVersions}
-            assetCenterSeriesTitle={assetCenterSeries?.title}
-            canAutoAttachSuggestedTemplates={Boolean(assetCenterSeries)}
-            assetBatchTemplates={assetCenterTemplates}
-            assetBatchTargetsByAssetId={assetCenterTargetsByAssetId}
-            assetCenterRef={assetCenterRef}
             onCreateWorkflow={onCreateWorkflow}
-            onCreateAsset={(type, name, tags, autoApplySuggestedTemplates) =>
-              onCreateAsset(type, name, tags, {
-                seriesInstanceId: assetCenterSeries?.id,
-                autoApplySuggestedTemplates,
-              })
-            }
-            onCreateAssetVersion={onCreateAssetVersion}
-            onApplyAssetBatchTemplateTarget={(assetId, target) => {
-              if (!assetCenterSeries) return;
-
-              const existingTemplate = assetCenterTemplates.find(
-                (template) =>
-                  (target.templateId && template.id === target.templateId) ||
-                  template.name === target.name,
-              );
-              const assetIds = Array.from(
-                new Set([...(existingTemplate?.assetIds ?? []), assetId]),
-              );
-
-              onSaveSeriesAssetBatchTemplate(
-                assetCenterSeries.id,
-                target.name,
-                assetIds,
-                existingTemplate?.id ?? target.templateId,
-                target.autoApplyToNewEpisodes,
-              );
-            }}
           />
 
           <main className="flex h-full flex-col gap-6 overflow-y-auto pr-2">
@@ -414,9 +353,6 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
                       <SeriesWorkflowCard
                         instance={activeSeriesSnapshot.instance}
                         episodes={activeSeriesSnapshot.episodes}
-                        assetCoverage={activeSeriesSnapshot.assetCoverage}
-                        assetBatchTemplates={activeSeriesSnapshot.assetBatchTemplates}
-                        suggestedAssetBatchTemplates={activeSeriesSnapshot.suggestedAssetBatchTemplates}
                         workflowOverview={activeSeriesSnapshot.workflowOverview}
                         isFocused
                         onAddEpisode={onAddEpisode}
@@ -424,12 +360,6 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
                         onUpdateSeriesSettings={onUpdateSeriesSettings}
                         onSelectEpisode={onSelectEpisode}
                         onMaterializeWorkflow={onMaterializeWorkflow}
-                        onSyncAssetCoverage={onSyncAssetCoverage}
-                        onBatchSyncAssetCoverage={onBatchSyncAssetCoverage}
-                        onSaveSeriesAssetBatchTemplate={(name, assetIds, templateId, autoApplyToNewEpisodes) => onSaveSeriesAssetBatchTemplate(activeSeriesSnapshot.instance.id, name, assetIds, templateId, autoApplyToNewEpisodes)}
-                        onSaveSeriesAssetBatchTemplates={(templates) => onSaveSeriesAssetBatchTemplates(activeSeriesSnapshot.instance.id, templates)}
-                        onDeleteSeriesAssetBatchTemplate={(templateId) => onDeleteSeriesAssetBatchTemplate(activeSeriesSnapshot.instance.id, templateId)}
-                        onFocusAssetCenter={() => assetCenterRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                       />
                     </div>
                   )}
