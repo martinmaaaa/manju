@@ -306,6 +306,18 @@ export function useNodeActions(params: UseNodeActionsParams) {
         model,
     });
 
+    const buildStoryboardImageGenerationJobMetadata = (
+        nodeId: string,
+        model?: string,
+    ) => ({
+        nodeId,
+        nodeType: NodeType.STORYBOARD_IMAGE,
+        triggerAction: 'generate-storyboard-image',
+        cancelAction: 'cancel-storyboard-image',
+        source: 'storyboard-image',
+        model,
+    });
+
     const queueTrackedNodeGenerationJob = async (
         existingId: string | undefined,
         draft: {
@@ -418,6 +430,20 @@ export function useNodeActions(params: UseNodeActionsParams) {
         resolution: node.data.resolution,
         inputImagesCount,
         hasInlineImage: Boolean(node.data.image),
+    });
+
+    const buildStoryboardImageGenerationSourcePayload = (
+        node: AppNode,
+        shotCount: number,
+        pageCount: number,
+        regenerationMode: 'full' | 'page' | 'panel',
+    ) => ({
+        gridType: node.data.storyboardGridType || '9',
+        panelOrientation: node.data.storyboardPanelOrientation || '16:9',
+        resolution: node.data.storyboardResolution || '1k',
+        shotCount,
+        pageCount,
+        regenerationMode,
     });
 
     const collectJimengReferenceFiles = async (node: AppNode, inputs: AppNode[]) => {
@@ -1957,6 +1983,8 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 'cancel-image-generation',
                 'generate-audio-node',
                 'cancel-audio-generation',
+                'generate-storyboard-image',
+                'cancel-storyboard-image',
                 'edit-image-node',
                 'cancel-image-edit',
                 'generate-video-node',
@@ -3055,11 +3083,43 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 await Promise.all(updatedShots.map((_, i) => processShotImage(i)));
 
             } else if (node.type === NodeType.STORYBOARD_IMAGE) {
+                if (promptOverride === 'cancel-storyboard-image') {
+                    const generationJobId = node.data.generationJobId;
+                    const abortController = abortControllersRef.current.get(id);
+                    if (abortController) {
+                        abortController.abort();
+                        abortControllersRef.current.delete(id);
+                    }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'CANCELLED',
+                        phase: 'CANCELLED',
+                        error: 'Task cancelled.',
+                        metadata: buildStoryboardImageGenerationJobMetadata(
+                            id,
+                            node.data.model || getUserDefaultModel('image'),
+                        ),
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        progress: 0,
+                        error: undefined,
+                        isWorking: false,
+                        storyboardRegeneratePanel: undefined,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                }
+
                 // Check if this is a panel or page regeneration request
-                const regeneratePanelIndex = node.data.storyboardRegeneratePanel;
-                const regeneratePageIndex = node.data.storyboardRegeneratePanel;
+                const regenerateMarker = node.data.storyboardRegeneratePanel;
+                const regeneratePanelIndex = typeof regenerateMarker === 'number'
+                    ? regenerateMarker
+                    : undefined;
                 const isRegeneratingPanel = typeof regeneratePanelIndex === 'number';
-                const isRegeneratingPage = typeof regeneratePageIndex === 'number';
+                const isRegeneratingPage = regenerateMarker === true;
                 const isRegenerating = isRegeneratingPanel || isRegeneratingPage;
 
                 // Get existing shots data or fetch from input
@@ -3247,6 +3307,54 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 // Get user-configured image model priority
                 const imageModelPriority = getUserPriority('image' as ModelCategory);
                 const primaryImageModel = imageModelPriority[0] || getDefaultModel('image');
+                const storyboardJobPrompt = prompt.trim() || extractedShots
+                    .map((shot, index) => `${index + 1}. ${shot.visualDescription || shot.scene || ''}`.trim())
+                    .filter(Boolean)
+                    .join('\n');
+                const regenerationMode: 'full' | 'page' | 'panel' = isRegeneratingPanel
+                    ? 'panel'
+                    : isRegeneratingPage
+                        ? 'page'
+                        : 'full';
+                const generationMetadata = buildStoryboardImageGenerationJobMetadata(id, primaryImageModel);
+                const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
+                    provider: 'gemini',
+                    model: primaryImageModel,
+                    capability: 'image',
+                    prompt: storyboardJobPrompt,
+                    metadata: generationMetadata,
+                    sourcePayload: buildStoryboardImageGenerationSourcePayload(
+                        node,
+                        extractedShots.length,
+                        numberOfPages,
+                        regenerationMode,
+                    ),
+                });
+                const generationJobId = trackedJob?.id ?? node.data.generationJobId;
+
+                handleNodeUpdate(id, {
+                    progress: 0,
+                    error: undefined,
+                    isWorking: true,
+                    generationJobId,
+                });
+                setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING } : n));
+
+                await updateTrackedGenerationJob(generationJobId, {
+                    status: 'RUNNING',
+                    phase: 'RUNNING',
+                    progress: 10,
+                    error: null,
+                    metadata: generationMetadata,
+                });
+
+                const abortController = new AbortController();
+                abortControllersRef.current.set(id, abortController);
+                const assertStoryboardImageGenerationActive = () => {
+                    if (abortController.signal.aborted) {
+                        throw createGenerationAbortError();
+                    }
+                };
 
                 // Extract character reference images from upstream CHARACTER_NODE (for all cases)
                 const characterReferenceImages: string[] = [];
@@ -3333,6 +3441,7 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                 // Helper: Generate single grid page
                 const generateGridPage = async (pageIndex: number): Promise<string | null> => {
+                    assertStoryboardImageGenerationActive();
                     const startIdx = pageIndex * shotsPerGrid;
                     const endIdx = Math.min(startIdx + shotsPerGrid, extractedShots.length);
                     const pageShots = extractedShots.slice(startIdx, endIdx);
@@ -3515,6 +3624,7 @@ Everything else must be purely visual with no text whatsoever.
                             ),
                             timeoutPromise
                         ]);
+                        assertStoryboardImageGenerationActive();
 
                         if (imgs && imgs.length > 0) {
                             return imgs[0];
@@ -3528,98 +3638,157 @@ Everything else must be purely visual with no text whatsoever.
                     }
                 };
 
-                // Generate all pages or regenerate specific page
-                const generatedGrids: string[] = [];
-                let finalCurrentPage = 0;
+                try {
+                    const existingGrids = Array.isArray(node.data.storyboardGridImages)
+                        ? node.data.storyboardGridImages
+                        : (node.data.storyboardGridImage ? [node.data.storyboardGridImage] : []);
+                    const canRegenerateSinglePage = isRegenerating && existingGrids.length > 0;
+                    let finalGrids: string[] = [];
+                    let finalCurrentPage = 0;
 
-                if (isRegenerating) {
-                    // Regenerate specific page (either single panel or entire page)
-                    let targetPageIndex: number;
+                    if (canRegenerateSinglePage) {
+                        const requestedPageIndex = isRegeneratingPanel
+                            ? Math.floor((regeneratePanelIndex ?? 0) / shotsPerGrid)
+                            : (node.data.storyboardCurrentPage || 0);
+                        const targetPageIndex = Math.max(0, Math.min(requestedPageIndex, existingGrids.length - 1));
+                        const regeneratedImage = await generateGridPage(targetPageIndex);
+                        assertStoryboardImageGenerationActive();
 
-                    if (isRegeneratingPage) {
-                        targetPageIndex = regeneratePageIndex;
-                    } else {
-                        targetPageIndex = Math.floor(Number(regeneratePanelIndex) / shotsPerGrid);
-                    }
-
-                    // Keep existing grids, regenerate only the target page
-                    const existingGrids = node.data.storyboardGridImages || [];
-
-                    // Generate the target page
-                    const regeneratedImage = await generateGridPage(targetPageIndex);
-
-                    if (regeneratedImage) {
-                        // Replace the target page in the existing grids
-                        const updatedGrids = [...existingGrids];
-                        updatedGrids[targetPageIndex] = regeneratedImage;
-
-                        handleNodeUpdate(id, {
-                            storyboardGridImages: updatedGrids,
-                            storyboardGridImage: updatedGrids[0],
-                            storyboardGridType: gridType,
-                            storyboardPanelOrientation: panelOrientation,
-                            storyboardCurrentPage: targetPageIndex,
-                            storyboardTotalPages: updatedGrids.length,
-                            storyboardShots: extractedShots,
-                            storyboardRegeneratePanel: undefined, // Clear both flags
-                            storyboardRegeneratePage: undefined
-                        });
-
-                        // Save to local storage
-                        await saveStoryboardGridOutput(id, updatedGrids, 'STORYBOARD_IMAGE');
-
-                    } else {
-                        throw new Error("分镜重新生成失败，请重试");
-                    }
-                } else {
-                    // Normal generation - generate all pages
-                    const generationPromises: Promise<string | null>[] = [];
-
-                    for (let pageIdx = 0; pageIdx < numberOfPages; pageIdx++) {
-                        generationPromises.push(generateGridPage(pageIdx));
-                    }
-
-                    // Wait for all pages to generate
-                    const results = await Promise.all(generationPromises);
-
-                    // Filter out failed generations
-                    results.forEach(result => {
-                        if (result) {
-                            generatedGrids.push(result);
+                        if (!regeneratedImage) {
+                            throw new Error('Storyboard page regeneration failed.');
                         }
-                    });
 
+                        finalGrids = [...existingGrids];
+                        finalGrids[targetPageIndex] = regeneratedImage;
+                        finalCurrentPage = targetPageIndex;
 
-                    // Warn if some pages failed
-                    if (generatedGrids.length > 0 && generatedGrids.length < numberOfPages) {
-                        const failedPages = numberOfPages - generatedGrids.length;
-                        console.warn(`[STORYBOARD_IMAGE] ${failedPages} page(s) failed to generate. ${generatedGrids.length} page(s) succeeded.`);
-                        // Note: We still proceed with the successful pages
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'RUNNING',
+                            phase: 'RUNNING',
+                            progress: 90,
+                            error: null,
+                            metadata: generationMetadata,
+                        });
+                    } else {
+                        for (let pageIdx = 0; pageIdx < numberOfPages; pageIdx++) {
+                            const result = await generateGridPage(pageIdx);
+                            assertStoryboardImageGenerationActive();
+
+                            if (result) {
+                                finalGrids.push(result);
+                            }
+
+                            const progress = numberOfPages > 0
+                                ? Math.min(90, 15 + Math.round(((pageIdx + 1) / numberOfPages) * 75))
+                                : 90;
+
+                            handleNodeUpdate(id, {
+                                progress,
+                                generationJobId,
+                            });
+                            await updateTrackedGenerationJob(generationJobId, {
+                                status: 'RUNNING',
+                                phase: 'RUNNING',
+                                progress,
+                                error: null,
+                                metadata: generationMetadata,
+                            });
+                        }
+
+                        if (finalGrids.length > 0 && finalGrids.length < numberOfPages) {
+                            const failedPages = numberOfPages - finalGrids.length;
+                            console.warn(`[STORYBOARD_IMAGE] ${failedPages} page(s) failed to generate. ${finalGrids.length} page(s) succeeded.`);
+                        }
+
+                        if (finalGrids.length === 0) {
+                            throw new Error('Storyboard grid generation failed.');
+                        }
                     }
 
-                    if (generatedGrids.length === 0) {
-                        throw new Error("分镜图生成失败，请重试");
-                    }
+                    abortControllersRef.current.delete(id);
 
-                    // Save results
                     handleNodeUpdate(id, {
-                        storyboardGridImages: generatedGrids,
-                        storyboardGridImage: generatedGrids[0], // For backward compatibility
+                        storyboardGridImages: finalGrids,
+                        storyboardGridImage: finalGrids[0],
                         storyboardGridType: gridType,
                         storyboardPanelOrientation: panelOrientation,
-                        storyboardCurrentPage: 0,
-                        storyboardTotalPages: generatedGrids.length,
-                        storyboardShots: extractedShots // Save shots data for editing
+                        storyboardCurrentPage: finalCurrentPage,
+                        storyboardTotalPages: finalGrids.length,
+                        storyboardShots: extractedShots,
+                        storyboardRegeneratePanel: undefined,
+                        progress: 100,
+                        error: undefined,
+                        isWorking: false,
+                        generationJobId,
                     });
 
-                    // Save to local storage
-                    await saveStoryboardGridOutput(id, generatedGrids, 'STORYBOARD_IMAGE');
+                    await saveStoryboardGridOutput(id, finalGrids, 'STORYBOARD_IMAGE');
 
-                    // 添加到历史记录
-                    generatedGrids.forEach((gridUrl, index) => {
-                        handleAssetGenerated('image', gridUrl, `分镜图 第${index + 1}页`);
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'COMPLETED',
+                        phase: 'COMPLETED',
+                        progress: 100,
+                        error: null,
+                        resultUrl: finalGrids[finalCurrentPage] ?? finalGrids[0] ?? null,
+                        resultPayload: {
+                            pageCount: finalGrids.length,
+                            shotCount: extractedShots.length,
+                            gridType,
+                            panelOrientation,
+                            regenerationMode,
+                        },
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
                     });
 
+                    finalGrids.forEach((gridUrl, index) => {
+                        handleAssetGenerated('image', gridUrl, `Storyboard Grid ${index + 1}`);
+                    });
+
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                } catch (error: any) {
+                    abortControllersRef.current.delete(id);
+
+                    if (isGenerationCancelledError(error, abortController.signal)) {
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'CANCELLED',
+                            phase: 'CANCELLED',
+                            error: 'Task cancelled.',
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
+                        handleNodeUpdate(id, {
+                            progress: 0,
+                            error: undefined,
+                            isWorking: false,
+                            storyboardRegeneratePanel: undefined,
+                            generationJobId,
+                        });
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
+                    }
+
+                    const errorMessage = typeof error?.message === 'string'
+                        ? error.message
+                        : 'Storyboard image generation failed.';
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'FAILED',
+                        phase: 'FAILED',
+                        error: errorMessage,
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        error: errorMessage,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                    throw error;
                 }
 
             } else if (node.type === NodeType.SORA_VIDEO_GENERATOR) {

@@ -21,18 +21,26 @@ import {
     createGenerationJob,
     createNodeForProject,
     createProject,
+    createShotForWorkflowInstance,
+    createShotOutputForShot,
     deleteConnectionById,
     deleteNodeById,
     deleteProjectById,
+    deleteShotById,
     ensureGenerationJobBackfill,
     ensureWorkflowEntityBackfill,
+    getEpisodeWorkspaceByWorkflowInstanceId,
     getGenerationJobById,
     getProjectWorkflowEntitiesById,
     listAssetsByProjectId,
     listAssetVersionsByProjectId,
     listContinuityStatesByProjectId,
     listEpisodeAssetBindingsByProjectId,
+    listEpisodeAssetBindingsByWorkflowInstanceId,
     listGenerationJobs,
+    listShotOutputsByShotId,
+    listShotsByWorkflowInstanceId,
+    listWorkflowStageRunsByWorkflowInstanceId,
     getProjectDashboardById,
     getProjectById,
     listEpisodesByProjectId,
@@ -41,9 +49,12 @@ import {
     requeueGenerationJobById,
     retryGenerationJobById,
     saveProjectSnapshot,
+    selectShotOutputById,
     updateNodeById,
     updateGenerationJobById,
     updateProject,
+    updateShotById,
+    upsertWorkflowStageRunByWorkflowInstanceId,
 } from './persistence.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -264,6 +275,164 @@ app.get('/api/projects/:id/workflow-entities', async (req, res) => {
         }
 
         res.json({ success: true, data: workflowEntities });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/workflows/:id/stages', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const stageRuns = await listWorkflowStageRunsByWorkflowInstanceId(req.params.id);
+        res.json({ success: true, data: stageRuns });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.patch('/api/workflows/:id/stages/:stageKey', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const stageRun = await upsertWorkflowStageRunByWorkflowInstanceId(
+            req.params.id,
+            req.params.stageKey,
+            req.body || {},
+        );
+        if (!stageRun) {
+            return res.status(404).json({ success: false, error: 'Workflow instance not found.' });
+        }
+
+        res.json({ success: true, data: stageRun });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/episodes/:id/workspace', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const workspace = await getEpisodeWorkspaceByWorkflowInstanceId(req.params.id);
+        if (!workspace) {
+            return res.status(404).json({ success: false, error: 'Episode workspace not found.' });
+        }
+
+        res.json({ success: true, data: workspace });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/episodes/:id/bindings', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const bindings = await listEpisodeAssetBindingsByWorkflowInstanceId(req.params.id);
+        res.json({ success: true, data: bindings });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/episodes/:id/shots', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const shots = await listShotsByWorkflowInstanceId(req.params.id);
+        res.json({ success: true, data: shots });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/episodes/:id/shots', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const shot = await createShotForWorkflowInstance(req.params.id, req.body || {});
+        if (!shot) {
+            return res.status(404).json({ success: false, error: 'Episode not found.' });
+        }
+
+        res.status(201).json({ success: true, data: shot });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.patch('/api/shots/:id', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const shot = await updateShotById(req.params.id, req.body || {});
+        if (!shot) {
+            return res.status(404).json({ success: false, error: 'Shot not found.' });
+        }
+
+        res.json({ success: true, data: shot });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.delete('/api/shots/:id', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const deleted = await deleteShotById(req.params.id);
+        if (!deleted) {
+            return res.status(404).json({ success: false, error: 'Shot not found.' });
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.get('/api/shots/:id/outputs', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const outputs = await listShotOutputsByShotId(req.params.id);
+        res.json({ success: true, data: outputs });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/shots/:id/outputs', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const url = String(req.body?.url || '').trim();
+        if (!url) {
+            return res.status(400).json({ success: false, error: 'Output url is required.' });
+        }
+
+        const output = await createShotOutputForShot(req.params.id, req.body || {});
+        if (!output) {
+            return res.status(404).json({ success: false, error: 'Shot not found.' });
+        }
+
+        res.status(201).json({ success: true, data: output });
+    } catch (error) {
+        markDatabaseUnavailable();
+        sendError(res, error, 500);
+    }
+});
+
+app.post('/api/shot-outputs/:id/select', async (req, res) => {
+    if (!(await requireDatabase(res))) return;
+    try {
+        const output = await selectShotOutputById(req.params.id);
+        if (!output) {
+            return res.status(404).json({ success: false, error: 'Shot output not found.' });
+        }
+
+        res.json({ success: true, data: output });
     } catch (error) {
         markDatabaseUnavailable();
         sendError(res, error, 500);

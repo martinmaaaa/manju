@@ -176,3 +176,54 @@ export interface ContinuityState {
   state: Record<string, unknown>;
   updatedAt: string;
 }
+
+export interface WorkflowStageRun {
+  id: string;
+  projectId: string;
+  workflowInstanceId: string;
+  stageId: string;
+  status: WorkflowStageStatus;
+  formData: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  artifactIds: string[];
+  error?: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowShot {
+  id: string;
+  projectId: string;
+  workflowInstanceId: string;
+  stageRunId?: string;
+  shotNumber: number;
+  title: string;
+  sourceNodeId?: string;
+  sourcePage?: number;
+  panelIndex?: number;
+  prompt: string;
+  imageUrl?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowShotOutput {
+  id: string;
+  projectId: string;
+  workflowInstanceId?: string;
+  shotId: string;
+  generationJobId?: string;
+  provider?: string;
+  outputType: string;
+  label?: string;
+  url: string;
+  thumbnailUrl?: string;
+  metadata: Record<string, unknown>;
+  isSelected: boolean;
+  selectedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { getPool } from './db.js';
 
-const WORKFLOW_ENTITY_SCHEMA_VERSION = 1;
+const WORKFLOW_ENTITY_SCHEMA_VERSION = 2;
 let workflowEntityBackfillReady = false;
 let workflowEntityBackfillPromise = null;
 let generationJobBackfillReady = false;
@@ -27,6 +27,18 @@ function createGenerationJobId(provider = 'job') {
 
 function createEntityId() {
   return randomUUID().replace(/-/g, '');
+}
+
+function createWorkflowStageRunId(workflowInstanceId, stageId) {
+  return `${workflowInstanceId}:${stageId}`;
+}
+
+function createShotId() {
+  return `shot_${randomUUID().replace(/-/g, '')}`;
+}
+
+function createShotOutputId() {
+  return `shotout_${randomUUID().replace(/-/g, '')}`;
 }
 
 function toIsoString(value) {
@@ -167,6 +179,63 @@ function mapContinuityStateRow(row) {
     subjectType: row.subject_type,
     subjectId: row.subject_id,
     state: asObject(row.state),
+    updatedAt: toIsoString(row.updated_at),
+  };
+}
+
+function mapWorkflowStageRunRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    workflowInstanceId: row.workflow_instance_id,
+    stageId: row.stage_id,
+    status: row.status,
+    formData: asObject(row.form_data),
+    outputs: asObject(row.outputs),
+    artifactIds: asArray(row.artifact_ids),
+    error: row.error ?? undefined,
+    startedAt: asOptionalIsoString(row.started_at),
+    completedAt: asOptionalIsoString(row.completed_at),
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
+  };
+}
+
+function mapShotRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    workflowInstanceId: row.workflow_instance_id,
+    stageRunId: row.stage_run_id ?? undefined,
+    shotNumber: Number(row.shot_number ?? 0),
+    title: row.title,
+    sourceNodeId: row.source_node_id ?? undefined,
+    sourcePage: row.source_page == null ? undefined : Number(row.source_page),
+    panelIndex: row.panel_index == null ? undefined : Number(row.panel_index),
+    prompt: row.prompt,
+    imageUrl: row.image_url ?? undefined,
+    metadata: asObject(row.metadata),
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
+  };
+}
+
+function mapShotOutputRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    workflowInstanceId: row.workflow_instance_id ?? undefined,
+    shotId: row.shot_id,
+    generationJobId: row.generation_job_id ?? undefined,
+    provider: row.provider ?? undefined,
+    outputType: row.output_type,
+    label: row.label ?? undefined,
+    url: row.url,
+    thumbnailUrl: row.thumbnail_url ?? undefined,
+    metadata: asObject(row.metadata),
+    isSelected: Boolean(row.is_selected),
+    selectedAt: asOptionalIsoString(row.selected_at),
+    createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at),
   };
 }
@@ -799,6 +868,72 @@ async function listContinuityStatesForProjectIds(client, projectIds) {
   }, new Map());
 }
 
+async function listWorkflowStageRunsForProjectIds(client, projectIds) {
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return new Map();
+  }
+
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, stage_id, status, form_data, outputs, artifact_ids, error,
+            started_at, completed_at, created_at, updated_at
+     FROM workflow_stage_runs
+     WHERE project_id = ANY($1::text[])
+     ORDER BY workflow_instance_id ASC, created_at ASC, stage_id ASC`,
+    [projectIds],
+  );
+
+  return result.rows.reduce((accumulator, row) => {
+    const stageRuns = accumulator.get(row.project_id) ?? [];
+    stageRuns.push(mapWorkflowStageRunRow(row));
+    accumulator.set(row.project_id, stageRuns);
+    return accumulator;
+  }, new Map());
+}
+
+async function listShotsForProjectIds(client, projectIds) {
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return new Map();
+  }
+
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, stage_run_id, shot_number, title, source_node_id, source_page,
+            panel_index, prompt, image_url, metadata, created_at, updated_at
+     FROM shots
+     WHERE project_id = ANY($1::text[])
+     ORDER BY workflow_instance_id ASC, shot_number ASC, created_at ASC, id ASC`,
+    [projectIds],
+  );
+
+  return result.rows.reduce((accumulator, row) => {
+    const shots = accumulator.get(row.project_id) ?? [];
+    shots.push(mapShotRow(row));
+    accumulator.set(row.project_id, shots);
+    return accumulator;
+  }, new Map());
+}
+
+async function listShotOutputsForProjectIds(client, projectIds) {
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return new Map();
+  }
+
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, shot_id, generation_job_id, provider, output_type, label, url,
+            thumbnail_url, metadata, is_selected, selected_at, created_at, updated_at
+     FROM shot_outputs
+     WHERE project_id = ANY($1::text[])
+     ORDER BY shot_id ASC, created_at DESC, id ASC`,
+    [projectIds],
+  );
+
+  return result.rows.reduce((accumulator, row) => {
+    const shotOutputs = accumulator.get(row.project_id) ?? [];
+    shotOutputs.push(mapShotOutputRow(row));
+    accumulator.set(row.project_id, shotOutputs);
+    return accumulator;
+  }, new Map());
+}
+
 async function loadPersistedWorkflowCollectionsByProjectIds(client, projectIds) {
   const [
     workflowInstancesByProjectId,
@@ -824,6 +959,26 @@ async function loadPersistedWorkflowCollectionsByProjectIds(client, projectIds) 
     assetBindingsByProjectId,
     continuityStatesByProjectId,
   };
+}
+
+function buildWorkflowStageRunsFromInstances(projectId, instances) {
+  return asArray(instances).flatMap((instance) => (
+    Object.values(asObject(instance.stageStates)).map((stageState) => ({
+      id: createWorkflowStageRunId(instance.id, stageState.stageId),
+      projectId,
+      workflowInstanceId: instance.id,
+      stageId: stageState.stageId,
+      status: String(stageState.status ?? 'not_started'),
+      formData: asObject(stageState.formData),
+      outputs: asObject(stageState.outputs),
+      artifactIds: asArray(stageState.artifactIds),
+      error: stageState.error ?? null,
+      startedAt: stageState.startedAt ? toIsoString(stageState.startedAt) : null,
+      completedAt: stageState.completedAt ? toIsoString(stageState.completedAt) : null,
+      createdAt: instance.createdAt ? toIsoString(instance.createdAt) : new Date().toISOString(),
+      updatedAt: instance.updatedAt ? toIsoString(instance.updatedAt) : new Date().toISOString(),
+    }))
+  ));
 }
 
 function getPersistedWorkflowCollectionsForProject(loadedCollections, projectId) {
@@ -861,6 +1016,7 @@ function sortWorkflowInstancesForPersistence(instances) {
 async function syncProjectWorkflowEntities(client, projectId, workflowStateInput) {
   const workflowState = getWorkflowProjectState({ workflow_state: workflowStateInput });
   const orderedInstances = sortWorkflowInstancesForPersistence(workflowState.instances.map(asObject));
+  const workflowStageRuns = buildWorkflowStageRunsFromInstances(projectId, orderedInstances);
   const assets = workflowState.assets.map(asObject);
   const assetVersions = workflowState.assetVersions.map(asObject);
   const assetBindings = workflowState.assetBindings.map(asObject);
@@ -877,6 +1033,17 @@ async function syncProjectWorkflowEntities(client, projectId, workflowStateInput
   const validContinuityStates = continuityStates.filter((continuityState) => (
     workflowInstanceIds.has(continuityState.workflowInstanceId)
   ));
+
+  if (workflowInstanceIds.size > 0) {
+    await client.query(
+      `DELETE FROM shots
+       WHERE project_id = $1
+         AND NOT (workflow_instance_id = ANY($2::text[]))`,
+      [projectId, Array.from(workflowInstanceIds)],
+    );
+  } else {
+    await client.query('DELETE FROM shots WHERE project_id = $1', [projectId]);
+  }
 
   await client.query('DELETE FROM continuity_states WHERE project_id = $1', [projectId]);
   await client.query('DELETE FROM episode_asset_bindings WHERE project_id = $1', [projectId]);
@@ -907,6 +1074,32 @@ async function syncProjectWorkflowEntities(client, projectId, workflowStateInput
         JSON.stringify(asObject(instance.metadata)),
         instance.createdAt ? toIsoString(instance.createdAt) : new Date().toISOString(),
         instance.updatedAt ? toIsoString(instance.updatedAt) : new Date().toISOString(),
+      ],
+    );
+  }
+
+  for (const stageRun of workflowStageRuns) {
+    await client.query(
+      `INSERT INTO workflow_stage_runs (
+        id, project_id, workflow_instance_id, stage_id, status, form_data, outputs, artifact_ids, error,
+        started_at, completed_at, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13
+      )`,
+      [
+        stageRun.id,
+        projectId,
+        stageRun.workflowInstanceId,
+        stageRun.stageId,
+        stageRun.status,
+        JSON.stringify(asObject(stageRun.formData)),
+        JSON.stringify(asObject(stageRun.outputs)),
+        JSON.stringify(asArray(stageRun.artifactIds)),
+        stageRun.error ?? null,
+        stageRun.startedAt ? toIsoString(stageRun.startedAt) : null,
+        stageRun.completedAt ? toIsoString(stageRun.completedAt) : null,
+        stageRun.createdAt ? toIsoString(stageRun.createdAt) : new Date().toISOString(),
+        stageRun.updatedAt ? toIsoString(stageRun.updatedAt) : new Date().toISOString(),
       ],
     );
   }
@@ -1047,6 +1240,18 @@ async function getHydratedWorkflowStateByProjectId(client, projectId) {
   );
 }
 
+async function getWorkflowInstanceRow(client, id) {
+  const result = await client.query(
+    `SELECT id, project_id, template_id, scope, title, status, parent_instance_id, current_stage_id,
+            stage_states, artifact_ids, metadata, created_at, updated_at
+     FROM workflow_instances
+     WHERE id = $1`,
+    [id],
+  );
+
+  return result.rows[0] ?? null;
+}
+
 async function getNodeRow(client, id) {
   const result = await client.query(
     `SELECT id, project_id, type, title, x, y, width, height, status, data, inputs, created_at, updated_at
@@ -1056,6 +1261,74 @@ async function getNodeRow(client, id) {
   );
 
   return result.rows[0] ?? null;
+}
+
+async function getWorkflowStageRunRow(client, workflowInstanceId, stageId) {
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, stage_id, status, form_data, outputs, artifact_ids, error,
+            started_at, completed_at, created_at, updated_at
+     FROM workflow_stage_runs
+     WHERE workflow_instance_id = $1
+       AND stage_id = $2`,
+    [workflowInstanceId, stageId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function getShotRow(client, id) {
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, stage_run_id, shot_number, title, source_node_id, source_page,
+            panel_index, prompt, image_url, metadata, created_at, updated_at
+     FROM shots
+     WHERE id = $1`,
+    [id],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function getShotOutputRow(client, id) {
+  const result = await client.query(
+    `SELECT id, project_id, workflow_instance_id, shot_id, generation_job_id, provider, output_type, label, url,
+            thumbnail_url, metadata, is_selected, selected_at, created_at, updated_at
+     FROM shot_outputs
+     WHERE id = $1`,
+    [id],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function syncWorkflowInstanceStageState(client, workflowInstanceId, stageRunPayload) {
+  const workflowInstance = await getWorkflowInstanceRow(client, workflowInstanceId);
+  if (!workflowInstance) {
+    return null;
+  }
+
+  const nextStageStates = {
+    ...asObject(workflowInstance.stage_states),
+    [stageRunPayload.stageId]: {
+      stageId: stageRunPayload.stageId,
+      status: stageRunPayload.status,
+      formData: asObject(stageRunPayload.formData),
+      outputs: asObject(stageRunPayload.outputs),
+      artifactIds: asArray(stageRunPayload.artifactIds),
+      error: stageRunPayload.error ?? undefined,
+      startedAt: stageRunPayload.startedAt ?? undefined,
+      completedAt: stageRunPayload.completedAt ?? undefined,
+    },
+  };
+
+  await client.query(
+    `UPDATE workflow_instances
+     SET stage_states = $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [workflowInstanceId, JSON.stringify(nextStageStates)],
+  );
+
+  return workflowInstance.project_id;
 }
 
 async function getJimengJobRow(client, id) {
@@ -1441,6 +1714,19 @@ export async function listEpisodeAssetBindingsByProjectId(projectId) {
   return workflowState?.assetBindings ?? [];
 }
 
+export async function listEpisodeAssetBindingsByWorkflowInstanceId(workflowInstanceId) {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT id, project_id, workflow_instance_id, asset_id, version_id, mode, derived_from_version_id, created_at
+     FROM episode_asset_bindings
+     WHERE workflow_instance_id = $1
+     ORDER BY created_at ASC, id ASC`,
+    [workflowInstanceId],
+  );
+
+  return result.rows.map(mapEpisodeAssetBindingRow);
+}
+
 export async function listContinuityStatesByProjectId(projectId) {
   const pool = getPool();
   const continuityStatesByProjectId = await listContinuityStatesForProjectIds(pool, [projectId]);
@@ -1467,6 +1753,11 @@ export async function getProjectWorkflowEntitiesById(projectId) {
     getPersistedWorkflowCollectionsForProject(loadedCollections, projectId),
     settings,
   );
+  const [stageRunsByProjectId, shotsByProjectId, shotOutputsByProjectId] = await Promise.all([
+    listWorkflowStageRunsForProjectIds(pool, [projectId]),
+    listShotsForProjectIds(pool, [projectId]),
+    listShotOutputsForProjectIds(pool, [projectId]),
+  ]);
 
   return {
     instances: workflowState.instances,
@@ -1475,6 +1766,395 @@ export async function getProjectWorkflowEntitiesById(projectId) {
     assetVersions: workflowState.assetVersions,
     assetBindings: workflowState.assetBindings,
     continuityStates: workflowState.continuityStates,
+    stageRuns: stageRunsByProjectId.get(projectId) ?? [],
+    shots: shotsByProjectId.get(projectId) ?? [],
+    shotOutputs: shotOutputsByProjectId.get(projectId) ?? [],
+  };
+}
+
+export async function listWorkflowStageRunsByWorkflowInstanceId(workflowInstanceId) {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT id, project_id, workflow_instance_id, stage_id, status, form_data, outputs, artifact_ids, error,
+            started_at, completed_at, created_at, updated_at
+     FROM workflow_stage_runs
+     WHERE workflow_instance_id = $1
+     ORDER BY created_at ASC, stage_id ASC`,
+    [workflowInstanceId],
+  );
+
+  if ((result.rowCount ?? 0) > 0) {
+    return result.rows.map(mapWorkflowStageRunRow);
+  }
+
+  const workflowInstance = await getWorkflowInstanceRow(pool, workflowInstanceId);
+  if (!workflowInstance) {
+    return [];
+  }
+
+  return buildWorkflowStageRunsFromInstances(
+    workflowInstance.project_id,
+    [mapWorkflowInstanceRow(workflowInstance)],
+  );
+}
+
+export async function upsertWorkflowStageRunByWorkflowInstanceId(workflowInstanceId, stageId, patch = {}) {
+  return withTransaction(async (client) => {
+    const workflowInstance = await getWorkflowInstanceRow(client, workflowInstanceId);
+    if (!workflowInstance) {
+      return null;
+    }
+
+    const existing = await getWorkflowStageRunRow(client, workflowInstanceId, stageId);
+    const stageStateFallback = asObject(asObject(workflowInstance.stage_states)[stageId]);
+    const nextStatus = String(
+      hasOwn(patch, 'status')
+        ? patch.status
+        : (existing?.status ?? stageStateFallback.status ?? 'not_started'),
+    ).trim() || 'not_started';
+    const nextUpdatedAt = hasOwn(patch, 'updatedAt')
+      ? (patch.updatedAt ? toIsoString(patch.updatedAt) : new Date().toISOString())
+      : new Date().toISOString();
+    const nextPayload = {
+      id: existing?.id ?? createWorkflowStageRunId(workflowInstanceId, stageId),
+      projectId: workflowInstance.project_id,
+      workflowInstanceId,
+      stageId,
+      status: nextStatus,
+      formData: hasOwn(patch, 'formData')
+        ? {
+            ...asObject(existing?.form_data ?? stageStateFallback.formData),
+            ...asObject(patch.formData),
+          }
+        : asObject(existing?.form_data ?? stageStateFallback.formData),
+      outputs: hasOwn(patch, 'outputs')
+        ? {
+            ...asObject(existing?.outputs ?? stageStateFallback.outputs),
+            ...asObject(patch.outputs),
+          }
+        : asObject(existing?.outputs ?? stageStateFallback.outputs),
+      artifactIds: hasOwn(patch, 'artifactIds')
+        ? asArray(patch.artifactIds)
+        : asArray(existing?.artifact_ids ?? stageStateFallback.artifactIds),
+      error: hasOwn(patch, 'error')
+        ? (patch.error ?? null)
+        : (existing?.error ?? stageStateFallback.error ?? null),
+      startedAt: hasOwn(patch, 'startedAt')
+        ? (patch.startedAt ? toIsoString(patch.startedAt) : null)
+        : (
+            existing?.started_at
+              ? toIsoString(existing.started_at)
+              : (stageStateFallback.startedAt ? toIsoString(stageStateFallback.startedAt) : null)
+          ),
+      completedAt: hasOwn(patch, 'completedAt')
+        ? (patch.completedAt ? toIsoString(patch.completedAt) : null)
+        : (
+            existing?.completed_at
+              ? toIsoString(existing.completed_at)
+              : (stageStateFallback.completedAt ? toIsoString(stageStateFallback.completedAt) : null)
+          ),
+      createdAt: existing?.created_at
+        ? toIsoString(existing.created_at)
+        : (stageStateFallback.startedAt ? toIsoString(stageStateFallback.startedAt) : nextUpdatedAt),
+      updatedAt: nextUpdatedAt,
+    };
+
+    const result = await client.query(
+      `INSERT INTO workflow_stage_runs (
+        id, project_id, workflow_instance_id, stage_id, status, form_data, outputs, artifact_ids, error,
+        started_at, completed_at, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13
+      )
+      ON CONFLICT (workflow_instance_id, stage_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        form_data = EXCLUDED.form_data,
+        outputs = EXCLUDED.outputs,
+        artifact_ids = EXCLUDED.artifact_ids,
+        error = EXCLUDED.error,
+        started_at = EXCLUDED.started_at,
+        completed_at = EXCLUDED.completed_at,
+        updated_at = EXCLUDED.updated_at
+      RETURNING id, project_id, workflow_instance_id, stage_id, status, form_data, outputs, artifact_ids, error,
+                started_at, completed_at, created_at, updated_at`,
+      [
+        nextPayload.id,
+        nextPayload.projectId,
+        nextPayload.workflowInstanceId,
+        nextPayload.stageId,
+        nextPayload.status,
+        JSON.stringify(asObject(nextPayload.formData)),
+        JSON.stringify(asObject(nextPayload.outputs)),
+        JSON.stringify(asArray(nextPayload.artifactIds)),
+        nextPayload.error,
+        nextPayload.startedAt,
+        nextPayload.completedAt,
+        nextPayload.createdAt,
+        nextPayload.updatedAt,
+      ],
+    );
+
+    const projectId = await syncWorkflowInstanceStageState(client, workflowInstanceId, nextPayload);
+    if (projectId) {
+      await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [projectId]);
+    }
+    return mapWorkflowStageRunRow(result.rows[0]);
+  });
+}
+
+export async function listShotsByWorkflowInstanceId(workflowInstanceId) {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT id, project_id, workflow_instance_id, stage_run_id, shot_number, title, source_node_id, source_page,
+            panel_index, prompt, image_url, metadata, created_at, updated_at
+     FROM shots
+     WHERE workflow_instance_id = $1
+     ORDER BY shot_number ASC, created_at ASC, id ASC`,
+    [workflowInstanceId],
+  );
+
+  return result.rows.map(mapShotRow);
+}
+
+export async function createShotForWorkflowInstance(workflowInstanceId, payload = {}) {
+  return withTransaction(async (client) => {
+    const workflowInstance = await getWorkflowInstanceRow(client, workflowInstanceId);
+    if (!workflowInstance) {
+      return null;
+    }
+
+    const result = await client.query(
+      `INSERT INTO shots (
+        id, project_id, workflow_instance_id, stage_run_id, shot_number, title, source_node_id, source_page,
+        panel_index, prompt, image_url, metadata, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14
+      )
+      RETURNING id, project_id, workflow_instance_id, stage_run_id, shot_number, title, source_node_id, source_page,
+                panel_index, prompt, image_url, metadata, created_at, updated_at`,
+      [
+        payload.id ?? createShotId(),
+        workflowInstance.project_id,
+        workflowInstanceId,
+        payload.stageRunId ?? null,
+        Number(payload.shotNumber ?? 0),
+        String(payload.title ?? ''),
+        payload.sourceNodeId ?? null,
+        payload.sourcePage == null ? null : Number(payload.sourcePage),
+        payload.panelIndex == null ? null : Number(payload.panelIndex),
+        String(payload.prompt ?? ''),
+        payload.imageUrl ?? null,
+        JSON.stringify(asObject(payload.metadata)),
+        payload.createdAt ? toIsoString(payload.createdAt) : new Date().toISOString(),
+        payload.updatedAt ? toIsoString(payload.updatedAt) : new Date().toISOString(),
+      ],
+    );
+
+    await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [workflowInstance.project_id]);
+    return mapShotRow(result.rows[0]);
+  });
+}
+
+export async function updateShotById(id, patch = {}) {
+  return withTransaction(async (client) => {
+    const existing = await getShotRow(client, id);
+    if (!existing) {
+      return null;
+    }
+
+    const result = await client.query(
+      `UPDATE shots
+       SET stage_run_id = $2,
+           shot_number = $3,
+           title = $4,
+           source_node_id = $5,
+           source_page = $6,
+           panel_index = $7,
+           prompt = $8,
+           image_url = $9,
+           metadata = $10::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, project_id, workflow_instance_id, stage_run_id, shot_number, title, source_node_id, source_page,
+                 panel_index, prompt, image_url, metadata, created_at, updated_at`,
+      [
+        id,
+        hasOwn(patch, 'stageRunId') ? (patch.stageRunId ?? null) : existing.stage_run_id,
+        Number(hasOwn(patch, 'shotNumber') ? patch.shotNumber : existing.shot_number),
+        hasOwn(patch, 'title') ? String(patch.title ?? '') : existing.title,
+        hasOwn(patch, 'sourceNodeId') ? (patch.sourceNodeId ?? null) : existing.source_node_id,
+        hasOwn(patch, 'sourcePage')
+          ? (patch.sourcePage == null ? null : Number(patch.sourcePage))
+          : existing.source_page,
+        hasOwn(patch, 'panelIndex')
+          ? (patch.panelIndex == null ? null : Number(patch.panelIndex))
+          : existing.panel_index,
+        hasOwn(patch, 'prompt') ? String(patch.prompt ?? '') : existing.prompt,
+        hasOwn(patch, 'imageUrl') ? (patch.imageUrl ?? null) : existing.image_url,
+        JSON.stringify(
+          hasOwn(patch, 'metadata')
+            ? {
+                ...asObject(existing.metadata),
+                ...asObject(patch.metadata),
+              }
+            : asObject(existing.metadata),
+        ),
+      ],
+    );
+
+    await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [existing.project_id]);
+    return mapShotRow(result.rows[0]);
+  });
+}
+
+export async function deleteShotById(id) {
+  return withTransaction(async (client) => {
+    const existing = await getShotRow(client, id);
+    if (!existing) {
+      return false;
+    }
+
+    await client.query('DELETE FROM shots WHERE id = $1', [id]);
+    await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [existing.project_id]);
+    return true;
+  });
+}
+
+export async function listShotOutputsByShotId(shotId) {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT id, project_id, workflow_instance_id, shot_id, generation_job_id, provider, output_type, label, url,
+            thumbnail_url, metadata, is_selected, selected_at, created_at, updated_at
+     FROM shot_outputs
+     WHERE shot_id = $1
+     ORDER BY is_selected DESC, created_at DESC, id ASC`,
+    [shotId],
+  );
+
+  return result.rows.map(mapShotOutputRow);
+}
+
+export async function createShotOutputForShot(shotId, payload = {}) {
+  return withTransaction(async (client) => {
+    const shot = await getShotRow(client, shotId);
+    if (!shot) {
+      return null;
+    }
+
+    const shouldSelect = Boolean(payload.isSelected);
+    if (shouldSelect) {
+      await client.query(
+        `UPDATE shot_outputs
+         SET is_selected = FALSE,
+             selected_at = NULL,
+             updated_at = NOW()
+         WHERE shot_id = $1`,
+        [shotId],
+      );
+    }
+
+    const selectedAt = shouldSelect
+      ? (payload.selectedAt ? toIsoString(payload.selectedAt) : new Date().toISOString())
+      : null;
+    const result = await client.query(
+      `INSERT INTO shot_outputs (
+        id, project_id, workflow_instance_id, shot_id, generation_job_id, provider, output_type, label, url,
+        thumbnail_url, metadata, is_selected, selected_at, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15
+      )
+      RETURNING id, project_id, workflow_instance_id, shot_id, generation_job_id, provider, output_type, label, url,
+                thumbnail_url, metadata, is_selected, selected_at, created_at, updated_at`,
+      [
+        payload.id ?? createShotOutputId(),
+        shot.project_id,
+        hasOwn(payload, 'workflowInstanceId') ? (payload.workflowInstanceId ?? null) : shot.workflow_instance_id,
+        shotId,
+        payload.generationJobId ?? null,
+        payload.provider ?? null,
+        String(payload.outputType ?? 'image'),
+        payload.label ?? null,
+        String(payload.url ?? ''),
+        payload.thumbnailUrl ?? null,
+        JSON.stringify(asObject(payload.metadata)),
+        shouldSelect,
+        selectedAt,
+        payload.createdAt ? toIsoString(payload.createdAt) : new Date().toISOString(),
+        payload.updatedAt ? toIsoString(payload.updatedAt) : new Date().toISOString(),
+      ],
+    );
+
+    await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [shot.project_id]);
+    return mapShotOutputRow(result.rows[0]);
+  });
+}
+
+export async function selectShotOutputById(id) {
+  return withTransaction(async (client) => {
+    const existing = await getShotOutputRow(client, id);
+    if (!existing) {
+      return null;
+    }
+
+    const selectedAt = new Date().toISOString();
+    await client.query(
+      `UPDATE shot_outputs
+       SET is_selected = FALSE,
+           selected_at = NULL,
+           updated_at = NOW()
+       WHERE shot_id = $1`,
+      [existing.shot_id],
+    );
+
+    const result = await client.query(
+      `UPDATE shot_outputs
+       SET is_selected = TRUE,
+           selected_at = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, project_id, workflow_instance_id, shot_id, generation_job_id, provider, output_type, label, url,
+                 thumbnail_url, metadata, is_selected, selected_at, created_at, updated_at`,
+      [id, selectedAt],
+    );
+
+    await client.query('UPDATE projects SET updated_at = NOW() WHERE id = $1', [existing.project_id]);
+    return mapShotOutputRow(result.rows[0]);
+  });
+}
+
+export async function getEpisodeWorkspaceByWorkflowInstanceId(workflowInstanceId) {
+  const pool = getPool();
+  const workflowInstance = await getWorkflowInstanceRow(pool, workflowInstanceId);
+  if (!workflowInstance) {
+    return null;
+  }
+
+  const [stageRuns, shots, shotOutputs, assetBindings] = await Promise.all([
+    listWorkflowStageRunsByWorkflowInstanceId(workflowInstanceId),
+    listShotsByWorkflowInstanceId(workflowInstanceId),
+    pool.query(
+      `SELECT id, project_id, workflow_instance_id, shot_id, generation_job_id, provider, output_type, label, url,
+              thumbnail_url, metadata, is_selected, selected_at, created_at, updated_at
+       FROM shot_outputs
+       WHERE workflow_instance_id = $1
+          OR shot_id IN (
+            SELECT id
+            FROM shots
+            WHERE workflow_instance_id = $1
+          )
+       ORDER BY shot_id ASC, is_selected DESC, created_at DESC, id ASC`,
+      [workflowInstanceId],
+    ).then((result) => result.rows.map(mapShotOutputRow)),
+    listEpisodeAssetBindingsByWorkflowInstanceId(workflowInstanceId),
+  ]);
+
+  return {
+    workflowInstanceId,
+    projectId: workflowInstance.project_id,
+    assetBindings,
+    stageRuns,
+    shots,
+    shotOutputs,
   };
 }
 

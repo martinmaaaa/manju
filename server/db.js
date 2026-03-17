@@ -160,6 +160,82 @@ CREATE INDEX IF NOT EXISTS idx_continuity_states_project_id
 CREATE INDEX IF NOT EXISTS idx_continuity_states_workflow_instance_id
   ON continuity_states(workflow_instance_id);
 
+CREATE TABLE IF NOT EXISTS workflow_stage_runs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workflow_instance_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  stage_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'not_started',
+  form_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  outputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+  artifact_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  error TEXT,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(workflow_instance_id, stage_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_stage_runs_project_id
+  ON workflow_stage_runs(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_stage_runs_workflow_instance_id
+  ON workflow_stage_runs(workflow_instance_id);
+
+CREATE TABLE IF NOT EXISTS shots (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workflow_instance_id TEXT NOT NULL,
+  stage_run_id TEXT,
+  shot_number INTEGER NOT NULL DEFAULT 0,
+  title TEXT NOT NULL DEFAULT '',
+  source_node_id TEXT,
+  source_page INTEGER,
+  panel_index INTEGER,
+  prompt TEXT NOT NULL DEFAULT '',
+  image_url TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_shots_project_id
+  ON shots(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_shots_workflow_instance_id
+  ON shots(workflow_instance_id, shot_number);
+
+CREATE INDEX IF NOT EXISTS idx_shots_stage_run_id
+  ON shots(stage_run_id);
+
+CREATE TABLE IF NOT EXISTS shot_outputs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workflow_instance_id TEXT,
+  shot_id TEXT NOT NULL REFERENCES shots(id) ON DELETE CASCADE,
+  generation_job_id TEXT REFERENCES generation_jobs(id) ON DELETE SET NULL,
+  provider TEXT,
+  output_type TEXT NOT NULL DEFAULT 'image',
+  label TEXT,
+  url TEXT NOT NULL,
+  thumbnail_url TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  is_selected BOOLEAN NOT NULL DEFAULT FALSE,
+  selected_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_shot_outputs_project_id
+  ON shot_outputs(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_shot_outputs_shot_id
+  ON shot_outputs(shot_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_shot_outputs_generation_job_id
+  ON shot_outputs(generation_job_id);
+
 CREATE TABLE IF NOT EXISTS generation_jobs (
   id TEXT PRIMARY KEY,
   legacy_job_id TEXT,

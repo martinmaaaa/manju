@@ -377,7 +377,7 @@ export interface AppNode {
     // Style Preset Extended
     styleUserInput?: string;
     stylePresetType?: string;
-    storyboardRegeneratePanel?: boolean;
+    storyboardRegeneratePanel?: boolean | number;
 
     // Status/loading
     isLoading?: boolean;

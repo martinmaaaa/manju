@@ -6,7 +6,12 @@ import { apiRequest, isApiAvailable } from './client';
 import type { ApiResponse } from './client';
 import type { AppNode, Connection, Group } from '../../types';
 import type { WorkflowProjectDashboardSummary } from '../workflow/domain/dashboard';
-import type { WorkflowProjectState } from '../workflow/domain/types';
+import type {
+  WorkflowProjectState,
+  WorkflowShot,
+  WorkflowShotOutput,
+  WorkflowStageRun,
+} from '../workflow/domain/types';
 import { buildWorkflowProjectDashboardSummary } from '../workflow/runtime/projectDashboard';
 import {
   getWorkflowProjectEntityCollections,
@@ -120,6 +125,9 @@ export interface WorkflowEpisodeRecord {
 
 export interface WorkflowProjectEntities extends Required<WorkflowProjectEntityCollections> {
   episodes: WorkflowEpisodeRecord[];
+  stageRuns?: WorkflowStageRun[];
+  shots?: WorkflowShot[];
+  shotOutputs?: WorkflowShotOutput[];
 }
 
 function enrichProjectSummary(project: ProjectSummary): ProjectSummary {
@@ -158,6 +166,9 @@ function toWorkflowProjectEntities(projectId: string, workflowState: WorkflowPro
   return {
     ...getWorkflowProjectEntityCollections(workflowState),
     episodes: buildEpisodesFromWorkflowState(projectId, workflowState),
+    stageRuns: [],
+    shots: [],
+    shotOutputs: [],
   };
 }
 

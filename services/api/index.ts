@@ -28,6 +28,25 @@ export { createNode, updateNode, batchUpdateNodes, deleteNode } from './nodeApi'
 export { createConnection, deleteConnection } from './connectionApi';
 
 export {
+  createEpisodeShot,
+  createShotOutput,
+  deleteWorkflowShot,
+  getEpisodeWorkspace,
+  listEpisodeShots,
+  listShotOutputs,
+  listWorkflowStageRuns,
+  selectShotOutput,
+  updateWorkflowShot,
+  updateWorkflowStageRun,
+} from './workspaceApi';
+export type {
+  EpisodeWorkspaceData,
+  WorkflowShotMutation,
+  WorkflowShotOutputMutation,
+  WorkflowStageRunMutation,
+} from './workspaceApi';
+
+export {
   cancelGenerationJob,
   createGenerationJob,
   getGenerationJob,
