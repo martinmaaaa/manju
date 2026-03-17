@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   ArrowLeft,
   ChevronRight,
@@ -22,8 +22,6 @@ import type {
 } from '../../services/workflow/domain/types';
 import {
   getAssetSummaryForState,
-  getEpisodeBindings,
-  getEpisodeContinuityStates,
   getEpisodeInstances,
   getSeriesAssetCoverage,
   getSeriesInstances,
@@ -32,14 +30,11 @@ import {
   getSuggestedSeriesAssetBatchTemplates,
 } from '../../services/workflow/runtime/projectState';
 import { getWorkflowTemplate } from '../../services/workflow/registry';
-import { ContinuityPanel } from './panels/ContinuityPanel';
-import { EpisodeAssetBindingPanel } from './panels/EpisodeAssetBindingPanel';
-import { EpisodeOutputsPanel } from './panels/EpisodeOutputsPanel';
 import { EpisodeStagePanel } from './panels/EpisodeStagePanel';
 import { ProjectWorkspaceNav } from './ProjectWorkspaceNav';
 import { SeriesCompactCard } from './SeriesCompactCard';
 import { WorkflowOverviewCenter } from './WorkflowOverviewCenter';
-import { WorkflowWorkbenchPanel, type WorkflowWorkbenchTabKey } from './WorkflowWorkbenchPanel';
+import { WorkflowWorkbenchPanel } from './WorkflowWorkbenchPanel';
 import { WorkflowCenterSidebar } from './WorkflowCenterSidebar';
 import { SeriesWorkflowCard } from './SeriesWorkflowCard';
 import type { AppView } from '../../stores/ui.store';
@@ -167,7 +162,6 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
   const assetCenterRef = useRef<HTMLDivElement | null>(null);
   const seriesCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingScrollSeriesIdRef = useRef<string | null>(null);
-  const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<WorkflowWorkbenchTabKey>('stages');
   const seriesSnapshots = useMemo(() => seriesInstances.map((seriesInstance) => {
     const episodes = getEpisodeInstances(workflowState, seriesInstance.id);
     const assetCoverage = getSeriesAssetCoverage(workflowState, seriesInstance.id);
@@ -268,20 +262,11 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
   const totalCreatedEpisodeCount = useMemo(() => (
     seriesSnapshots.reduce((sum, snapshot) => sum + snapshot.workflowOverview.createdEpisodeCount, 0)
   ), [seriesSnapshots]);
-  const productionTotals = useMemo(() => (
-    seriesSnapshots.reduce((sum, snapshot) => ({
-      script: sum.script + snapshot.workflowOverview.scriptCompletedEpisodeCount,
-      asset: sum.asset + snapshot.workflowOverview.assetCompletedEpisodeCount,
-      storyboard: sum.storyboard + snapshot.workflowOverview.storyboardCompletedEpisodeCount,
-      prompt: sum.prompt + snapshot.workflowOverview.promptCompletedEpisodeCount,
-      video: sum.video + snapshot.workflowOverview.videoCompletedEpisodeCount,
-    }), {
-      script: 0,
-      asset: 0,
-      storyboard: 0,
-      prompt: 0,
-      video: 0,
-    })
+  const scriptCompletedEpisodeCount = useMemo(() => (
+    seriesSnapshots.reduce(
+      (sum, snapshot) => sum + snapshot.workflowOverview.scriptCompletedEpisodeCount,
+      0,
+    )
   ), [seriesSnapshots]);
   const inactiveSeriesSnapshots = useMemo(() => (
     seriesSnapshots.filter(snapshot => snapshot.instance.id !== activeSeriesSnapshot?.instance.id)
@@ -290,29 +275,13 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
     ? `阶段 ${Object.values(activeEpisode.stageStates).filter(stage => stage.status === 'completed').length}/${Object.keys(activeEpisode.stageStates).length}`
     : undefined;
 
-  useEffect(() => {
-    setActiveWorkbenchTab('stages');
-  }, [activeEpisode?.id]);
-
-  const activeEpisodeBindings = activeEpisode
-    ? getEpisodeBindings(workflowState, activeEpisode.id)
-    : [];
-
   const activeEpisodeStages: WorkflowStageDefinition[] = activeEpisode
     ? getWorkflowTemplate(activeEpisode.templateId).stages
     : [];
 
-  const activeEpisodeContinuity = activeEpisode
-    ? getEpisodeContinuityStates(workflowState, activeEpisode.id)
-    : [];
-  const activeEpisodeOutputStageCount = activeEpisode
-    ? Object.values(activeEpisode.stageStates).filter((stage) => (
-        Object.keys(stage.outputs).length > 0
-        || stage.artifactIds.length > 0
-        || Boolean(stage.error)
-        || Boolean(stage.completedAt)
-      )).length
-    : 0;
+  void onBindAsset;
+  void onUnbindAsset;
+  void onUpdateContinuity;
 
   return (
     <div className="tianti-shell">
@@ -411,9 +380,7 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
                     <Layers3 className="h-8 w-8" />
                   </div>
                   <h2 className="mt-6 text-2xl font-semibold">先创建一个系列工作流</h2>
-                  <p className="mt-3 text-sm leading-7 text-slate-300">
-                    系列工作流会承接人物、场景、道具等可复用资产，再逐步生成单集工作流并投放到画布执行。
-                  </p>
+                  <p className="mt-3 text-sm leading-7 text-slate-300">从系列开始，先把剧本与分集规划走通。</p>
                 </div>
               </section>
             ) : (
@@ -422,9 +389,9 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
                   <WorkflowOverviewCenter
                     projectTitle={projectTitle}
                     totalSeriesCount={seriesSnapshots.length}
-                    totalAssetsCount={workflowState.assets.length}
                     totalPlannedEpisodeCount={totalPlannedEpisodeCount}
                     totalCreatedEpisodeCount={totalCreatedEpisodeCount}
+                    scriptCompletedEpisodeCount={scriptCompletedEpisodeCount}
                     activeSeriesTitle={activeSeriesSnapshot?.instance.title}
                     activeEpisodeTitle={activeEpisode?.title}
                     seriesItems={seriesSnapshots.map((snapshot) => ({
@@ -434,7 +401,6 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
                       isActive: snapshot.instance.id === activeSeriesSnapshot?.instance.id,
                       overview: snapshot.workflowOverview,
                     }))}
-                    productionTotals={productionTotals}
                     onFocusSeries={handleFocusSeries}
                     onRunNextAction={handleRunSeriesNextAction}
                   />
@@ -473,9 +439,6 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="text-xs uppercase tracking-[0.22em] text-white/45">其他系列工作流</div>
-                          <div className="mt-2 text-sm leading-7 text-slate-300">
-                            非焦点系列先收成轻量卡片，避免总览页被多套长流程淹没；需要时再切换展开。
-                          </div>
                         </div>
                         <div className="text-xs text-slate-400">共 {inactiveSeriesSnapshots.length} 套待切换系列</div>
                       </div>
@@ -499,73 +462,23 @@ export const WorkflowCenter: React.FC<WorkflowCenterProps> = ({
                   <WorkflowWorkbenchPanel
                     activeEpisodeTitle={activeEpisode?.title}
                     stageProgressLabel={activeEpisodeStageProgressLabel}
-                    bindingCount={activeEpisodeBindings.length}
-                    continuityCount={activeEpisodeContinuity.length}
-                    outputCount={activeEpisodeOutputStageCount}
                     tabs={[
                       {
                         key: 'stages',
                         label: '阶段',
                         count: activeEpisode ? Object.keys(activeEpisode.stageStates).length : 0,
                       },
-                      {
-                        key: 'bindings',
-                        label: '绑定',
-                        count: activeEpisodeBindings.length,
-                      },
-                      {
-                        key: 'continuity',
-                        label: '连续性',
-                        count: activeEpisodeContinuity.length,
-                      },
-                      {
-                        key: 'outputs',
-                        label: '产出',
-                        count: activeEpisodeOutputStageCount,
-                      },
                     ]}
-                    activeTab={activeWorkbenchTab}
-                    onTabChange={setActiveWorkbenchTab}
+                    activeTab="stages"
                   >
                     {activeEpisode ? (
-                      <div className="space-y-5">
-                        {activeWorkbenchTab === 'stages' && (
-                          <EpisodeStagePanel
-                            episode={activeEpisode}
-                            stageDefinitions={activeEpisodeStages}
-                            compact
-                            onUpdateStage={onUpdateStage}
-                            onMaterializeWorkflow={onMaterializeWorkflow}
-                          />
-                        )}
-                        {activeWorkbenchTab === 'bindings' && (
-                          <EpisodeAssetBindingPanel
-                            episode={activeEpisode}
-                            assets={workflowState.assets}
-                            bindings={activeEpisodeBindings}
-                            compact
-                            onBindAsset={onBindAsset}
-                            onUnbindAsset={onUnbindAsset}
-                          />
-                        )}
-                        {activeWorkbenchTab === 'continuity' && (
-                          <ContinuityPanel
-                            episodeId={activeEpisode.id}
-                            assets={workflowState.assets}
-                            bindings={activeEpisodeBindings}
-                            continuityStates={activeEpisodeContinuity}
-                            compact
-                            onUpdateContinuity={onUpdateContinuity}
-                          />
-                        )}
-                        {activeWorkbenchTab === 'outputs' && (
-                          <EpisodeOutputsPanel
-                            episode={activeEpisode}
-                            stageDefinitions={activeEpisodeStages}
-                            compact
-                          />
-                        )}
-                      </div>
+                      <EpisodeStagePanel
+                        episode={activeEpisode}
+                        stageDefinitions={activeEpisodeStages}
+                        compact
+                        onUpdateStage={onUpdateStage}
+                        onMaterializeWorkflow={onMaterializeWorkflow}
+                      />
                     ) : undefined}
                   </WorkflowWorkbenchPanel>
                 </div>

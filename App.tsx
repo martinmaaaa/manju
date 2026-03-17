@@ -52,6 +52,7 @@ import {
   isApiAvailable,
   type GenerationJob,
   type ProjectDetail,
+  type ProjectSummary,
 } from './services/api';
 import { initSync, setSyncProjectId, getSyncProjectId, createStoreSubscription, syncFullSnapshot, setOnlineStatus, subscribeToSyncStatus } from './services/syncMiddleware';
 import { useNodeActions } from './handlers/useNodeActions';
@@ -425,6 +426,40 @@ export const App = () => {
       collections: getWorkflowProjectEntityCollections(workflowState),
     });
   }, []);
+
+  const handleOpenCreatedProject = useCallback((
+    project: ProjectSummary,
+    workflowState: WorkflowProjectState,
+  ) => {
+    hasHydratedCanvasRef.current = false;
+    clearSaveIndicatorTimers();
+    setSaveIndicatorState('idle');
+    setSaveIndicatorError(null);
+    setSyncProjectId(project.id);
+    setNodes([]);
+    setConnections([]);
+    setGroups([]);
+
+    setActiveProject({
+      ...project,
+      settings: mergeProjectSettings(project.settings),
+      workflow_state: workflowState,
+      nodes: [],
+      connections: [],
+      groups: [],
+    });
+    syncActiveWorkflowCollections(project.id, workflowState);
+    setCurrentView('pipeline');
+    setIsLoaded(true);
+  }, [
+    clearSaveIndicatorTimers,
+    mergeProjectSettings,
+    setConnections,
+    setCurrentView,
+    setGroups,
+    setNodes,
+    syncActiveWorkflowCollections,
+  ]);
 
   const clearSaveIndicatorTimers = useCallback(() => {
     if (saveIndicatorTimerRef.current) {
@@ -2763,6 +2798,7 @@ export const App = () => {
       <div className="w-screen h-screen">
         <ProjectsDashboard
           onSelectProject={handleProjectSelect}
+          onOpenCreatedProject={handleOpenCreatedProject}
           onOpenSettings={() => setIsSettingsOpen(true)}
         />
         <SettingsPanel
@@ -2820,7 +2856,7 @@ export const App = () => {
           currentView={currentView}
           hasActiveEpisode={Boolean(activeWorkflowEpisode)}
           sectionLabel="Asset Library"
-          sectionDescription="资产中心承担漫剧里的长期复用资产沉淀，先统一版本，再把人物、场景、道具和风格分发给后续剧集。"
+          sectionDescription="沉淀可复用资产与版本。"
           onChangeView={setCurrentView}
           onBackToProjects={handleBackToProjects}
           onOpenSettings={() => setIsSettingsOpen(true)}
@@ -2848,7 +2884,7 @@ export const App = () => {
           currentView={currentView}
           hasActiveEpisode={Boolean(activeWorkflowEpisode)}
           sectionLabel="Episodes"
-          sectionDescription="剧集页负责管理整部漫剧的拆集节奏，让系列工作流可以持续向下生产，而不是回到通用画布里手动拼。"
+          sectionDescription="按批次推进剧集。"
           onChangeView={setCurrentView}
           onBackToProjects={handleBackToProjects}
           onOpenSettings={() => setIsSettingsOpen(true)}
@@ -2880,7 +2916,7 @@ export const App = () => {
           currentView={currentView}
           hasActiveEpisode={Boolean(activeWorkflowEpisode)}
           sectionLabel="Task Center"
-          sectionDescription="Track queued, running, completed, and failed generation work across the project, then jump back into the related episode workspace when execution needs intervention."
+          sectionDescription="查看项目任务状态。"
           onChangeView={setCurrentView}
           onBackToProjects={handleBackToProjects}
           onOpenSettings={() => setIsSettingsOpen(true)}
@@ -2909,7 +2945,7 @@ export const App = () => {
           currentView={currentView}
           hasActiveEpisode={Boolean(activeWorkflowEpisode)}
           sectionLabel="Episode Workspace"
-          sectionDescription="单集工作区是执行层：围绕这一集推进剧本、资产绑定、分镜、提示词与视频交付，完成后再进入高级画布。"
+          sectionDescription="围绕当前单集推进执行。"
           onChangeView={setCurrentView}
           onBackToProjects={handleBackToProjects}
           onOpenSettings={() => setIsSettingsOpen(true)}

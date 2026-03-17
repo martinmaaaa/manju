@@ -50,9 +50,11 @@ export const ProjectWorkspaceLayout: React.FC<ProjectWorkspaceLayoutProps> = ({
                 <h1 className="mt-2 text-2xl font-semibold text-white lg:text-3xl">
                   {projectTitle || '未命名项目'}
                 </h1>
-                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
-                  {sectionDescription}
-                </p>
+                {sectionDescription ? (
+                  <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">
+                    {sectionDescription}
+                  </p>
+                ) : null}
               </div>
             </div>
 

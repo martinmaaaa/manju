@@ -100,62 +100,6 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplateDefinition[] = [
     stages: manjuEpisodeStages,
     canvasMaterializationTemplateId: 'short-drama-standard',
   },
-  {
-    id: 'manju-commentary',
-    name: '漫剧解说工作流',
-    scope: 'standalone',
-    summary: '面向解说内容的脚本、拆解、配音和成片流程。',
-    recommendedFor: '适合做剧情复盘、看点讲解和漫剧解说内容。',
-    stages: [
-      {
-        id: 'source-analysis',
-        title: '素材拆解',
-        summary: '提取剧情看点、冲突和解说节奏。',
-        kind: 'form',
-        dependsOn: [],
-      },
-      {
-        id: 'commentary-script',
-        title: '解说文案',
-        summary: '生成分段文案、节奏点和旁白结构。',
-        kind: 'prompt',
-        dependsOn: ['source-analysis'],
-      },
-      {
-        id: 'voice-and-cut',
-        title: '配音成片',
-        summary: '结合旁白与素材输出解说视频。',
-        kind: 'video',
-        dependsOn: ['commentary-script'],
-      },
-    ],
-    canvasMaterializationTemplateId: 'storyboard-direct',
-  },
-  {
-    id: 'character-assets',
-    name: '角色资产工作流',
-    scope: 'standalone',
-    summary: '专门沉淀角色设定、立绘和多版本资产。',
-    recommendedFor: '适合先做角色资产，再回流到其他工作流复用。',
-    stages: [
-      {
-        id: 'profile',
-        title: '角色设定',
-        summary: '沉淀角色基础设定与风格约束。',
-        kind: 'form',
-        dependsOn: [],
-      },
-      {
-        id: 'asset-generation',
-        title: '资产生成',
-        summary: '生成立绘、表情、三视图等角色资产。',
-        kind: 'asset',
-        dependsOn: ['profile'],
-        assetRequirements: ['character', 'style'],
-      },
-    ],
-    canvasMaterializationTemplateId: 'character-first',
-  },
 ];
 
 export function getWorkflowTemplate(templateId: WorkflowTemplateId): WorkflowTemplateDefinition {

@@ -91,9 +91,6 @@ export const EpisodeShotStripPanel: React.FC<EpisodeShotStripPanelProps> = ({
             <Clapperboard className="h-4 w-4 text-cyan-200" />
             Shot Strip
           </div>
-          <div className="mt-2 text-sm leading-7 text-slate-300">
-            Manage the per-shot cards that will feed storyboard execution and output selection.
-          </div>
         </div>
 
         <button
@@ -108,7 +105,7 @@ export const EpisodeShotStripPanel: React.FC<EpisodeShotStripPanelProps> = ({
 
       {shots.length === 0 ? (
         <div className="mt-4 rounded-[20px] border border-dashed border-white/10 bg-black/10 px-4 py-5 text-sm leading-7 text-slate-400">
-          No persisted shots yet. Create the first shot to start building the episode strip.
+          No shots yet.
         </div>
       ) : (
         <div className="mt-4 flex gap-4 overflow-x-auto pb-2">

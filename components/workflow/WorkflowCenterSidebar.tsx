@@ -1,5 +1,5 @@
 import React from 'react';
-import { Clapperboard, Film, Layers3, Users } from 'lucide-react';
+import { Layers3 } from 'lucide-react';
 import type {
   WorkflowAsset,
   WorkflowAssetBatchTemplate,
@@ -11,37 +11,18 @@ import type {
 } from '../../services/workflow/domain/types';
 import { AssetCenterPanel } from './panels/AssetCenterPanel';
 
-const templateIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-  'manju-series': Layers3,
-  'manju-episode': Clapperboard,
-  'manju-commentary': Film,
-  'character-assets': Users,
-};
-
-const workflowBlueprints: Partial<
-  Record<
-    WorkflowTemplateId,
-    {
-      title: string;
-      rails: string[];
-      emphasis: string;
-    }
-  >
+const workflowBlueprints: Record<
+  'manju-series',
+  {
+    title: string;
+    rails: string[];
+    emphasis: string;
+  }
 > = {
   'manju-series': {
-    title: '漫剧整套工作流',
-    rails: ['系列总控', '资产复用', '单集执行'],
-    emphasis: '适合 20-80 集的长线漫剧生产',
-  },
-  'manju-commentary': {
-    title: '漫剧解说工作流',
-    rails: ['素材拆解', '解说文案', '配音成片'],
-    emphasis: '适合剧情复盘、看点提炼与解说视频',
-  },
-  'character-assets': {
-    title: '角色资产工作流',
-    rails: ['角色设定', '版本沉淀'],
-    emphasis: '适合先沉淀角色资产，再回流到系列工作流',
+    title: '漫剧主工作流',
+    rails: ['系列设定', '分集规划', '单集剧本'],
+    emphasis: '当前只保留漫剧主线，先把系列和剧本路径走通。',
   },
 };
 
@@ -102,41 +83,36 @@ export const WorkflowCenterSidebar: React.FC<WorkflowCenterSidebarProps> = ({
   onApplyAssetBatchTemplateTarget,
 }) => (
   <aside className="flex h-full flex-col gap-6 overflow-y-auto pr-2">
-    <section className="tianti-hero-card p-6">
-      <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">产品定位</div>
-      <h2 className="mt-3 text-2xl font-semibold">工作流优先的创作中心</h2>
-      <p className="mt-3 text-sm leading-7 text-slate-300">
-        先选择整套工作流，再推进系列资产、分集制作与连续性管理。原始节点画布仍保留，
-        用于高级调试和执行。
-      </p>
-    </section>
-
     <section className="tianti-surface rounded-[28px] p-6">
-      <div className="text-xs uppercase tracking-[0.22em] text-white/45">固定工作流方案</div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">Primary Workflow</div>
+          <h2 className="mt-2 text-2xl font-semibold text-white">漫剧主线</h2>
+          <p className="mt-3 text-sm leading-7 text-slate-300">先定系列，再写剧本和分集计划。</p>
+        </div>
+        <span className="tianti-chip is-accent">当前仅保留 1 条</span>
+      </div>
+
       <div className="mt-4 space-y-3">
         {templates
-          .filter((template) => template.id !== 'manju-episode')
+          .filter((template) => template.id === 'manju-series')
           .map((template) => {
-            const Icon = templateIcons[template.id] ?? Layers3;
-            const blueprint = workflowBlueprints[template.id];
+            const blueprint = workflowBlueprints.manju-series;
 
             return (
               <button
                 key={template.id}
                 type="button"
                 onClick={() => onCreateWorkflow(template.id)}
-                className="w-full rounded-[22px] border border-white/10 bg-black/20 p-4 text-left transition hover:border-cyan-500/40 hover:bg-white/[0.05]"
+                className="w-full rounded-[22px] border border-cyan-500/20 bg-cyan-500/10 p-4 text-left transition hover:border-cyan-500/40 hover:bg-cyan-500/15"
               >
                 <div className="flex items-center gap-3">
                   <div className="rounded-2xl bg-cyan-500/15 p-3 text-cyan-200">
-                    <Icon className="h-5 w-5" />
+                    <Layers3 className="h-5 w-5" />
                   </div>
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-white">
                       {blueprint?.title ?? template.name}
-                    </div>
-                    <div className="mt-1 text-xs leading-5 text-slate-400">
-                      {template.summary}
                     </div>
                   </div>
                 </div>
@@ -145,7 +121,7 @@ export const WorkflowCenterSidebar: React.FC<WorkflowCenterSidebarProps> = ({
                     {blueprint.rails.map((rail) => (
                       <span
                         key={`${template.id}-${rail}`}
-                        className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[11px] text-cyan-100"
+                        className="rounded-full border border-cyan-500/20 bg-black/20 px-3 py-1 text-[11px] text-cyan-100"
                       >
                         {rail}
                       </span>
@@ -157,9 +133,6 @@ export const WorkflowCenterSidebar: React.FC<WorkflowCenterSidebarProps> = ({
                     {blueprint.emphasis}
                   </div>
                 )}
-                <div className="mt-3 text-[11px] leading-5 text-white/45">
-                  {template.recommendedFor}
-                </div>
               </button>
             );
           })}

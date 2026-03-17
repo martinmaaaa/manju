@@ -66,9 +66,6 @@ export const EpisodeResultPoolPanel: React.FC<EpisodeResultPoolPanelProps> = ({
             <GalleryVerticalEnd className="h-4 w-4 text-cyan-200" />
             Result Pool
           </div>
-          <div className="mt-2 text-sm leading-7 text-slate-300">
-            Review generated outputs per shot and mark the preferred version for downstream execution.
-          </div>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="tianti-chip">Visible outputs {visibleOutputs.length}</span>
@@ -80,7 +77,7 @@ export const EpisodeResultPoolPanel: React.FC<EpisodeResultPoolPanelProps> = ({
 
       {visibleOutputs.length === 0 ? (
         <div className="mt-4 rounded-[20px] border border-dashed border-white/10 bg-black/10 px-4 py-5 text-sm leading-7 text-slate-400">
-          No outputs recorded for {selectedShot ? getShotLabel(selectedShot) : 'this episode'} yet.
+          No outputs for {selectedShot ? getShotLabel(selectedShot) : 'this episode'} yet.
         </div>
       ) : (
         <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -125,8 +122,8 @@ export const EpisodeResultPoolPanel: React.FC<EpisodeResultPoolPanelProps> = ({
                       className="h-44 w-full object-cover"
                     />
                   ) : (
-                    <div className="flex h-44 items-center justify-center text-sm text-slate-400">
-                      Video output preview
+                    <div className="flex h-44 items-center justify-center text-sm text-slate-500">
+                      Video preview
                     </div>
                   )}
                 </div>

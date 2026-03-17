@@ -11,19 +11,15 @@ import {
   getSeriesWorkflowOverview,
 } from '../../services/workflow/runtime/projectState';
 import { getWorkflowTemplate } from '../../services/workflow/registry';
-import { AssetCoverageMatrixPanel } from './AssetCoverageMatrixPanel';
 import { SeriesBatchOperationsPanel } from './SeriesBatchOperationsPanel';
 import { SeriesEpisodesPanel } from './SeriesEpisodesPanel';
 import { SeriesOverviewHero } from './SeriesOverviewHero';
 import { SeriesStageRail } from './SeriesStageRail';
-import { type PreferredBindingMode, toPreferredBindingMode } from './seriesShared';
-
-type SeriesAssetCoverageEntry = ReturnType<typeof getSeriesAssetCoverage>[number];
 
 interface SeriesCardProps {
   instance: WorkflowInstance;
   episodes: WorkflowInstance[];
-  assetCoverage: SeriesAssetCoverageEntry[];
+  assetCoverage: ReturnType<typeof getSeriesAssetCoverage>;
   assetBatchTemplates: WorkflowAssetBatchTemplate[];
   suggestedAssetBatchTemplates: WorkflowAssetBatchTemplateSuggestion[];
   workflowOverview: NonNullable<ReturnType<typeof getSeriesWorkflowOverview>>;
@@ -89,16 +85,23 @@ export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
   onDeleteSeriesAssetBatchTemplate,
   onFocusAssetCenter,
 }) => {
+  void assetCoverage;
+  void assetBatchTemplates;
+  void suggestedAssetBatchTemplates;
+  void onSyncAssetCoverage;
+  void onBatchSyncAssetCoverage;
+  void onSaveSeriesAssetBatchTemplate;
+  void onSaveSeriesAssetBatchTemplates;
+  void onDeleteSeriesAssetBatchTemplate;
+
   const completedStages = countCompletedStages(instance);
   const plannedEpisodeCount = instance.metadata?.plannedEpisodeCount ?? 0;
   const remainingEpisodeCount = plannedEpisodeCount > 0
     ? Math.max(plannedEpisodeCount - episodes.length, 0)
     : 0;
   const hasBatchCapacity = plannedEpisodeCount > 0 ? remainingEpisodeCount > 0 : true;
-  const preferredBindingMode = toPreferredBindingMode(instance.metadata?.preferredBindingMode);
   const [batchEpisodeInput, setBatchEpisodeInput] = useState(() => String(remainingEpisodeCount > 0 ? Math.min(remainingEpisodeCount, 10) : 5));
   const [plannedEpisodeInput, setPlannedEpisodeInput] = useState(() => String(plannedEpisodeCount || Math.max(episodes.length, 80)));
-  const [preferredBindingModeInput, setPreferredBindingModeInput] = useState<PreferredBindingMode>(preferredBindingMode);
   const stageTitleMap = useMemo(() => getWorkflowTemplate(instance.templateId).stages.reduce<Record<string, string>>((accumulator, stage) => {
     accumulator[stage.id] = stage.title;
     return accumulator;
@@ -107,8 +110,7 @@ export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
   useEffect(() => {
     setBatchEpisodeInput(String(remainingEpisodeCount > 0 ? Math.min(remainingEpisodeCount, 10) : 5));
     setPlannedEpisodeInput(String(plannedEpisodeCount || Math.max(episodes.length, 80)));
-    setPreferredBindingModeInput(preferredBindingMode);
-  }, [episodes.length, plannedEpisodeCount, preferredBindingMode, remainingEpisodeCount]);
+  }, [episodes.length, plannedEpisodeCount, remainingEpisodeCount]);
 
   const handleBulkCreate = () => {
     const parsedCount = Number.parseInt(batchEpisodeInput, 10);
@@ -128,7 +130,6 @@ export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
 
     onUpdateSeriesSettings(instance.id, {
       plannedEpisodeCount: Math.max(parsedPlannedCount, episodes.length),
-      preferredBindingMode: preferredBindingModeInput,
     });
   };
 
@@ -198,29 +199,11 @@ export const SeriesWorkflowCard: React.FC<SeriesCardProps> = ({
         hasBatchCapacity={hasBatchCapacity}
         plannedEpisodeInput={plannedEpisodeInput}
         batchEpisodeInput={batchEpisodeInput}
-        savedBindingMode={preferredBindingMode}
-        preferredBindingModeInput={preferredBindingModeInput}
         onPlannedEpisodeInputChange={setPlannedEpisodeInput}
         onBatchEpisodeInputChange={setBatchEpisodeInput}
-        onPreferredBindingModeInputChange={setPreferredBindingModeInput}
         onSaveSeriesSettings={handleSaveSeriesSettings}
         onBulkCreate={handleBulkCreate}
         onFillRemaining={() => onBulkAddEpisodes(instance.id, remainingEpisodeCount)}
-      />
-
-      <AssetCoverageMatrixPanel
-        assetCoverage={assetCoverage}
-        assetBatchTemplates={assetBatchTemplates}
-        suggestedAssetBatchTemplates={suggestedAssetBatchTemplates}
-        episodes={episodes}
-        plannedEpisodeCount={plannedEpisodeCount}
-        defaultBindingMode={preferredBindingMode}
-        onSyncAssetCoverage={onSyncAssetCoverage}
-        onBatchSyncAssetCoverage={onBatchSyncAssetCoverage}
-        onSaveAssetBatchTemplate={onSaveSeriesAssetBatchTemplate}
-        onSaveAssetBatchTemplates={onSaveSeriesAssetBatchTemplates}
-        onDeleteAssetBatchTemplate={onDeleteSeriesAssetBatchTemplate}
-        onSelectEpisode={onSelectEpisode}
       />
 
       <SeriesStageRail

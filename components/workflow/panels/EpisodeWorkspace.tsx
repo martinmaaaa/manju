@@ -97,9 +97,6 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
             Episode Workspace
           </div>
           <h2 className={`mt-3 font-semibold text-white ${compact ? 'text-2xl' : 'text-3xl'}`}>{episode.title}</h2>
-          <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
-            先推进本集阶段、资产绑定和连续性，再按需把整套执行链路投放到原始画布。
-          </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <span className="tianti-chip is-accent">
               阶段完成 {completedStageCount}/{stageEntries.length}

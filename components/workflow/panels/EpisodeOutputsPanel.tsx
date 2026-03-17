@@ -190,16 +190,13 @@ export const EpisodeOutputsPanel: React.FC<EpisodeOutputsPanelProps> = ({
       {showHeader && (
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-cyan-300/80">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-cyan-300/80">
               <FileOutput className="h-4 w-4" />
               Episode Outputs
             </div>
             <h3 className={`mt-3 font-semibold text-white ${compact ? 'text-xl' : 'text-2xl'}`}>
               产出收口
             </h3>
-            <div className="mt-3 text-sm leading-7 text-slate-300">
-              把剧本、资产、分镜、提示词和视频阶段沉淀下来的结构化结果统一收在这里，后续对接即梦或其他执行端时，优先从这里取数。
-            </div>
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
             <span className="tianti-chip">Shots {shots.length}</span>
@@ -213,7 +210,7 @@ export const EpisodeOutputsPanel: React.FC<EpisodeOutputsPanelProps> = ({
       <div className={`${showHeader ? 'mt-5' : ''} space-y-4`}>
         {stageCards.length === 0 ? (
           <div className="rounded-[22px] border border-dashed border-white/10 bg-white/[0.02] px-5 py-6 text-sm leading-7 text-slate-400">
-            当前还没有沉淀下来的结构化产出。等阶段完成后，可以在阶段状态里回写链接、文件 ID、封面地址、平台任务号或发布结果，这里会自动汇总。
+            暂无阶段产出。
           </div>
         ) : (
           stageCards.map(({ definition, state, outputEntries, completedAtLabel, startedAtLabel }) => (
@@ -224,7 +221,7 @@ export const EpisodeOutputsPanel: React.FC<EpisodeOutputsPanelProps> = ({
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <div className="text-lg font-semibold text-white">{definition.title}</div>
-                  <div className="mt-1 text-sm leading-6 text-slate-400">
+                  <div className="mt-1 text-sm leading-6 text-slate-500">
                     {definition.summary}
                   </div>
                 </div>
@@ -279,7 +276,7 @@ export const EpisodeOutputsPanel: React.FC<EpisodeOutputsPanelProps> = ({
                 </div>
               ) : (
                 <div className="mt-4 rounded-[18px] border border-dashed border-white/8 bg-black/10 px-4 py-3 text-sm leading-7 text-slate-400">
-                  这个阶段已推进，但还没有记录结构化产出字段。
+                  这个阶段还没有记录产出字段。
                 </div>
               )}
 

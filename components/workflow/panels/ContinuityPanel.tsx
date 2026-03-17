@@ -94,14 +94,10 @@ export const ContinuityPanel: React.FC<ContinuityPanelProps> = ({
         <span className="tianti-chip">跟踪条目 {trackableBindings.length}</span>
       </div>
 
-      <div className="mt-3 text-sm leading-7 text-slate-300">
-        把每一集和共享资产之间的状态变化记录在这里，后续版本生成和提示词拼装都能直接复用。
-      </div>
-
       <div className="mt-5 space-y-4">
         {trackableBindings.length === 0 ? (
           <div className="rounded-[20px] border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-sm text-slate-500">
-            先在单集工作区绑定人物、场景或道具，这里才会出现连续性记录项。
+            先绑定资产。
           </div>
         ) : (
           trackableBindings.map(({ asset, subjectType, continuity }) => (

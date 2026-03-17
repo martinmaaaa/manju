@@ -190,10 +190,7 @@ export const AssetCenterPanel: React.FC<AssetCenterPanelProps> = ({
         <div>
           <div className="text-xs uppercase tracking-[0.22em] text-white/45">Asset Center</div>
           <h3 className="mt-2 text-xl font-semibold text-white">资产中心</h3>
-          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">
-            在这里沉淀系列级可复用资产。单集工作流只负责绑定与调用，不再重复复制人物、
-            场景和道具。
-          </p>
+          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">沉淀可复用资产，按模板回流单集。</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <span className="tianti-chip is-accent">
@@ -214,9 +211,6 @@ export const AssetCenterPanel: React.FC<AssetCenterPanelProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-white">创建新资产</div>
-              <div className="mt-1 text-xs leading-6 text-slate-400">
-                先沉淀稳定资产，再通过模板批量复用到长剧的多个单集。
-              </div>
             </div>
             <button
               type="submit"
@@ -281,14 +275,9 @@ export const AssetCenterPanel: React.FC<AssetCenterPanelProps> = ({
             </button>
             {!canAutoAttachSuggestedTemplates && (
               <span className="text-xs text-slate-500">
-                先创建系列工作流，再启用自动加入模板。
+                先创建系列，再启用模板联动。
               </span>
             )}
-          </div>
-
-          <div className="mt-4 rounded-[22px] border border-white/8 bg-black/20 px-4 py-4 text-sm leading-7 text-slate-300">
-            推荐做法：先把人物、常驻场景、核心道具沉淀成模板，再让新单集自动继承，避免 80
-            集长线项目里重复绑定。
           </div>
         </form>
 
@@ -307,8 +296,8 @@ export const AssetCenterPanel: React.FC<AssetCenterPanelProps> = ({
                 </div>
                 <div className="mt-3 text-sm text-slate-400">
                   {group.items.length === 0
-                    ? `当前还没有${group.label}资产。`
-                    : `已沉淀 ${group.items.length} 个${group.label}资产，可继续滚动出版本。`}
+                    ? `暂无${group.label}资产。`
+                    : `${group.items.length} 个${group.label}资产`}
                 </div>
               </div>
             );
@@ -332,11 +321,11 @@ export const AssetCenterPanel: React.FC<AssetCenterPanelProps> = ({
                 </div>
               ) : creationFeedback.suggestedTargets.length > 0 ? (
                 <div className="mt-1 text-xs text-cyan-100/90">
-                  检测到可复用模板，建议顺手归入系列模板，后续新单集会更省事。
+                  检测到可复用模板。
                 </div>
               ) : (
                 <div className="mt-1 text-xs text-cyan-100/90">
-                  当前没有命中模板推荐，你也可以稍后在下方资产卡片中手动归组。
+                  当前没有模板推荐。
                 </div>
               )}
             </div>
@@ -436,9 +425,7 @@ export const AssetCenterPanel: React.FC<AssetCenterPanelProps> = ({
                           <div className="mt-4 space-y-3">
                             {joinedTemplates.length > 0 && (
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[11px] text-slate-500">
-                                  {seriesTitle ? `${seriesTitle} 模板` : '已加入模板'}
-                                </span>
+                                <span className="text-[11px] text-slate-500">{seriesTitle ? `${seriesTitle} 模板` : '已加入模板'}</span>
                                 {joinedTemplates.map((template) => (
                                   <span
                                     key={`${asset.id}-${template.id}`}
@@ -454,7 +441,7 @@ export const AssetCenterPanel: React.FC<AssetCenterPanelProps> = ({
 
                             {suggestedTargets.length > 0 && (
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[11px] text-slate-500">推荐操作</span>
+                                <span className="text-[11px] text-slate-500">推荐</span>
                                 {suggestedTargets.map((target) => (
                                   <button
                                     key={`${asset.id}-${target.key}`}

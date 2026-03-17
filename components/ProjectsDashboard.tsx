@@ -14,6 +14,11 @@ import {
 } from 'lucide-react';
 import { createProject, deleteProject, getProjects } from '../services/api';
 import type { ProjectSummary } from '../services/api';
+import type { WorkflowProjectState } from '../services/workflow/domain/types';
+import {
+  createWorkflowInstance,
+  withWorkflowProjectState,
+} from '../services/workflow/runtime/projectState';
 import type {
   WorkflowDashboardPhase,
   WorkflowProjectDashboardSummary,
@@ -22,13 +27,16 @@ import { buildWorkflowProjectDashboardSummary } from '../services/workflow/runti
 import {
   BRAND_LOGO_ALT,
   BRAND_TAGLINE,
-  BRAND_WELCOME_SUBTITLE,
   BRAND_WORKSPACE_NAME,
 } from '../src/branding';
 import { DEFAULT_PROJECT_SETTINGS } from '../services/workflowTemplates';
 
 interface ProjectsDashboardProps {
   onSelectProject: (projectId: string) => void;
+  onOpenCreatedProject?: (
+    project: ProjectSummary,
+    workflowState: WorkflowProjectState,
+  ) => void | Promise<void>;
   onOpenSettings?: () => void;
 }
 
@@ -42,6 +50,26 @@ type ProjectCardState = {
   project: ProjectSummary;
   dashboard: WorkflowProjectDashboardSummary;
 };
+
+const PRIMARY_WORKFLOW_TITLE = '漫剧工作流';
+
+function buildInitialWorkflowState(projectTitle: string): WorkflowProjectState {
+  const seriesWorkflow = createWorkflowInstance(
+    'manju-series',
+    `${projectTitle} · ${PRIMARY_WORKFLOW_TITLE}`,
+  );
+
+  return {
+    version: 1,
+    instances: [seriesWorkflow],
+    activeSeriesId: seriesWorkflow.id,
+    activeEpisodeId: null,
+    assets: [],
+    assetVersions: [],
+    assetBindings: [],
+    continuityStates: [],
+  };
+}
 
 const PROJECT_PHASE_META: Record<
   WorkflowDashboardPhase,
@@ -99,6 +127,7 @@ function formatDate(dateString?: string): string {
 
 export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
   onSelectProject,
+  onOpenCreatedProject,
   onOpenSettings,
 }) => {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -211,13 +240,20 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
 
     try {
       setIsSubmitting(true);
-      const response = await createProject(trimmedProjectName, DEFAULT_PROJECT_SETTINGS);
+      const initialWorkflowState = buildInitialWorkflowState(trimmedProjectName);
+      const nextSettings = withWorkflowProjectState(DEFAULT_PROJECT_SETTINGS, initialWorkflowState);
+      const response = await createProject(trimmedProjectName, nextSettings, initialWorkflowState);
 
       if (response.success && response.data) {
         setProjects((currentProjects) => [response.data, ...currentProjects]);
         setNewProjectName('');
         setIsCreating(false);
         showToast('success', `项目“${response.data.title || trimmedProjectName}”已创建。`);
+        if (onOpenCreatedProject) {
+          await Promise.resolve(onOpenCreatedProject(response.data, initialWorkflowState));
+        } else {
+          await Promise.resolve(onSelectProject(response.data.id));
+        }
         return;
       }
 
@@ -344,14 +380,10 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
             <div className="tianti-hero-card rounded-[32px] p-8">
               <div className="tianti-chip is-accent">
                 <Sparkles size={14} />
-                创作工作流入口
+                工作流入口
               </div>
-              <h2 className="mt-5 text-3xl font-semibold leading-tight text-white">
-                从项目开始，逐步进入 v2 的工作流创作体系。
-              </h2>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-300">
-                {BRAND_WELCOME_SUBTITLE}
-              </p>
+              <h2 className="mt-5 text-3xl font-semibold leading-tight text-white">从项目直接进入漫剧主工作流。</h2>
+              <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">创建后自动带出系列工作流，先做系列设定、剧本和分集规划。</p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   type="button"
@@ -377,7 +409,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
               <div className="tianti-stat-card px-5 py-5">
                 <div className="text-xs uppercase tracking-[0.18em] text-white/45">项目总数</div>
                 <div className="mt-3 text-3xl font-semibold text-white">{projects.length}</div>
-                <div className="mt-2 text-sm text-slate-400">工作流、资产和画布都从这里进入。</div>
+                <div className="mt-2 text-sm text-slate-400">工作区入口</div>
               </div>
               <div className="tianti-stat-card px-5 py-5">
                 <div className="text-xs uppercase tracking-[0.18em] text-white/45">最近更新</div>
@@ -385,7 +417,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                   {latestProject?.project.title || '暂无项目'}
                 </div>
                 <div className="mt-2 text-sm text-slate-400">
-                  {latestProject ? formatDate(latestProject.project.updated_at) : '创建项目后会显示在这里。'}
+                  {latestProject ? formatDate(latestProject.project.updated_at) : '暂无'}
                 </div>
               </div>
               <div className="tianti-stat-card px-5 py-5">
@@ -394,7 +426,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                   {workflowTotals.workflowCount} 流程 / {workflowTotals.seriesCount} 系列
                 </div>
                 <div className="mt-2 text-sm text-slate-400">
-                  {workflowTotals.episodeCount} 单集，{workflowTotals.videoCompletedEpisodeCount} 个视频已完成，{workflowTotals.assetCount} 项资产已沉淀。
+                  {workflowTotals.episodeCount} 单集 · {workflowTotals.assetCount} 资产 · {workflowTotals.videoCompletedEpisodeCount} 视频
                 </div>
               </div>
             </div>
@@ -418,7 +450,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 </div>
                 <h4 className="mt-6 text-2xl font-semibold text-white">还没有项目</h4>
                 <p className="mt-3 max-w-md text-sm leading-7 text-slate-400">
-                  先创建一个项目，再从工作流中心进入脚本、资产、分镜和画布执行的完整路径。
+                  先创建一个漫剧项目，再从系列设定进入分集规划和单集剧本。
                 </p>
                 <button
                   type="button"
@@ -484,9 +516,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                               {project.title || '未命名项目'}
                             </h4>
                             <p className="mt-2 text-sm leading-6 text-slate-400">
-                              {dashboard.activeWorkflowTitle
-                                ? `当前焦点：${dashboard.activeWorkflowTitle}`
-                                : '进入后默认先到工作流中心，再按需切换到高级画布。'}
+                              {dashboard.activeWorkflowTitle || phaseMeta.label}
                             </p>
                           </div>
                           <div className="mt-0.5 text-cyan-200 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
@@ -517,8 +547,6 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                             <div className="mt-2 text-base font-semibold text-white">{dashboard.totals.assetCount}</div>
                           </div>
                         </div>
-
-                        <p className="mt-4 text-sm leading-6 text-slate-400">{phaseMeta.description}</p>
 
                         <div className="mt-5 flex items-center justify-between gap-3">
                           <div className="inline-flex items-center gap-2 text-xs text-slate-400">
@@ -553,9 +581,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
               <div>
                 <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">Create Project</div>
                 <h2 className="mt-2 text-2xl font-semibold text-white">创建新项目</h2>
-                <p className="mt-3 text-sm leading-7 text-slate-400">
-                  命名后即可进入工作流中心，开始配置脚本、资产和画布执行链路。
-                </p>
+                <p className="mt-3 text-sm leading-7 text-slate-400">创建后直接进入漫剧工作流中心。</p>
               </div>
               <button
                 type="button"
@@ -576,7 +602,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 <input
                   type="text"
                   autoFocus
-                  placeholder="例如：漫剧主线 001 / 角色资产测试"
+                  placeholder="例如：校园漫剧主线 / 古风系列 A"
                   value={newProjectName}
                   onChange={(event) => setNewProjectName(event.target.value)}
                   disabled={isSubmitting}
@@ -584,8 +610,19 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                 />
               </div>
 
-              <div className="tianti-surface-muted rounded-[24px] px-4 py-4 text-sm leading-7 text-slate-300">
-                新项目会自动挂载默认工作流模板，后续可在工作流中心继续补充资产策略和单集结构。
+              <div>
+                <div className="mb-2 text-sm text-slate-300">工作流</div>
+                <div className="rounded-[24px] border border-cyan-500/20 bg-cyan-500/10 p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-base font-semibold text-white">{PRIMARY_WORKFLOW_TITLE}</div>
+                      <div className="mt-2 text-sm leading-7 text-slate-300">
+                        当前只保留漫剧主线，创建后会直接带出系列工作流，进入系列设定、剧本和分集规划。
+                      </div>
+                    </div>
+                    <span className="tianti-chip is-accent">当前可用</span>
+                  </div>
+                </div>
               </div>
 
               <div className="flex justify-end gap-3">
@@ -606,7 +643,7 @@ export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
                   className="tianti-button tianti-button-primary px-5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {isSubmitting && <Loader2 size={16} className="animate-spin" />}
-                  {isSubmitting ? '创建中...' : '立即创建'}
+                  {isSubmitting ? '创建中...' : '创建漫剧项目'}
                 </button>
               </div>
             </form>

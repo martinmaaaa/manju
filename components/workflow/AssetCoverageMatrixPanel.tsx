@@ -249,9 +249,7 @@ export const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> =
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="text-xs uppercase tracking-[0.22em] text-white/45">资产覆盖矩阵</div>
-          <div className="mt-2 text-sm leading-7 text-slate-300">
-            用于查看系列资产在各集的绑定覆盖情况，快速发现哪些人物、场景、道具还没铺到对应集数。
-          </div>
+          <div className="mt-2 text-sm leading-7 text-slate-300">查看资产在各集的绑定覆盖。</div>
         </div>
         <div className="text-xs text-slate-400">
           已创建 {episodes.length} 集 / 规划 {plannedEpisodeCount || episodes.length} 集
@@ -303,7 +301,7 @@ export const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> =
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-medium text-white">筛选结果批量调度</div>
-            <div className="mt-1 text-xs text-slate-400">把当前筛选资产或已保存批次模板，一次性铺到指定集数范围。</div>
+            <div className="mt-1 text-xs text-slate-400">按筛选或模板批量下发。</div>
           </div>
           <div className="text-xs text-slate-500">{batchTargetLabel} · {bulkRangeLabel} · 仅处理已创建集</div>
         </div>
@@ -371,7 +369,7 @@ export const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> =
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-cyan-200/80">推荐模板</div>
-                <div className="mt-1 text-xs text-slate-400">根据标签和当前覆盖率，自动识别主角组、常驻场景、高频道具等批次。</div>
+                <div className="mt-1 text-xs text-slate-400">按标签和覆盖率生成建议。</div>
               </div>
               <button
                 type="button"
@@ -399,19 +397,19 @@ export const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> =
                     </div>
                   </div>
                   <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onSaveAssetBatchTemplate(template.name, template.assetIds, undefined, template.autoApplyToNewEpisodes)}
-                      className="tianti-button tianti-button-secondary px-3 py-1.5 text-[11px]"
-                    >
-                      保存推荐
+                  <button
+                    type="button"
+                    onClick={() => onSaveAssetBatchTemplate(template.name, template.assetIds, undefined, template.autoApplyToNewEpisodes)}
+                    className="tianti-button tianti-button-secondary px-3 py-1.5 text-[11px]"
+                  >
+                      保存
                     </button>
                     <button
                       type="button"
                       onClick={() => setSelectedBatchTemplateId('visible')}
                       className="tianti-button tianti-button-ghost px-3 py-1.5 text-[11px]"
                     >
-                      对比当前筛选
+                      对比筛选
                     </button>
                   </div>
                 </div>
@@ -620,7 +618,7 @@ export const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> =
                   >
                     解绑全部
                   </button>
-                  <div className="text-xs text-slate-400">点击单格可逐集切换绑定</div>
+                  <div className="text-xs text-slate-500">单击格子切换绑定</div>
                 </div>
 
                 <div className="tianti-surface-muted mt-3 flex flex-wrap items-center gap-3 rounded-2xl px-3 py-3">
@@ -681,7 +679,7 @@ export const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> =
                   >
                     仅保留该区间
                   </button>
-                  <div className="text-xs text-slate-500">{rangeLabel} · 只处理已创建集 · 当前已绑定 {rangeBoundCount} 集</div>
+                  <div className="text-xs text-slate-500">{rangeLabel} · 已绑定 {rangeBoundCount} 集</div>
                 </div>
 
                 {slotCount > 0 && (
@@ -721,7 +719,7 @@ export const AssetCoverageMatrixPanel: React.FC<AssetCoverageMatrixPanelProps> =
 
                 <div className="mt-4 flex flex-wrap gap-2">
                   {entry.episodes.length === 0 ? (
-                    <span className="text-xs text-slate-500">尚未绑定到任何单集</span>
+                    <span className="text-xs text-slate-500">暂无单集绑定</span>
                   ) : (
                     entry.episodes.map((item) => (
                       <button

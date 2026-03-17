@@ -66,11 +66,7 @@ export const EpisodeAssetBindingPanel: React.FC<EpisodeAssetBindingPanelProps> =
         </div>
       )}
 
-      <div className={`${showHeader ? 'mt-3' : ''} rounded-[20px] border border-white/8 bg-black/20 px-4 py-4 text-sm leading-7 text-slate-300`}>
-        当前单集已绑定 {bindings.length} 个资产。每个资产都可以单独切换成“跟随最新”或“固定版本”。
-      </div>
-
-      <div className="mt-5 flex flex-wrap gap-2">
+      <div className={`${showHeader ? 'mt-4' : ''} flex flex-wrap gap-2`}>
         {bindings.length === 0 ? (
           <span className="text-sm text-slate-500">还没有绑定资产。</span>
         ) : (
@@ -92,7 +88,7 @@ export const EpisodeAssetBindingPanel: React.FC<EpisodeAssetBindingPanelProps> =
         )}
       </div>
 
-      <div className="mt-6 space-y-3">
+      <div className="mt-5 space-y-3">
         {assets.map((asset) => {
           const binding = bindingByAssetId[asset.id];
           const selectedMode = binding
@@ -169,7 +165,7 @@ export const EpisodeAssetBindingPanel: React.FC<EpisodeAssetBindingPanelProps> =
                   ))}
                 </select>
 
-                <div className="text-xs leading-6 text-slate-400">
+                <div className="text-xs leading-6 text-slate-500">
                   {
                     episodeBindingModeOptions.find((option) => option.value === selectedMode)
                       ?.hint

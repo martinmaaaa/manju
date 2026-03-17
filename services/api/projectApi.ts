@@ -288,11 +288,12 @@ export async function getProject(id: string): Promise<ApiResponse<ProjectDetail>
 export async function createProject(
   title: string,
   settings: Record<string, unknown> = {},
+  workflow_state?: WorkflowProjectState,
 ): Promise<ApiResponse<ProjectSummary>> {
   if (await checkOnline()) {
     const res = await apiRequest<ProjectSummary>('/projects', {
       method: 'POST',
-      body: JSON.stringify({ title, settings }),
+      body: JSON.stringify({ title, settings, workflow_state }),
     });
     if (res.success) return res;
     console.warn("Online createProject failed, falling back to local storage:", res.error);
@@ -303,10 +304,12 @@ export async function createProject(
     id: projectId,
     title,
     settings,
+    workflow_state,
     dashboard: buildWorkflowProjectDashboardSummary({
       id: projectId,
       title,
       settings,
+      workflow_state,
     }),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

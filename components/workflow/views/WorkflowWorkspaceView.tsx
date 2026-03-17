@@ -319,9 +319,7 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
             <Layers3 className="h-8 w-8" />
           </div>
           <h2 className="mt-6 text-2xl font-semibold text-white">No episode workspace yet</h2>
-          <p className="mt-3 text-sm leading-7 text-slate-300">
-            Create an episode first, then return here to push script, asset binding, storyboard, and delivery work.
-          </p>
+          <p className="mt-3 text-sm leading-7 text-slate-300">Create an episode first.</p>
         </div>
       </section>
     );
@@ -333,43 +331,36 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
 
   return (
     <div className="space-y-6">
-      <section className="tianti-hero-card p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">Episode Workspace</div>
-            <h2 className="mt-3 text-2xl font-semibold text-white">{activeEpisode.title}</h2>
-            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
-              This workspace reads persisted stage runs, shots, and selected outputs from the V2 workspace API.
-            </p>
+      {(parentSeries || siblingEpisodes.length > 0) && (
+        <section className="tianti-surface-muted rounded-[24px] px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm font-medium text-white">{activeEpisode.title}</div>
+            {parentSeries && (
+              <div className="text-xs text-slate-400">{parentSeries.title}</div>
+            )}
           </div>
 
-          {parentSeries && (
-            <div className="tianti-surface-muted rounded-full px-4 py-2 text-sm text-slate-300">
-              Series: {parentSeries.title}
+          {siblingEpisodes.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {siblingEpisodes.map((episode) => (
+                <button
+                  key={episode.id}
+                  type="button"
+                  onClick={() => onSelectEpisode(episode.id)}
+                  className={`tianti-button px-4 py-2 text-sm ${
+                    episode.id === activeEpisode.id
+                      ? 'tianti-button-ghost border-cyan-400/20 bg-cyan-400/12 text-cyan-50'
+                      : 'tianti-button-secondary'
+                  }`}
+                >
+                  <Clapperboard className="h-4 w-4" />
+                  {episode.title}
+                </button>
+              ))}
             </div>
           )}
-        </div>
-
-        {siblingEpisodes.length > 0 && (
-          <div className="mt-5 flex flex-wrap gap-2">
-            {siblingEpisodes.map((episode) => (
-              <button
-                key={episode.id}
-                type="button"
-                onClick={() => onSelectEpisode(episode.id)}
-                className={`tianti-button px-4 py-2 text-sm ${
-                  episode.id === activeEpisode.id
-                    ? 'tianti-button-ghost border-cyan-400/20 bg-cyan-400/12 text-cyan-50'
-                    : 'tianti-button-secondary'
-                }`}
-              >
-                <Clapperboard className="h-4 w-4" />
-                {episode.title}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {(isWorkspaceLoading || workspaceError) && (
         <section className="tianti-surface-muted rounded-[24px] p-4">

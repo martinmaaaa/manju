@@ -1,8 +1,6 @@
 import React from 'react';
-import { ChevronRight } from 'lucide-react';
-import type { WorkflowBindingMode, WorkflowInstance } from '../../services/workflow/domain/types';
+import type { WorkflowInstance, WorkflowStageStatus } from '../../services/workflow/domain/types';
 import { countCompletedStages } from '../../services/workflow/runtime/projectState';
-import { bindingModeLabels, toPreferredBindingMode } from './seriesShared';
 
 function formatUpdatedAt(value: string): string {
   return new Date(value).toLocaleString('zh-CN', {
@@ -12,6 +10,31 @@ function formatUpdatedAt(value: string): string {
     minute: '2-digit',
   });
 }
+
+const scriptStatusMeta: Record<
+  WorkflowStageStatus,
+  {
+    label: string;
+    className: string;
+  }
+> = {
+  not_started: {
+    label: '剧本未开始',
+    className: 'border-white/10 bg-white/5 text-slate-300',
+  },
+  in_progress: {
+    label: '剧本进行中',
+    className: 'border-cyan-500/30 bg-cyan-500/15 text-cyan-100',
+  },
+  completed: {
+    label: '剧本已完成',
+    className: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-100',
+  },
+  error: {
+    label: '剧本异常',
+    className: 'border-red-500/30 bg-red-500/15 text-red-100',
+  },
+};
 
 interface SeriesEpisodesPanelProps {
   episodes: WorkflowInstance[];
@@ -27,68 +50,69 @@ export const SeriesEpisodesPanel: React.FC<SeriesEpisodesPanelProps> = ({
   stageTitleMap,
   onSelectEpisode,
   onMaterializeWorkflow,
-}) => (
-  <div className="tianti-surface-muted mt-8 rounded-[24px] p-6">
-    <div className="flex items-center justify-between gap-4">
-      <div>
-        <div className="text-xs uppercase tracking-[0.22em] text-white/45">分集工作区</div>
-        <div className="mt-2 text-sm text-slate-300">
-          单集默认先走阶段视图；只有需要调试或一键执行时，才投放到原始画布。
-        </div>
-      </div>
-      <div className="text-xs text-white/40">最近更新 {formatUpdatedAt(seriesUpdatedAt)}</div>
-    </div>
+}) => {
+  void onMaterializeWorkflow;
 
-    <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {episodes.length === 0 ? (
-        <div className="rounded-[22px] border border-dashed border-white/10 bg-white/[0.02] p-5 text-sm leading-7 text-slate-400">
-          还没有单集工作流。先点击“新增单集”或“批量新增”，再进入单集工作区推进每一集内容。
+  return (
+    <div className="tianti-surface-muted mt-8 rounded-[24px] p-6">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-[0.22em] text-white/45">单集规划</div>
+          <div className="mt-2 text-sm text-slate-300">先把单集铺出来，再逐集推进剧本。</div>
         </div>
-      ) : (
-        episodes.map((episode) => (
-          <article key={episode.id} className="tianti-surface rounded-[22px] p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-lg font-semibold text-white">{episode.title}</div>
-                <div className="mt-1 text-xs text-white/40">
-                  阶段 {countCompletedStages(episode)}/{Object.keys(episode.stageStates).length}
+        <div className="text-xs text-white/40">最近更新 {formatUpdatedAt(seriesUpdatedAt)}</div>
+      </div>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {episodes.length === 0 ? (
+          <div className="rounded-[22px] border border-dashed border-white/10 bg-white/[0.02] p-5 text-sm leading-7 text-slate-400">
+            还没有单集。先新增一集，让剧本入口跑起来。
+          </div>
+        ) : (
+          episodes.map((episode) => {
+            const scriptStage = episode.stageStates['episode-script'];
+            const scriptMeta = scriptStatusMeta[scriptStage?.status ?? 'not_started'];
+            const nextStageId = Object.keys(episode.stageStates).find(
+              (stageId) => episode.stageStates[stageId]?.status !== 'completed',
+            );
+
+            return (
+              <article key={episode.id} className="tianti-surface rounded-[22px] p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-lg font-semibold text-white">{episode.title}</div>
+                    <div className="mt-1 text-xs text-white/40">
+                      阶段 {countCompletedStages(episode)}/{Object.keys(episode.stageStates).length}
+                    </div>
+                  </div>
+                  <span className="tianti-chip is-accent">Episode {episode.metadata?.episodeNumber ?? '--'}</span>
                 </div>
-              </div>
-              <span className="tianti-chip is-accent">
-                Episode {episode.metadata?.episodeNumber ?? '--'}
-              </span>
-            </div>
-            <div className="mt-3 text-xs text-slate-400">
-              默认绑定：
-              {bindingModeLabels[toPreferredBindingMode(episode.metadata?.preferredBindingMode)]}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {Object.keys(episode.stageStates).map((stageId) => (
-                <span key={stageId} className="tianti-chip">
-                  {stageTitleMap[stageId] ?? stageId}
-                </span>
-              ))}
-            </div>
-            <div className="mt-5 flex gap-3">
-              <button
-                type="button"
-                onClick={() => onSelectEpisode(episode.id)}
-                className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
-              >
-                打开单集
-              </button>
-              <button
-                type="button"
-                onClick={() => onMaterializeWorkflow(episode.id)}
-                className="tianti-button tianti-button-primary px-4 py-2 text-sm font-medium"
-              >
-                投放画布
-                <ChevronRight size={15} />
-              </button>
-            </div>
-          </article>
-        ))
-      )}
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs ${scriptMeta.className}`}>
+                    {scriptMeta.label}
+                  </span>
+                  {nextStageId && <span className="tianti-chip">下一步 {stageTitleMap[nextStageId] ?? nextStageId}</span>}
+                </div>
+
+                <div className="mt-4 text-sm leading-7 text-slate-300">
+                  先完成单集剧本，再继续往后推进。
+                </div>
+
+                <div className="mt-5">
+                  <button
+                    type="button"
+                    onClick={() => onSelectEpisode(episode.id)}
+                    className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
+                  >
+                    打开单集
+                  </button>
+                </div>
+              </article>
+            );
+          })
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};

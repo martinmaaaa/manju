@@ -116,7 +116,7 @@ export const EpisodeStagePanel: React.FC<EpisodeStagePanelProps> = ({
                     <div className="text-lg font-semibold text-white">
                       {definition.title}
                     </div>
-                    <div className="mt-1 text-sm leading-6 text-slate-400">
+                    <div className="mt-1 text-sm leading-6 text-slate-500">
                       {definition.summary}
                     </div>
                   </div>
@@ -151,7 +151,7 @@ export const EpisodeStagePanel: React.FC<EpisodeStagePanelProps> = ({
                     formData: { notes: event.target.value },
                   })
                 }
-                placeholder={`记录 ${definition.title} 阶段的输入、约束或备注`}
+                placeholder={`${definition.title} 备注`}
                 className="tianti-input mt-4 min-h-[112px] w-full px-4 py-3 text-sm leading-7"
               />
             </article>

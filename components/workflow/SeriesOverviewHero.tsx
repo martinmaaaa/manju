@@ -83,53 +83,53 @@ export const SeriesOverviewHero: React.FC<SeriesOverviewHeroProps> = ({
           onClick={onMaterializeSeries}
           className="tianti-button tianti-button-secondary px-5 py-3 text-sm"
         >
-          进入原始画布
+          打开系列画布
           <ChevronRight size={16} />
         </button>
       </div>
     </div>
 
-    <div className="mt-6 grid gap-4 xl:grid-cols-4">
+    <div className="mt-6 grid gap-4 xl:grid-cols-3">
       <div className="tianti-stat-card p-5">
-        <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">系列总控</div>
+        <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">系列设定</div>
         <div className="mt-3 text-3xl font-semibold text-white">
           {workflowOverview.seriesCompletedStageCount}/{workflowOverview.seriesStageCount}
         </div>
-        <div className="mt-2 text-sm text-slate-300">系列阶段已完成</div>
         <div className="mt-4 text-xs leading-6 text-slate-400">
           规划 {workflowOverview.plannedEpisodeCount || '未设'} 集 · 已创建 {workflowOverview.createdEpisodeCount} 集
         </div>
       </div>
 
       <div className="tianti-stat-card p-5">
-        <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">资产复用</div>
-        <div className="mt-3 text-3xl font-semibold text-white">{workflowOverview.reusableAssetCount}</div>
-        <div className="mt-2 text-sm text-slate-300">已纳入模板的复用资产</div>
+        <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">剧本推进</div>
+        <div className="mt-3 text-3xl font-semibold text-white">{workflowOverview.scriptCompletedEpisodeCount}</div>
         <div className="mt-4 text-xs leading-6 text-slate-400">
-          自动预铺模板 {workflowOverview.autoApplyTemplateCount} 个 · 已覆盖资产 {workflowOverview.coveredAssetCount} 个
+          已完成剧本的单集数 · 当前已创建 {workflowOverview.createdEpisodeCount} 集
         </div>
       </div>
 
       <div className="tianti-stat-card p-5">
-        <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">单集执行</div>
-        <div className="mt-3 text-3xl font-semibold text-white">{workflowOverview.createdEpisodeCount}</div>
-        <div className="mt-2 text-sm text-slate-300">已创建的单集工作单元</div>
-        <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-slate-400">
-          <span>剧本 {workflowOverview.scriptCompletedEpisodeCount}</span>
-          <span>资产 {workflowOverview.assetCompletedEpisodeCount}</span>
-          <span>分镜 {workflowOverview.storyboardCompletedEpisodeCount}</span>
-          <span>提示词 {workflowOverview.promptCompletedEpisodeCount}</span>
+        <div className="text-xs uppercase tracking-[0.18em] text-cyan-300/80">分集规划</div>
+        <div className="mt-3 text-3xl font-semibold text-white">
+          {workflowOverview.createdEpisodeCount}/{workflowOverview.plannedEpisodeCount || 0}
+        </div>
+        <div className="mt-4 text-xs leading-6 text-slate-400">
+          先把集数铺出来，再逐集推进剧本。
         </div>
       </div>
+    </div>
 
-      <div className="tianti-hero-card rounded-[24px] p-5">
-        <div className="text-xs uppercase tracking-[0.18em] text-cyan-100/80">下一步</div>
-        <div className="mt-3 text-lg font-semibold text-white">{workflowOverview.nextAction.label}</div>
-        <div className="mt-2 text-sm leading-6 text-cyan-50/90">{workflowOverview.nextAction.description}</div>
+    <div className="mt-4 rounded-[24px] border border-cyan-500/20 bg-cyan-500/10 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-cyan-100/80">下一步</div>
+          <div className="mt-3 text-lg font-semibold text-white">{workflowOverview.nextAction.label}</div>
+          <div className="mt-2 text-sm leading-7 text-cyan-50/90">{workflowOverview.nextAction.description}</div>
+        </div>
         <button
           type="button"
           onClick={onTriggerNextAction}
-          className="tianti-button tianti-button-secondary mt-4 px-4 py-2 text-sm"
+          className="tianti-button tianti-button-secondary px-4 py-2 text-sm"
         >
           {nextActionButtonLabel}
           <ChevronRight size={15} />
