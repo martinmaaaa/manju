@@ -17,6 +17,7 @@ import { ensureDatabaseReady, getResolvedDatabaseUrl } from './db.js';
 import { runCapability } from './capabilityEngine.js';
 import { CAPABILITIES, MODELS, REVIEW_POLICIES, SKILL_PACKS, buildDefaultStageConfig, getCapability, getSkillPack } from './registries.js';
 import { extractScriptContent, extractTitle } from './scriptExtraction.js';
+import { createVideoTaskWithModel, generateImageWithModel, generateTextWithModel, pollVideoTask } from './modelRuntime.js';
 import {
   createOrUpdateAsset,
   createProject,
@@ -167,6 +168,12 @@ function removeUploadedFile(file) {
   }
 }
 
+function resolveLegacyModel(preferredId, modality) {
+  return MODELS.find((item) => item.id === preferredId)
+    || MODELS.find((item) => item.modality === modality)
+    || null;
+}
+
 app.get('/api/health', async (_req, res) => {
   const dbReady = await ensureDatabaseReady();
   res.status(200).json({
@@ -244,6 +251,126 @@ app.get('/api/skill-packs', authRequired, async (req, res) => {
 
 app.get('/api/review-policies', authRequired, async (_req, res) => {
   res.json({ success: true, data: REVIEW_POLICIES });
+});
+
+app.post('/api/legacy/llm/content', authRequired, async (req, res) => {
+  try {
+    const model = resolveLegacyModel(String(req.body?.model || '').trim(), 'text');
+    if (!model) {
+      return res.status(400).json({ success: false, error: 'No text model is available.' });
+    }
+
+    const text = await generateTextWithModel({
+      model,
+      prompt: String(req.body?.prompt || ''),
+      systemInstruction: req.body?.options?.systemInstruction || null,
+      contents: Array.isArray(req.body?.contents) ? req.body.contents : null,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        text,
+        modelId: model.id,
+      },
+    });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/legacy/llm/images', authRequired, async (req, res) => {
+  try {
+    const model = resolveLegacyModel(String(req.body?.model || '').trim(), 'image');
+    if (!model) {
+      return res.status(400).json({ success: false, error: 'No image model is available.' });
+    }
+
+    const image = await generateImageWithModel({
+      model,
+      prompt: String(req.body?.prompt || ''),
+      aspectRatio: String(req.body?.options?.aspectRatio || '9:16'),
+      imageSize: String(req.body?.options?.resolution || '2K'),
+      referenceImages: Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [],
+    });
+
+    res.json({
+      success: true,
+      data: {
+        images: image ? [image] : [],
+        modelId: model.id,
+      },
+    });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/legacy/llm/video', authRequired, async (req, res) => {
+  try {
+    const model = resolveLegacyModel(String(req.body?.model || '').trim(), 'video');
+    if (!model) {
+      return res.status(400).json({ success: false, error: 'No video model is available.' });
+    }
+
+    const imagePayload = req.body?.image?.imageBytes
+      ? [`data:${req.body?.image?.mimeType || 'image/png'};base64,${req.body.image.imageBytes}`]
+      : [];
+
+    const referenceImages = Array.isArray(req.body?.config?.referenceImages)
+      ? req.body.config.referenceImages
+          .map((item) => item?.image?.imageBytes ? `data:${item?.image?.mimeType || 'image/png'};base64,${item.image.imageBytes}` : null)
+          .filter(Boolean)
+      : [];
+
+    const images = [...imagePayload, ...referenceImages].slice(0, 1);
+
+    let previewUrl = null;
+    let taskId = null;
+
+    try {
+      taskId = await createVideoTaskWithModel({
+        model,
+        prompt: String(req.body?.prompt || ''),
+        ratio: req.body?.config?.aspectRatio || '16:9',
+        resolution: req.body?.config?.resolution || '720P',
+        duration: 5,
+        images,
+      });
+
+      const result = await pollVideoTask({ taskId });
+      previewUrl = result.output || null;
+    } catch (error) {
+      const imageModel = resolveLegacyModel('', 'image');
+      if (!imageModel) {
+        throw error;
+      }
+
+      previewUrl = await generateImageWithModel({
+        model: imageModel,
+        prompt: `Cinematic frame, ${String(req.body?.prompt || '')}`,
+        aspectRatio: req.body?.config?.aspectRatio || '16:9',
+        referenceImages: images,
+      });
+      taskId = null;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        operation: {
+          done: true,
+          response: {
+            generatedVideos: previewUrl
+              ? [{ video: { uri: previewUrl, taskId } }]
+              : [],
+          },
+        },
+      },
+    });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
 });
 
 app.get('/api/projects', authRequired, async (req, res) => {

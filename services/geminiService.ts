@@ -30,13 +30,13 @@ export const getClient = () => {
 };
 
 // 检查当前提供商是否为 Gemini（用于高级功能）
-const requireGeminiProvider = (featureName: string): void => {
+const requireGeminiProvider = (featureName: string, allowedProviders: string[] = ['gemini', 'server']): void => {
     const currentProvider = llmProviderManager.getCurrentProviderType();
-    if (currentProvider !== 'gemini') {
+    if (!allowedProviders.includes(currentProvider)) {
         throw new Error(
-            `"${featureName}" 功能需要使用 Gemini 官方 API。\n\n` +
+            `"${featureName}" 仍然依赖旧版 Gemini 官方 SDK。\n\n` +
             `当前提供商：${llmProviderManager.getCurrentProvider().getName()}\n\n` +
-            `请切换到 Gemini API (Google Official) 以使用此功能。`
+            `这类高级旧功能还没有迁移到 server proxy。请改走新的工作流能力，或在兼容模式下手动切回 Gemini。`
         );
     }
 };
@@ -259,7 +259,6 @@ export const detectTextInImage = async (
     imageBase64: string,
     context?: { nodeId?: string; nodeType?: string }
 ): Promise<boolean> => {
-    const ai = getClient();
     const prompt = `
     Analyze this image carefully.
     Does it contain any of the following visual elements?
@@ -277,18 +276,21 @@ export const detectTextInImage = async (
     const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
 
     try {
-        const response = await ai.models.generateContent({
-            model: getUserDefaultModel('text'),
-            contents: {
-                parts: [
-                    { inlineData: { mimeType, data } },
-                    { text: prompt }
-                ]
+        const text = await llmProviderManager.generateContent(
+            prompt,
+            getUserDefaultModel('text'),
+            {
+                contents: {
+                    parts: [
+                        { inlineData: { mimeType, data } },
+                        { text: prompt }
+                    ]
+                }
             }
-        });
+        );
 
-        const text = response.text?.trim().toUpperCase() || "";
-        return text.includes("YES");
+        const normalized = text.trim().toUpperCase();
+        return normalized.includes("YES");
     } catch (e) {
         console.warn("Text detection failed", e);
         return false; // Assume safe if check fails
@@ -995,7 +997,7 @@ export const generateVideo = async (
         'generateVideo',
         async () => {
             throwIfAborted(runtime?.signal);
-            requireGeminiProvider('视频生成');
+            requireGeminiProvider('视频生成', ['gemini', 'server']);
             const ai = getClient();
 
             const qualitySuffix = ", cinematic lighting, highly detailed, photorealistic, 4k, smooth motion, professional color grading";
@@ -1067,7 +1069,10 @@ export const generateVideo = async (
                     if (res.status === 'fulfilled') {
                         const vid = res.value.response?.generatedVideos?.[0]?.video;
                         if (vid?.uri) {
-                            const fullUri = `${vid.uri}&key=${process.env.API_KEY}`;
+                            const providerType = llmProviderManager.getCurrentProviderType();
+                            const fullUri = providerType === 'gemini' && process.env.API_KEY
+                                ? `${vid.uri}&key=${process.env.API_KEY}`
+                                : vid.uri;
                             validUris.push(fullUri);
                             if (!primaryMetadata) primaryMetadata = vid;
                         }
@@ -1127,29 +1132,38 @@ export const analyzeVideo = async (
     return logAPICall(
         'analyzeVideo',
         async () => {
-            requireGeminiProvider('视频分析');
-            const ai = getClient();
-            let inlineData: any = null;
+            requireGeminiProvider('视频分析', ['gemini', 'server']);
+            const providerType = llmProviderManager.getCurrentProviderType();
+            let mimeType = 'video/mp4';
+            let data = '';
 
             if (videoBase64OrUrl.startsWith('data:')) {
-                const mime = videoBase64OrUrl.match(/^data:(video\/\w+);base64,/)?.[1] || 'video/mp4';
-                const data = videoBase64OrUrl.replace(/^data:video\/\w+;base64,/, "");
-                inlineData = { mimeType: mime, data };
+                if (providerType === 'server') {
+                    const frameBase64 = await extractLastFrame(videoBase64OrUrl);
+                    mimeType = frameBase64.match(/^data:(image\/\w+);base64,/)?.[1] || 'image/png';
+                    data = frameBase64.replace(/^data:image\/\w+;base64,/, "");
+                } else {
+                    mimeType = videoBase64OrUrl.match(/^data:(video\/\w+);base64,/)?.[1] || 'video/mp4';
+                    data = videoBase64OrUrl.replace(/^data:video\/\w+;base64,/, "");
+                }
             } else {
                 throw new Error("Direct URL analysis not implemented in this demo. Please use uploaded videos.");
             }
 
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: {
-                    parts: [
-                        { inlineData },
-                        { text: prompt }
-                    ]
+            const response = await llmProviderManager.generateContent(
+                prompt,
+                model,
+                {
+                    contents: {
+                        parts: [
+                            { inlineData: { mimeType, data } },
+                            { text: prompt }
+                        ]
+                    }
                 }
-            });
+            );
 
-            return response.text || "Analysis failed";
+            return response || "Analysis failed";
         },
         {
             model,
@@ -1751,17 +1765,19 @@ export const orchestrateVideoPrompt = async (
     return logAPICall(
         'orchestrateVideoPrompt',
         async () => {
-            const ai = getClient();
             const parts: Part[] = images.map(img => ({ inlineData: { data: img.replace(/^data:.*;base64,/, ""), mimeType: "image/png" } }));
             parts.push({ text: `Create a single video prompt that transitions between these images. User Intent: ${userPrompt}` });
 
-            const response = await ai.models.generateContent({
-                model: effectiveModel,
-                config: { systemInstruction: VIDEO_ORCHESTRATOR_INSTRUCTION },
-                contents: { parts }
-            });
+            const response = await llmProviderManager.generateContent(
+                userPrompt,
+                effectiveModel,
+                {
+                    systemInstruction: VIDEO_ORCHESTRATOR_INSTRUCTION,
+                    contents: { parts }
+                }
+            );
 
-            return response.text || userPrompt;
+            return response || userPrompt;
         },
         {
             model: effectiveModel,
@@ -1836,22 +1852,24 @@ export const transcribeAudio = async (
     return logAPICall(
         'transcribeAudio',
         async () => {
-            requireGeminiProvider('音频转录');
-            const ai = getClient();
+            requireGeminiProvider('音频转录', ['gemini', 'server']);
             const mime = audioBase64.match(/^data:(audio\/\w+);base64,/)?.[1] || 'audio/wav';
             const data = audioBase64.replace(/^data:audio\/\w+;base64,/, "");
 
-            const response = await ai.models.generateContent({
-                model: effectiveModel,
-                contents: {
-                    parts: [
-                        { inlineData: { mimeType: mime, data } },
-                        { text: "Transcribe this audio strictly verbatim." }
-                    ]
+            const response = await llmProviderManager.generateContent(
+                'Transcribe this audio strictly verbatim.',
+                effectiveModel,
+                {
+                    contents: {
+                        parts: [
+                            { inlineData: { mimeType: mime, data } },
+                            { text: "Transcribe this audio strictly verbatim." }
+                        ]
+                    }
                 }
-            });
+            );
 
-            return response.text || "";
+            return response || "";
         },
         {
             model: effectiveModel,

@@ -71,7 +71,7 @@ export class GeminiProvider implements LLMProvider {
 
     const response = await client.models.generateContent({
       model,
-      contents: { parts: [{ text: prompt }] },
+      contents: options?.contents || { parts: [{ text: prompt }] },
       config: Object.keys(config).length > 0 ? config : undefined
     });
 

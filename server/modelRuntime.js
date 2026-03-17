@@ -1,5 +1,10 @@
-const BLTCY_BASE_URL = (process.env.BLTCY_BASE_URL || 'https://api.bltcy.ai').replace(/\/+$/, '');
-const BLTCY_API_KEY = process.env.BLTCY_API_KEY?.trim() || '';
+function getBaseUrl() {
+  return (process.env.BLTCY_BASE_URL || 'https://api.bltcy.ai').replace(/\/+$/, '');
+}
+
+function getApiKey() {
+  return process.env.BLTCY_API_KEY?.trim() || '';
+}
 
 function extractJson(text = '') {
   const trimmed = String(text || '').trim();
@@ -25,7 +30,7 @@ function extractJson(text = '') {
 }
 
 function assertConfigured() {
-  if (!BLTCY_API_KEY) {
+  if (!getApiKey()) {
     throw new Error('BLTCY_API_KEY is not configured on the server.');
   }
 }
@@ -35,19 +40,95 @@ function isBltcyAdapter(model, adapter) {
 }
 
 export function hasLiveTextModelSupport(model) {
-  return Boolean(BLTCY_API_KEY) && isBltcyAdapter(model, 'bltcy-openai-chat');
+  return Boolean(getApiKey()) && isBltcyAdapter(model, 'bltcy-openai-chat');
 }
 
 export function hasLiveImageModelSupport(model) {
-  return Boolean(BLTCY_API_KEY) && isBltcyAdapter(model, 'bltcy-image-generation');
+  return Boolean(getApiKey()) && isBltcyAdapter(model, 'bltcy-image-generation');
 }
 
 export function hasLiveVideoModelSupport(model) {
-  return Boolean(BLTCY_API_KEY) && isBltcyAdapter(model, 'bltcy-video-generation');
+  return Boolean(getApiKey()) && isBltcyAdapter(model, 'bltcy-video-generation');
 }
 
 export function hasLiveModelSupport(model) {
   return hasLiveTextModelSupport(model) || hasLiveImageModelSupport(model) || hasLiveVideoModelSupport(model);
+}
+
+export async function generateTextWithModel({
+  model,
+  prompt,
+  systemInstruction,
+  contents,
+  temperature = 0.3,
+}) {
+  assertConfigured();
+
+  const userContent = Array.isArray(contents) && contents.length > 0
+    ? contents.map((message) => ({
+        role: message.role === 'assistant' ? 'assistant' : 'user',
+        content: Array.isArray(message.parts)
+          ? message.parts.map((part) => {
+              if (part?.type === 'inlineData' && part?.data) {
+                if (String(part.mimeType || '').startsWith('audio/')) {
+                  return {
+                    type: 'input_audio',
+                    input_audio: {
+                      data: String(part.data),
+                      format: String(part.mimeType || 'audio/wav').split('/')[1] || 'wav',
+                    },
+                  };
+                }
+
+                return {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${part.mimeType || 'image/png'};base64,${part.data}`,
+                  },
+                };
+              }
+
+              return {
+                type: 'text',
+                text: String(part?.text || ''),
+              };
+            }).filter(Boolean)
+          : [{ type: 'text', text: String(prompt || '') }],
+      }))
+    : [{
+        role: 'user',
+        content: [{ type: 'text', text: String(prompt || '') }],
+      }];
+
+  const messages = [];
+  if (systemInstruction) {
+    messages.push({
+      role: 'system',
+      content: String(systemInstruction),
+    });
+  }
+  messages.push(...userContent);
+
+  const response = await fetch(`${getBaseUrl()}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getApiKey()}`,
+    },
+    body: JSON.stringify({
+      model: model.id,
+      temperature,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`BLTCY chat failed: ${response.status} ${body}`);
+  }
+
+  const data = await response.json();
+  return String(data?.choices?.[0]?.message?.content || '').trim();
 }
 
 export async function generateJsonWithModel({
@@ -58,11 +139,11 @@ export async function generateJsonWithModel({
 }) {
   assertConfigured();
 
-  const response = await fetch(`${BLTCY_BASE_URL}/v1/chat/completions`, {
+  const response = await fetch(`${getBaseUrl()}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${BLTCY_API_KEY}`,
+      Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({
       model: model.id,
@@ -102,11 +183,11 @@ export async function generateImageWithModel({
 }) {
   assertConfigured();
 
-  const response = await fetch(`${BLTCY_BASE_URL}/v1/images/generations`, {
+  const response = await fetch(`${getBaseUrl()}/v1/images/generations`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${BLTCY_API_KEY}`,
+      Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({
       model: model.id,
@@ -138,11 +219,11 @@ export async function createVideoTaskWithModel({
 }) {
   assertConfigured();
 
-  const response = await fetch(`${BLTCY_BASE_URL}/v2/videos/generations`, {
+  const response = await fetch(`${getBaseUrl()}/v2/videos/generations`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${BLTCY_API_KEY}`,
+      Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({
       prompt,
@@ -168,9 +249,9 @@ export async function pollVideoTask({ taskId, timeoutMs = 60_000, intervalMs = 3
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const response = await fetch(`${BLTCY_BASE_URL}/v2/videos/generations/${encodeURIComponent(taskId)}`, {
+    const response = await fetch(`${getBaseUrl()}/v2/videos/generations/${encodeURIComponent(taskId)}`, {
       headers: {
-        Authorization: `Bearer ${BLTCY_API_KEY}`,
+        Authorization: `Bearer ${getApiKey()}`,
       },
     });
 

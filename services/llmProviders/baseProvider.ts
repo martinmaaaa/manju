@@ -21,6 +21,7 @@ export interface GenerateImageOptions {
 export interface GenerateContentOptions {
   responseMimeType?: string;
   systemInstruction?: string;
+  contents?: any;
 }
 
 /**

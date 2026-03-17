@@ -7,6 +7,7 @@ import { LLMProvider, GenerateImageOptions } from './baseProvider';
 import { GeminiProvider } from './geminiProvider';
 import { YunwuProvider } from './yunwuProvider';
 import { CustomProvider } from './customProvider';
+import { ServerProxyProvider } from './serverProxyProvider';
 import { LLMProviderType } from '../../types';
 
 /**
@@ -17,6 +18,7 @@ class LLMProviderManager {
 
   constructor() {
     this.providers = new Map<LLMProviderType, LLMProvider>([
+      ['server', new ServerProxyProvider()],
       ['gemini', new GeminiProvider()],
       ['yunwu', new YunwuProvider()],
       ['custom', new CustomProvider()]
@@ -69,7 +71,7 @@ class LLMProviderManager {
    */
   getCurrentProviderType(): LLMProviderType {
     const savedProvider = localStorage.getItem('LLM_API_PROVIDER') as LLMProviderType;
-    return savedProvider || 'gemini'; // 默认使用 Gemini
+    return savedProvider || 'server';
   }
 
   /**
@@ -103,6 +105,9 @@ class LLMProviderManager {
    */
   isCurrentProviderConfigured(): boolean {
     const providerType = this.getCurrentProviderType();
+    if (providerType === 'server') {
+      return true;
+    }
     if (providerType === 'custom') {
       const apiKey = localStorage.getItem('CUSTOM_API_KEY');
       const apiUrl = localStorage.getItem('CUSTOM_API_URL');
@@ -118,6 +123,9 @@ class LLMProviderManager {
    */
   getCurrentProviderApiKey(): string | null {
     const providerType = this.getCurrentProviderType();
+    if (providerType === 'server') {
+      return null;
+    }
     if (providerType === 'custom') {
       const apiKey = localStorage.getItem('CUSTOM_API_KEY');
       return apiKey?.trim() || null;
@@ -170,6 +178,7 @@ export const llmProviderManager = new LLMProviderManager();
 
 // 导出类型和类
 export type { LLMProvider, GenerateImageOptions, GenerateContentOptions } from './baseProvider';
+export { ServerProxyProvider } from './serverProxyProvider';
 export { GeminiProvider } from './geminiProvider';
 export { YunwuProvider } from './yunwuProvider';
 export { CustomProvider } from './customProvider';

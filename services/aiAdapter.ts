@@ -61,5 +61,5 @@ export const getCurrentImageProvider = (): string => {
  */
 export const isImageGenerationSupported = (): boolean => {
     const provider = llmProviderManager.getCurrentProvider();
-    return provider.getType() === 'gemini' || provider.getType() === 'yunwu';
+    return provider.getType() === 'server' || provider.getType() === 'gemini' || provider.getType() === 'yunwu';
 };

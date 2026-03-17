@@ -5,7 +5,7 @@
 
 import { llmProviderManager } from './llmProviders';
 
-export type AIProviderType = 'gemini' | 'yunwu' | 'openai' | 'deepseek';
+export type AIProviderType = 'server' | 'gemini' | 'yunwu' | 'openai' | 'deepseek';
 
 /**
  * 获取当前AI提供商类型
@@ -34,12 +34,12 @@ export const isProviderType = (type: AIProviderType): boolean => {
 export const isFeatureSupported = (feature: 'text' | 'image' | 'video' | 'audio'): boolean => {
     const providerType = llmProviderManager.getCurrentProviderType();
 
-    // 所有提供商都支持文本和图片生成
+    // 新服务端代理以及旧 provider 都支持文本和图片生成
     if (feature === 'text' || feature === 'image') {
         return true;
     }
 
-    // 视频和音频生成只有 Gemini 官方 API 支持
+    // 视频和音频生成仍然主要依赖旧 Gemini 路径
     if (feature === 'video' || feature === 'audio') {
         return providerType === 'gemini';
     }

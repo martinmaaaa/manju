@@ -76,7 +76,7 @@ export class CustomProvider implements LLMProvider {
     const url = this.buildUrl(endpoint, apiKey);
 
     const requestBody: any = {
-      contents: [
+      contents: options?.contents || [
         {
           role: 'user',
           parts: [{ text: prompt }]
