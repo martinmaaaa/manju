@@ -446,6 +446,122 @@ export function useNodeActions(params: UseNodeActionsParams) {
         regenerationMode,
     });
 
+    const upsertWorkflowShotsFromSplitShots = async (splitShots: any[]) => {
+        if (!activeWorkflowInstanceId || !Array.isArray(splitShots) || splitShots.length === 0) {
+            return;
+        }
+
+        const {
+            createEpisodeShot,
+            getEpisodeWorkspace,
+            updateWorkflowShot,
+        } = await import('../services/api/workspaceApi');
+        const workspaceResponse = await getEpisodeWorkspace(activeWorkflowInstanceId);
+        const existingShotIds = new Set(
+            workspaceResponse.success && workspaceResponse.data
+                ? workspaceResponse.data.shots.map((shot) => shot.id)
+                : [],
+        );
+
+        for (const splitShot of splitShots) {
+            const payload = {
+                id: splitShot.id,
+                shotNumber: Number(splitShot.shotNumber ?? 0),
+                title: `Shot ${Number(splitShot.shotNumber ?? 0) || 0}`,
+                sourceNodeId: splitShot.sourceNodeId ?? null,
+                sourcePage: splitShot.sourcePage ?? null,
+                panelIndex: splitShot.panelIndex ?? null,
+                prompt: String(splitShot.visualDescription ?? ''),
+                imageUrl: splitShot.splitImage ?? null,
+                metadata: {
+                    scene: splitShot.scene ?? '',
+                    characters: Array.isArray(splitShot.characters) ? splitShot.characters : [],
+                    shotSize: splitShot.shotSize ?? '',
+                    cameraAngle: splitShot.cameraAngle ?? '',
+                    cameraMovement: splitShot.cameraMovement ?? '',
+                    dialogue: splitShot.dialogue ?? '',
+                    visualEffects: splitShot.visualEffects ?? '',
+                    audioEffects: splitShot.audioEffects ?? '',
+                    startTime: splitShot.startTime ?? 0,
+                    endTime: splitShot.endTime ?? 0,
+                    duration: splitShot.duration ?? 0,
+                },
+            };
+
+            const response = existingShotIds.has(splitShot.id)
+                ? await updateWorkflowShot(splitShot.id, payload)
+                : await createEpisodeShot(activeWorkflowInstanceId, payload);
+
+            if (response.success) {
+                existingShotIds.add(splitShot.id);
+            } else {
+                console.warn('[workspace] Failed to upsert split shot', splitShot.id, response.error);
+            }
+        }
+    };
+
+    const persistSelectedShotOutputs = async (
+        splitShots: any[],
+        output: {
+            generationJobId?: string;
+            url?: string | null;
+            provider?: string;
+            label?: string;
+            outputType?: string;
+            metadata?: Record<string, unknown>;
+        },
+    ) => {
+        if (!activeWorkflowInstanceId || !output.url || !Array.isArray(splitShots) || splitShots.length === 0) {
+            return;
+        }
+
+        await upsertWorkflowShotsFromSplitShots(splitShots);
+
+        const { createShotOutput } = await import('../services/api/workspaceApi');
+        for (const splitShot of splitShots) {
+            const response = await createShotOutput(splitShot.id, {
+                workflowInstanceId: activeWorkflowInstanceId,
+                generationJobId: output.generationJobId ?? null,
+                provider: output.provider ?? null,
+                outputType: output.outputType ?? 'video',
+                label: output.label ?? null,
+                url: output.url,
+                metadata: {
+                    ...(output.metadata ?? {}),
+                    sourceShotId: splitShot.id,
+                    sourceNodeId: splitShot.sourceNodeId ?? null,
+                },
+                isSelected: true,
+            });
+
+            if (!response.success) {
+                console.warn('[workspace] Failed to persist shot output', splitShot.id, response.error);
+            }
+        }
+    };
+
+    const syncWorkflowStageRunOutputs = async (
+        stageId: string,
+        patch: {
+            status?: string;
+            formData?: Record<string, unknown>;
+            outputs?: Record<string, unknown>;
+        },
+    ) => {
+        if (!activeWorkflowInstanceId) {
+            return null;
+        }
+
+        const { updateWorkflowStageRun } = await import('../services/api/workspaceApi');
+        const response = await updateWorkflowStageRun(activeWorkflowInstanceId, stageId, patch);
+        if (!response.success) {
+            console.warn('[workspace] Failed to sync stage run', stageId, response.error);
+            return null;
+        }
+
+        return response.data;
+    };
+
     const collectJimengReferenceFiles = async (node: AppNode, inputs: AppNode[]) => {
         const filesToUpload: File[] = [];
         const directReferenceFiles = Array.isArray(node.data.referenceFiles) ? node.data.referenceFiles : [];
@@ -1644,6 +1760,14 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         characterData,
                         status: 'selecting'
                     });
+                    await upsertWorkflowShotsFromSplitShots(splitShots);
+                    await syncWorkflowStageRunOutputs('storyboard', {
+                        status: 'completed',
+                        outputs: {
+                            totalShots: splitShots.length,
+                            shotIds: splitShots.map((shot: any) => shot.id),
+                        },
+                    });
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
                 }
@@ -1678,6 +1802,14 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     handleNodeUpdate(id, {
                         generatedPrompt,
                         status: 'prompting'
+                    });
+                    await syncWorkflowStageRunOutputs('prompt', {
+                        status: 'completed',
+                        outputs: {
+                            generatedPrompt,
+                            selectedShotIds,
+                            selectedShotCount: selectedShots.length,
+                        },
                     });
                     setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
                     return;
@@ -1723,6 +1855,9 @@ export function useNodeActions(params: UseNodeActionsParams) {
                     if (!generatedPrompt) {
                         throw new Error('Please generate a prompt first.');
                     }
+                    const selectedShotIds = node.data.selectedShotIds || [];
+                    const availableShots = node.data.availableShots || [];
+                    const selectedShots = availableShots.filter((shot: any) => selectedShotIds.includes(shot.id));
 
                     const selectedPlatform = node.data.selectedPlatform || 'yunwuapi';
                     const selectedModel = node.data.selectedModel || 'luma';
@@ -1873,6 +2008,29 @@ export function useNodeActions(params: UseNodeActionsParams) {
                         if (result.videoUrl) {
                             handleAssetGenerated('video', result.videoUrl, `Storyboard Video #${childIndex}`);
                         }
+
+                        await persistSelectedShotOutputs(selectedShots, {
+                            generationJobId,
+                            url: result.videoUrl,
+                            provider: selectedPlatform,
+                            label: `Storyboard Video #${childIndex}`,
+                            outputType: 'video',
+                            metadata: {
+                                model: selectedModel,
+                                duration: result.duration,
+                                resolution: result.resolution,
+                            },
+                        });
+                        await syncWorkflowStageRunOutputs('video', {
+                            status: 'completed',
+                            outputs: {
+                                generationJobId,
+                                resultUrl: result.videoUrl,
+                                provider: selectedPlatform,
+                                model: selectedModel,
+                                selectedShotIds,
+                            },
+                        });
 
                         handleNodeUpdate(id, {
                             status: 'completed',

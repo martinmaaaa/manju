@@ -5,11 +5,16 @@ import type {
   WorkflowAsset,
   WorkflowBindingMode,
   WorkflowInstance,
+  WorkflowShot,
+  WorkflowShotOutput,
   WorkflowStageDefinition,
+  WorkflowStageRun,
   WorkflowStageStatus,
 } from '../../../services/workflow/domain/types';
 import { EpisodeAssetBindingPanel } from './EpisodeAssetBindingPanel';
 import { EpisodeOutputsPanel } from './EpisodeOutputsPanel';
+import { EpisodeResultPoolPanel } from './EpisodeResultPoolPanel';
+import { EpisodeShotStripPanel } from './EpisodeShotStripPanel';
 import { EpisodeStagePanel } from './EpisodeStagePanel';
 import { episodeBindingModeLabels, normalizeEditableBindingMode } from './episodeWorkspaceShared';
 
@@ -18,6 +23,9 @@ interface EpisodeWorkspaceProps {
   stageDefinitions: WorkflowStageDefinition[];
   assets: WorkflowAsset[];
   bindings: EpisodeAssetBinding[];
+  stageRuns?: WorkflowStageRun[];
+  shots?: WorkflowShot[];
+  shotOutputs?: WorkflowShotOutput[];
   compact?: boolean;
   onBindAsset: (episodeId: string, assetId: string, mode: WorkflowBindingMode) => void;
   onUnbindAsset: (bindingId: string) => void;
@@ -31,6 +39,15 @@ interface EpisodeWorkspaceProps {
     },
   ) => void;
   onMaterializeWorkflow: (workflowInstanceId: string) => void;
+  selectedShotId: string | null;
+  onSelectShot: (shotId: string) => void;
+  onCreateShot: () => Promise<void> | void;
+  onUpdateShot: (
+    shotId: string,
+    patch: Partial<Pick<WorkflowShot, 'title' | 'prompt'>>,
+  ) => Promise<void> | void;
+  onDeleteShot: (shotId: string) => Promise<void> | void;
+  onSelectShotOutput: (outputId: string) => Promise<void> | void;
 }
 
 export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
@@ -38,14 +55,32 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
   stageDefinitions,
   assets,
   bindings,
+  stageRuns = [],
+  shots = [],
+  shotOutputs = [],
   compact = false,
   onBindAsset,
   onUnbindAsset,
   onUpdateStage,
   onMaterializeWorkflow,
+  selectedShotId,
+  onSelectShot,
+  onCreateShot,
+  onUpdateShot,
+  onDeleteShot,
+  onSelectShotOutput,
 }) => {
+  const stageRunByStageId = new Map(stageRuns.map((stageRun) => [stageRun.stageId, stageRun]));
   const stageEntries = stageDefinitions
-    .map((stage) => ({ definition: stage, state: episode.stageStates[stage.id] }))
+    .map((stage) => {
+      const persistedStageRun = stageRunByStageId.get(stage.id);
+      return {
+        definition: stage,
+        state: persistedStageRun
+          ? { status: persistedStageRun.status }
+          : episode.stageStates[stage.id],
+      };
+    })
     .filter((item) => item.state);
   const completedStageCount = stageEntries.filter(
     ({ state }) => state.status === 'completed',
@@ -91,6 +126,7 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
           <EpisodeStagePanel
             episode={episode}
             stageDefinitions={stageDefinitions}
+            stageRuns={stageRuns}
             compact={compact}
             showHeader={false}
             onUpdateStage={onUpdateStage}
@@ -110,9 +146,31 @@ export const EpisodeWorkspace: React.FC<EpisodeWorkspaceProps> = ({
         <EpisodeOutputsPanel
           episode={episode}
           stageDefinitions={stageDefinitions}
+          stageRuns={stageRuns}
+          shots={shots}
+          shotOutputs={shotOutputs}
           compact={compact}
           showHeader={false}
         />
+
+        <div className={`grid gap-6 ${compact ? '' : 'xl:grid-cols-[1fr_1fr]'}`}>
+          <EpisodeShotStripPanel
+            shots={shots}
+            shotOutputs={shotOutputs}
+            selectedShotId={selectedShotId}
+            onSelectShot={onSelectShot}
+            onCreateShot={onCreateShot}
+            onUpdateShot={onUpdateShot}
+            onDeleteShot={onDeleteShot}
+          />
+          <EpisodeResultPoolPanel
+            shots={shots}
+            shotOutputs={shotOutputs}
+            selectedShotId={selectedShotId}
+            onSelectShot={onSelectShot}
+            onSelectOutput={onSelectShotOutput}
+          />
+        </div>
       </div>
     </section>
   );

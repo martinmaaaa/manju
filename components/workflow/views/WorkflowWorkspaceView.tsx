@@ -1,9 +1,20 @@
-import React, { useMemo } from 'react';
-import { Clapperboard, Layers3 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertCircle, Clapperboard, Layers3, Loader2 } from 'lucide-react';
+import {
+  createEpisodeShot,
+  deleteWorkflowShot,
+  getEpisodeWorkspace,
+  selectShotOutput,
+  updateWorkflowShot,
+  updateWorkflowStageRun,
+  type EpisodeWorkspaceData,
+} from '../../../services/api';
 import type {
   ContinuityState,
   WorkflowBindingMode,
   WorkflowProjectState,
+  WorkflowShot,
+  WorkflowStageRun,
   WorkflowStageStatus,
 } from '../../../services/workflow/domain/types';
 import {
@@ -35,8 +46,38 @@ interface WorkflowWorkspaceViewProps {
       formData?: Record<string, unknown>;
       outputs?: Record<string, unknown>;
     },
-  ) => void;
+  ) => void | Promise<void>;
   onMaterializeWorkflow: (workflowInstanceId: string) => void;
+}
+
+function upsertStageRun(
+  current: EpisodeWorkspaceData | null,
+  stageRun: WorkflowStageRun,
+): EpisodeWorkspaceData | null {
+  if (!current) return current;
+
+  return {
+    ...current,
+    stageRuns: current.stageRuns.some((candidate) => candidate.id === stageRun.id)
+      ? current.stageRuns.map((candidate) => candidate.id === stageRun.id ? stageRun : candidate)
+      : [...current.stageRuns, stageRun],
+  };
+}
+
+function upsertShot(
+  current: EpisodeWorkspaceData | null,
+  shot: WorkflowShot,
+): EpisodeWorkspaceData | null {
+  if (!current) return current;
+
+  const nextShots = current.shots.some((candidate) => candidate.id === shot.id)
+    ? current.shots.map((candidate) => candidate.id === shot.id ? shot : candidate)
+    : [...current.shots, shot];
+
+  return {
+    ...current,
+    shots: [...nextShots].sort((left, right) => left.shotNumber - right.shotNumber),
+  };
 }
 
 export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
@@ -49,6 +90,10 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
   onMaterializeWorkflow,
 }) => {
   const seriesInstances = useMemo(() => getSeriesInstances(workflowState), [workflowState]);
+  const [workspaceData, setWorkspaceData] = useState<EpisodeWorkspaceData | null>(null);
+  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [selectedShotId, setSelectedShotId] = useState<string | null>(null);
 
   const activeEpisode = useMemo(() => {
     if (workflowState.activeEpisodeId) {
@@ -70,6 +115,146 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
     return getEpisodeInstances(workflowState, parentSeries.id);
   }, [parentSeries, workflowState]);
 
+  const loadEpisodeWorkspace = useCallback(async (workflowInstanceId: string) => {
+    setIsWorkspaceLoading(true);
+    const response = await getEpisodeWorkspace(workflowInstanceId);
+    setIsWorkspaceLoading(false);
+
+    if (!response.success || !response.data) {
+      setWorkspaceData(null);
+      setWorkspaceError(response.error || 'Episode workspace API unavailable.');
+      setSelectedShotId(null);
+      return;
+    }
+
+    setWorkspaceData(response.data);
+    setWorkspaceError(null);
+    setSelectedShotId((current) => (
+      current && response.data.shots.some((shot) => shot.id === current)
+        ? current
+        : (response.data.shots[0]?.id ?? null)
+    ));
+  }, []);
+
+  useEffect(() => {
+    if (!activeEpisode) {
+      setWorkspaceData(null);
+      setWorkspaceError(null);
+      setSelectedShotId(null);
+      return;
+    }
+
+    void loadEpisodeWorkspace(activeEpisode.id);
+  }, [activeEpisode?.id, loadEpisodeWorkspace]);
+
+  const handleWorkspaceStageUpdate = useCallback(async (
+    workflowInstanceId: string,
+    stageId: string,
+    patch: {
+      status?: WorkflowStageStatus;
+      formData?: Record<string, unknown>;
+      outputs?: Record<string, unknown>;
+    },
+  ) => {
+    try {
+      await onUpdateStage(workflowInstanceId, stageId, patch);
+      const response = await updateWorkflowStageRun(workflowInstanceId, stageId, patch);
+      if (!response.success || !response.data) {
+        setWorkspaceError(response.error || 'Failed to sync stage run.');
+        return;
+      }
+
+      setWorkspaceData((current) => upsertStageRun(current, response.data));
+    } catch (error: any) {
+      setWorkspaceError(error?.message || 'Failed to update stage state.');
+    }
+  }, [onUpdateStage]);
+
+  const handleCreateShot = useCallback(async () => {
+    if (!activeEpisode) return;
+
+    const latestShot = workspaceData && workspaceData.shots.length > 0
+      ? workspaceData.shots[workspaceData.shots.length - 1]
+      : null;
+    const nextShotNumber = (latestShot?.shotNumber ?? 0) + 1;
+    const response = await createEpisodeShot(activeEpisode.id, {
+      shotNumber: nextShotNumber,
+      title: `Shot ${nextShotNumber}`,
+      prompt: '',
+      metadata: {},
+    });
+
+    if (!response.success || !response.data) {
+      setWorkspaceError(response.error || 'Failed to create shot.');
+      return;
+    }
+
+    setWorkspaceData((current) => upsertShot(current, response.data));
+    setSelectedShotId(response.data.id);
+  }, [activeEpisode, workspaceData]);
+
+  const handleUpdateShot = useCallback(async (
+    shotId: string,
+    patch: Partial<Pick<WorkflowShot, 'title' | 'prompt'>>,
+  ) => {
+    const response = await updateWorkflowShot(shotId, patch);
+    if (!response.success || !response.data) {
+      setWorkspaceError(response.error || 'Failed to update shot.');
+      return;
+    }
+
+    setWorkspaceData((current) => upsertShot(current, response.data));
+  }, []);
+
+  const handleDeleteShot = useCallback(async (shotId: string) => {
+    const response = await deleteWorkflowShot(shotId);
+    if (!response.success) {
+      setWorkspaceError(response.error || 'Failed to delete shot.');
+      return;
+    }
+
+    setWorkspaceData((current) => {
+      if (!current) return current;
+
+      return {
+        ...current,
+        shots: current.shots.filter((shot) => shot.id !== shotId),
+        shotOutputs: current.shotOutputs.filter((output) => output.shotId !== shotId),
+      };
+    });
+
+    setSelectedShotId((current) => {
+      if (current !== shotId) return current;
+      const remainingShots = workspaceData?.shots.filter((shot) => shot.id !== shotId) ?? [];
+      return remainingShots[0]?.id ?? null;
+    });
+  }, [workspaceData]);
+
+  const handleSelectShotOutput = useCallback(async (outputId: string) => {
+    const response = await selectShotOutput(outputId);
+    if (!response.success || !response.data) {
+      setWorkspaceError(response.error || 'Failed to select output.');
+      return;
+    }
+
+    setWorkspaceData((current) => {
+      if (!current) return current;
+
+      return {
+        ...current,
+        shotOutputs: current.shotOutputs.map((output) => (
+          output.shotId === response.data!.shotId
+            ? {
+                ...output,
+                isSelected: output.id === response.data!.id,
+                selectedAt: output.id === response.data!.id ? response.data!.selectedAt : null,
+              }
+            : output
+        )),
+      };
+    });
+  }, []);
+
   if (!activeEpisode) {
     return (
       <section className="tianti-surface rounded-[32px] border border-dashed p-10 text-center">
@@ -77,9 +262,9 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/5 text-cyan-200">
             <Layers3 className="h-8 w-8" />
           </div>
-          <h2 className="mt-6 text-2xl font-semibold text-white">还没有单集工作区</h2>
+          <h2 className="mt-6 text-2xl font-semibold text-white">No episode workspace yet</h2>
           <p className="mt-3 text-sm leading-7 text-slate-300">
-            先去剧集页创建单集，再回到这里推进剧本、资产绑定、分镜和视频生成。
+            Create an episode first, then return here to push script, asset binding, storyboard, and delivery work.
           </p>
         </div>
       </section>
@@ -98,13 +283,13 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
             <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">Episode Workspace</div>
             <h2 className="mt-3 text-2xl font-semibold text-white">{activeEpisode.title}</h2>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
-              单集工作区只关心当前这一集怎么往下推进，完成后再把整套执行链路投放到高级画布。
+              This workspace reads persisted stage runs, shots, and selected outputs from the V2 workspace API.
             </p>
           </div>
 
           {parentSeries && (
             <div className="tianti-surface-muted rounded-full px-4 py-2 text-sm text-slate-300">
-              所属系列：{parentSeries.title}
+              Series: {parentSeries.title}
             </div>
           )}
         </div>
@@ -130,15 +315,47 @@ export const WorkflowWorkspaceView: React.FC<WorkflowWorkspaceViewProps> = ({
         )}
       </section>
 
+      {(isWorkspaceLoading || workspaceError) && (
+        <section className="tianti-surface-muted rounded-[24px] p-4">
+          {isWorkspaceLoading ? (
+            <div className="flex items-center gap-3 text-sm text-slate-300">
+              <Loader2 className="h-4 w-4 animate-spin text-cyan-200" />
+              Loading episode workspace data...
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 text-sm text-amber-100">
+              <AlertCircle className="h-4 w-4 text-amber-300" />
+              {workspaceError}
+              <button
+                type="button"
+                onClick={() => void loadEpisodeWorkspace(activeEpisode.id)}
+                className="tianti-button tianti-button-secondary ml-auto px-3 py-2 text-xs"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
       <EpisodeWorkspace
         episode={activeEpisode}
         stageDefinitions={activeEpisodeStages}
         assets={workflowState.assets}
         bindings={activeEpisodeBindings}
+        stageRuns={workspaceData?.stageRuns ?? []}
+        shots={workspaceData?.shots ?? []}
+        shotOutputs={workspaceData?.shotOutputs ?? []}
         onBindAsset={onBindAsset}
         onUnbindAsset={onUnbindAsset}
-        onUpdateStage={onUpdateStage}
+        onUpdateStage={handleWorkspaceStageUpdate}
         onMaterializeWorkflow={onMaterializeWorkflow}
+        selectedShotId={selectedShotId}
+        onSelectShot={setSelectedShotId}
+        onCreateShot={handleCreateShot}
+        onUpdateShot={handleUpdateShot}
+        onDeleteShot={handleDeleteShot}
+        onSelectShotOutput={handleSelectShotOutput}
       />
 
       <ContinuityPanel

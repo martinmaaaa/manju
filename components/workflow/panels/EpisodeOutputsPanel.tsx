@@ -8,13 +8,19 @@ import {
 } from 'lucide-react';
 import type {
   WorkflowInstance,
+  WorkflowShot,
+  WorkflowShotOutput,
   WorkflowStageDefinition,
+  WorkflowStageRun,
 } from '../../../services/workflow/domain/types';
 import { stageStatusClassNames, stageStatusLabels } from './episodeWorkspaceShared';
 
 interface EpisodeOutputsPanelProps {
   episode: WorkflowInstance;
   stageDefinitions: WorkflowStageDefinition[];
+  stageRuns?: WorkflowStageRun[];
+  shots?: WorkflowShot[];
+  shotOutputs?: WorkflowShotOutput[];
   compact?: boolean;
   showHeader?: boolean;
 }
@@ -118,13 +124,32 @@ function toRenderableOutputEntry(
 export const EpisodeOutputsPanel: React.FC<EpisodeOutputsPanelProps> = ({
   episode,
   stageDefinitions,
+  stageRuns = [],
+  shots = [],
+  shotOutputs = [],
   compact = false,
   showHeader = true,
 }) => {
+  const stageRunByStageId = useMemo(
+    () => new Map(stageRuns.map((stageRun) => [stageRun.stageId, stageRun])),
+    [stageRuns],
+  );
   const stageCards = useMemo(() => (
     stageDefinitions
       .map((stage) => {
-        const state = episode.stageStates[stage.id];
+        const persistedStageRun = stageRunByStageId.get(stage.id);
+        const state = persistedStageRun
+          ? {
+              stageId: persistedStageRun.stageId,
+              status: persistedStageRun.status,
+              formData: persistedStageRun.formData,
+              outputs: persistedStageRun.outputs,
+              artifactIds: persistedStageRun.artifactIds,
+              error: persistedStageRun.error,
+              startedAt: persistedStageRun.startedAt ?? undefined,
+              completedAt: persistedStageRun.completedAt ?? undefined,
+            }
+          : episode.stageStates[stage.id];
         if (!state) return null;
 
         const outputEntries = Object.entries(state.outputs)
@@ -152,12 +177,13 @@ export const EpisodeOutputsPanel: React.FC<EpisodeOutputsPanelProps> = ({
       completedAtLabel: string | null;
       startedAtLabel: string | null;
     }>
-  ), [episode.stageStates, stageDefinitions]);
+  ), [episode.stageStates, stageDefinitions, stageRunByStageId]);
 
   const totalArtifacts = stageCards.reduce(
     (sum, card) => sum + card.state.artifactIds.length,
     0,
   );
+  const selectedShotOutputCount = shotOutputs.filter((output) => output.isSelected).length;
 
   return (
     <section className={`tianti-surface ${compact ? 'rounded-[28px] p-5' : 'rounded-[30px] p-6'}`}>
@@ -176,6 +202,8 @@ export const EpisodeOutputsPanel: React.FC<EpisodeOutputsPanelProps> = ({
             </div>
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
+            <span className="tianti-chip">Shots {shots.length}</span>
+            <span className="tianti-chip">Selected outputs {selectedShotOutputCount}</span>
             <span className="tianti-chip is-accent">有产出阶段 {stageCards.length}</span>
             <span className="tianti-chip">产物引用 {totalArtifacts}</span>
           </div>

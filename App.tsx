@@ -39,12 +39,15 @@ import { useUIStore } from './stores/ui.store';
 import { useEditorStore } from './stores/editor.store';
 import {
   cancelGenerationJob,
+  createEpisodeShot,
   getProjects,
   getProject,
   getProjectWorkflowEntities,
+  getEpisodeWorkspace,
   createProject,
   requeueGenerationJob,
   retryGenerationJob,
+  updateWorkflowShot,
   updateProject,
   isApiAvailable,
   type GenerationJob,
@@ -1007,6 +1010,57 @@ export const App = () => {
     setIsApiKeyPromptOpen(false);
     console.info('✅ Gemini API Key 已保存成功！');
   }, []);
+
+  const syncSplitShotsToEpisodeWorkspace = useCallback(async (splitShots: any[]) => {
+    const workflowInstanceId = activeWorkflowEpisode?.id;
+    if (!workflowInstanceId || !Array.isArray(splitShots) || splitShots.length === 0) {
+      return;
+    }
+
+    const existingWorkspace = await getEpisodeWorkspace(workflowInstanceId);
+    const existingShotIds = new Set(
+      existingWorkspace.success && existingWorkspace.data
+        ? existingWorkspace.data.shots.map((shot) => shot.id)
+        : [],
+    );
+
+    for (const shot of splitShots) {
+      const payload = {
+        id: shot.id,
+        shotNumber: Number(shot.shotNumber ?? 0),
+        title: `Shot ${Number(shot.shotNumber ?? 0) || 0}`,
+        sourceNodeId: shot.sourceNodeId ?? null,
+        sourcePage: shot.sourcePage ?? null,
+        panelIndex: shot.panelIndex ?? null,
+        prompt: String(shot.visualDescription ?? ''),
+        imageUrl: shot.splitImage ?? null,
+        metadata: {
+          scene: shot.scene ?? '',
+          characters: Array.isArray(shot.characters) ? shot.characters : [],
+          shotSize: shot.shotSize ?? '',
+          cameraAngle: shot.cameraAngle ?? '',
+          cameraMovement: shot.cameraMovement ?? '',
+          dialogue: shot.dialogue ?? '',
+          visualEffects: shot.visualEffects ?? '',
+          audioEffects: shot.audioEffects ?? '',
+          startTime: shot.startTime ?? 0,
+          endTime: shot.endTime ?? 0,
+          duration: shot.duration ?? 0,
+        },
+      };
+
+      const response = existingShotIds.has(shot.id)
+        ? await updateWorkflowShot(shot.id, payload)
+        : await createEpisodeShot(workflowInstanceId, payload);
+
+      if (!response.success) {
+        console.warn('[workspace] Failed to sync split shot', shot.id, response.error);
+        continue;
+      }
+
+      existingShotIds.add(shot.id);
+    }
+  }, [activeWorkflowEpisode?.id]);
 
   const handleFitView = useCallback(() => {
     if (nodes.length === 0) {
@@ -2235,6 +2289,16 @@ export const App = () => {
 
   const handleNodeUpdate = useCallback((id: string, data: any, size?: any, title?: string) => {
     const callingStack = new Error().stack?.split('\n').slice(1, 4).join('\n');
+    const currentNode = nodesRef.current.find((node) => node.id === id);
+    const updatedNode = currentNode
+      ? {
+          ...currentNode,
+          data: { ...currentNode.data, ...data },
+          title: title || getNodeNameCN(currentNode.type),
+          width: size?.width ?? currentNode.width,
+          height: size?.height ?? currentNode.height,
+        }
+      : null;
 
     setNodes(prev => prev.map(n => {
       if (n.id === id) {
@@ -2254,7 +2318,11 @@ export const App = () => {
       }
       return n;
     }));
-  }, [handleAssetGenerated]);
+
+    if (updatedNode?.type === NodeType.STORYBOARD_SPLITTER && Array.isArray(data?.splitShots)) {
+      void syncSplitShotsToEpisodeWorkspace(data.splitShots);
+    }
+  }, [handleAssetGenerated, syncSplitShotsToEpisodeWorkspace]);
 
   const handleReplaceFile = useCallback((e: React.ChangeEvent<HTMLInputElement>, type: 'image' | 'video') => {
     const file = e.target.files?.[0];

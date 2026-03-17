@@ -3,6 +3,7 @@ import { ChevronRight, Sparkles } from 'lucide-react';
 import type {
   WorkflowInstance,
   WorkflowStageDefinition,
+  WorkflowStageRun,
   WorkflowStageStatus,
 } from '../../../services/workflow/domain/types';
 import {
@@ -15,6 +16,7 @@ import {
 interface EpisodeStagePanelProps {
   episode: WorkflowInstance;
   stageDefinitions: WorkflowStageDefinition[];
+  stageRuns?: WorkflowStageRun[];
   compact?: boolean;
   showHeader?: boolean;
   onUpdateStage: (
@@ -32,13 +34,32 @@ interface EpisodeStagePanelProps {
 export const EpisodeStagePanel: React.FC<EpisodeStagePanelProps> = ({
   episode,
   stageDefinitions,
+  stageRuns = [],
   compact = false,
   showHeader = true,
   onUpdateStage,
   onMaterializeWorkflow,
 }) => {
+  const stageRunByStageId = new Map(stageRuns.map((stageRun) => [stageRun.stageId, stageRun]));
   const stageEntries = stageDefinitions
-    .map((stage) => ({ definition: stage, state: episode.stageStates[stage.id] }))
+    .map((stage) => {
+      const persistedStageRun = stageRunByStageId.get(stage.id);
+      const fallbackState = episode.stageStates[stage.id];
+      const state = persistedStageRun
+        ? {
+            stageId: persistedStageRun.stageId,
+            status: persistedStageRun.status,
+            formData: persistedStageRun.formData,
+            outputs: persistedStageRun.outputs,
+            artifactIds: persistedStageRun.artifactIds,
+            error: persistedStageRun.error,
+            startedAt: persistedStageRun.startedAt ?? undefined,
+            completedAt: persistedStageRun.completedAt ?? undefined,
+          }
+        : fallbackState;
+
+      return { definition: stage, state };
+    })
     .filter((item) => item.state);
   const completedStageCount = stageEntries.filter(
     ({ state }) => state.status === 'completed',
