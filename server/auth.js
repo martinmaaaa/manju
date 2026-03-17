@@ -43,7 +43,7 @@ export function sha256(value) {
 export async function registerUser({ email, password, name }) {
   const existing = await getUserWithPasswordByEmail(email);
   if (existing) {
-    throw new Error('该邮箱已被注册。');
+    throw new Error('This email is already registered.');
   }
 
   const passwordHash = hashPassword(password);
@@ -57,7 +57,7 @@ export async function registerUser({ email, password, name }) {
 export async function loginUser({ email, password }) {
   const userWithPassword = await getUserWithPasswordByEmail(email);
   if (!userWithPassword || !verifyPassword(password, userWithPassword.password_hash)) {
-    throw new Error('邮箱或密码错误。');
+    throw new Error('Incorrect email or password.');
   }
 
   const rawToken = crypto.randomBytes(32).toString('hex');

@@ -9,6 +9,8 @@ import type {
   EpisodeWorkspace,
   ModelDefinition,
   ProjectDetail,
+  ProjectMember,
+  ProjectRunBundle,
   ProjectSetup,
   ProjectSummary,
   ReviewPolicy,
@@ -43,12 +45,13 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<A
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : '请求失败',
+      error: error instanceof Error ? error.message : 'Network request failed.',
     };
   }
 }
 
 export const appApi = {
+  health: () => apiRequest<{ server: boolean; database: boolean; databaseHost: string }>('/health'),
   me: () => apiRequest<AuthUser>('/me'),
   register: (payload: { email: string; password: string; name: string }) =>
     apiRequest<AuthUser>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
@@ -60,6 +63,12 @@ export const appApi = {
   createProject: (payload: { title: string }) =>
     apiRequest<ProjectDetail>('/projects', { method: 'POST', body: JSON.stringify(payload) }),
   getProject: (projectId: string) => apiRequest<ProjectDetail>(`/projects/${projectId}`),
+  listProjectMembers: (projectId: string) => apiRequest<ProjectMember[]>(`/projects/${projectId}/members`),
+  addProjectMember: (projectId: string, payload: { email: string; role: 'owner' | 'admin' | 'editor' }) =>
+    apiRequest<ProjectMember>(`/projects/${projectId}/members`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   uploadScriptSource: async (projectId: string, payload: { textContent?: string; file?: File | null }) => {
     const formData = new FormData();
@@ -91,6 +100,8 @@ export const appApi = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  listProjectRuns: (projectId: string, episodeId?: string) =>
+    apiRequest<ProjectRunBundle>(`/projects/${projectId}/runs${episodeId ? `?episodeId=${encodeURIComponent(episodeId)}` : ''}`),
 
   listSkillPacks: (stageKind?: string) =>
     apiRequest<SkillPack[]>(`/skill-packs${stageKind ? `?stageKind=${encodeURIComponent(stageKind)}` : ''}`),

@@ -4,6 +4,12 @@ export interface ApiResponse<T = unknown> {
   error?: string;
 }
 
+export interface ReviewResult {
+  policyId: string;
+  passed: boolean;
+  notes: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -255,8 +261,27 @@ export interface CapabilityRun {
   skillPackId: string | null;
   status: string;
   inputPayload: Record<string, unknown>;
-  outputPayload: Record<string, unknown>;
+  outputPayload: Record<string, unknown> & {
+    reviews?: ReviewResult[];
+    usedLiveModel?: boolean;
+  };
   error: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  projectId: string;
+  stageKind: string;
+  status: string;
+  capabilityRunId: string | null;
+  config: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectRunBundle {
+  capabilityRuns: CapabilityRun[];
+  workflowRuns: WorkflowRun[];
 }

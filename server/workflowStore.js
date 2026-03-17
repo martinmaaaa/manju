@@ -923,3 +923,41 @@ export async function finishWorkflowRun(id, { status, capabilityRunId = null, co
   );
   return mapWorkflowRun(result.rows[0]);
 }
+
+export async function listCapabilityRunsByProjectId(projectId, { episodeId = null, limit = 30 } = {}) {
+  const pool = getPool();
+  const values = [projectId];
+  let whereSql = `WHERE project_id = $1`;
+
+  if (episodeId) {
+    values.push(episodeId);
+    whereSql += ` AND episode_id = $2`;
+  }
+
+  values.push(limit);
+
+  const result = await pool.query(
+    `SELECT *
+     FROM workflow_capability_runs
+     ${whereSql}
+     ORDER BY created_at DESC
+     LIMIT $${values.length}`,
+    values,
+  );
+
+  return result.rows.map(mapCapabilityRun);
+}
+
+export async function listWorkflowRunsByProjectId(projectId, { limit = 30 } = {}) {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT *
+     FROM workflow_runs
+     WHERE project_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [projectId, limit],
+  );
+
+  return result.rows.map(mapWorkflowRun);
+}

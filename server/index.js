@@ -31,11 +31,13 @@ import {
   getStoryBible,
   getStudioWorkspace,
   getUserWithPasswordByEmail,
-  listStudioWorkspaces,
   listAssetsByProjectId,
+  listCapabilityRunsByProjectId,
   listEpisodesByProjectId,
   listProjectMembers,
   listProjectsForUser,
+  listStudioWorkspaces,
+  listWorkflowRunsByProjectId,
   setAssetLockState,
   touchProject,
   updateEpisodeStatus,
@@ -106,7 +108,7 @@ async function authRequired(req, res, next) {
     if (!sessionContext?.user) {
       return res.status(401).json({
         success: false,
-        error: '请先登录。',
+        error: 'Please sign in first.',
       });
     }
 
@@ -126,7 +128,7 @@ async function requireProjectAccess(req, res, next) {
     if (!member) {
       return res.status(404).json({
         success: false,
-        error: '项目不存在或无访问权限。',
+        error: 'Project not found or you do not have access.',
       });
     }
 
@@ -143,12 +145,12 @@ async function requireOwnerOrAdminByAsset(req, res, next) {
   try {
     const asset = await getAssetById(req.params.id);
     if (!asset) {
-      return res.status(404).json({ success: false, error: '资产不存在。' });
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
     }
 
     const member = await getProjectMember(asset.projectId, req.user.id);
     if (!member || !['owner', 'admin'].includes(member.role)) {
-      return res.status(403).json({ success: false, error: '只有 owner/admin 可以解锁资产。' });
+      return res.status(403).json({ success: false, error: 'Only owner/admin can unlock assets.' });
     }
 
     req.asset = asset;
@@ -186,7 +188,7 @@ app.post('/api/auth/register', async (req, res) => {
     const name = String(req.body?.name || '').trim();
 
     if (!email || !password) {
-      return res.status(400).json({ success: false, error: '邮箱和密码不能为空。' });
+      return res.status(400).json({ success: false, error: 'Email and password are required.' });
     }
 
     const user = await registerUser({ email, password, name });
@@ -257,7 +259,7 @@ app.post('/api/projects', authRequired, async (req, res) => {
   try {
     const title = String(req.body?.title || '').trim();
     if (!title) {
-      return res.status(400).json({ success: false, error: '项目标题不能为空。' });
+      return res.status(400).json({ success: false, error: 'Project title is required.' });
     }
 
     const project = await createProject({ title, ownerUserId: req.user.id });
@@ -272,7 +274,7 @@ app.get('/api/projects/:id', authRequired, requireProjectAccess, async (req, res
   try {
     const project = await getProjectById(req.params.id);
     if (!project) {
-      return res.status(404).json({ success: false, error: '项目不存在。' });
+      return res.status(404).json({ success: false, error: 'Project not found.' });
     }
 
     res.json({
@@ -299,18 +301,18 @@ app.get('/api/projects/:id/members', authRequired, requireProjectAccess, async (
 app.post('/api/projects/:id/members', authRequired, requireProjectAccess, async (req, res) => {
   try {
     if (!['owner', 'admin'].includes(req.projectMember.role)) {
-      return res.status(403).json({ success: false, error: '只有 owner/admin 可以维护项目成员。' });
+      return res.status(403).json({ success: false, error: 'Only owner/admin can manage project members.' });
     }
 
     const email = String(req.body?.email || '').trim().toLowerCase();
     const role = String(req.body?.role || 'editor').trim();
     if (!email || !['owner', 'admin', 'editor'].includes(role)) {
-      return res.status(400).json({ success: false, error: '请提供有效邮箱和角色。' });
+      return res.status(400).json({ success: false, error: 'Please provide a valid email and role.' });
     }
 
     const userRow = await getUserWithPasswordByEmail(email);
     if (!userRow) {
-      return res.status(404).json({ success: false, error: '目标用户不存在，请先注册。' });
+      return res.status(404).json({ success: false, error: 'Target user was not found. Ask them to register first.' });
     }
 
     const member = await upsertProjectMember({
@@ -329,7 +331,7 @@ app.post('/api/projects/:id/script-source', authRequired, requireProjectAccess, 
   try {
     const textContent = String(req.body?.textContent || '').trim();
     if (!req.file && !textContent) {
-      return res.status(400).json({ success: false, error: '请提供文本或上传文件。' });
+      return res.status(400).json({ success: false, error: 'Please provide text content or upload a file.' });
     }
 
     const contentText = await extractScriptContent({
@@ -340,7 +342,7 @@ app.post('/api/projects/:id/script-source', authRequired, requireProjectAccess, 
     });
 
     if (!contentText) {
-      return res.status(400).json({ success: false, error: '未能从剧本中提取有效文本。' });
+      return res.status(400).json({ success: false, error: 'No valid script text could be extracted from the input.' });
     }
 
     const source = await upsertScriptSource({
@@ -420,6 +422,26 @@ app.patch('/api/projects/:id/stage-config', authRequired, requireProjectAccess, 
   }
 });
 
+app.get('/api/projects/:id/runs', authRequired, requireProjectAccess, async (req, res) => {
+  try {
+    const episodeId = String(req.query.episodeId || '').trim() || null;
+    const [capabilityRuns, workflowRuns] = await Promise.all([
+      listCapabilityRunsByProjectId(req.params.id, { episodeId, limit: 40 }),
+      listWorkflowRunsByProjectId(req.params.id, { limit: 40 }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        capabilityRuns,
+        workflowRuns,
+      },
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
 app.get('/api/projects/:id/assets', authRequired, requireProjectAccess, async (req, res) => {
   try {
     const assets = await listAssetsByProjectId(req.params.id);
@@ -434,7 +456,7 @@ app.post('/api/projects/:id/assets', authRequired, requireProjectAccess, async (
     const type = String(req.body?.type || '').trim();
     const name = String(req.body?.name || '').trim();
     if (!type || !name) {
-      return res.status(400).json({ success: false, error: '资产类型和名称不能为空。' });
+      return res.status(400).json({ success: false, error: 'Asset type and name are required.' });
     }
 
     const created = await createOrUpdateAsset({
@@ -457,12 +479,12 @@ app.post('/api/assets/:id/lock', authRequired, async (req, res) => {
   try {
     const asset = await getAssetById(req.params.id);
     if (!asset) {
-      return res.status(404).json({ success: false, error: '资产不存在。' });
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
     }
 
     const member = await getProjectMember(asset.projectId, req.user.id);
     if (!member) {
-      return res.status(403).json({ success: false, error: '无权锁定该资产。' });
+      return res.status(403).json({ success: false, error: 'You do not have permission to lock this asset.' });
     }
 
     const lockedAsset = await setAssetLockState(asset.id, { locked: true, userId: req.user.id });
@@ -501,7 +523,7 @@ app.post('/api/projects/:projectId/episodes/:episodeId/analyze', authRequired, a
   try {
     const member = await getProjectMember(req.params.projectId, req.user.id);
     if (!member) {
-      return res.status(403).json({ success: false, error: '无权分析该剧集。' });
+      return res.status(403).json({ success: false, error: 'You do not have permission to analyze this episode.' });
     }
 
     const project = await getProjectById(req.params.projectId);
@@ -510,7 +532,7 @@ app.post('/api/projects/:projectId/episodes/:episodeId/analyze', authRequired, a
       || 'seedance-director-v1';
     const modelId = req.body?.modelId
       || project?.setup?.stageConfig?.episode_expand?.modelId
-      || 'google-gemini-2.5-pro-text';
+      || 'gemini-3.1-pro-preview';
 
     const run = await runCapability({
       capabilityId: 'episode_expand',
@@ -547,11 +569,11 @@ app.get('/api/episodes/:id/context', authRequired, async (req, res) => {
   try {
     const episode = await getEpisodeById(req.params.id);
     if (!episode) {
-      return res.status(404).json({ success: false, error: '剧集不存在。' });
+      return res.status(404).json({ success: false, error: 'Episode not found.' });
     }
     const member = await getProjectMember(episode.projectId, req.user.id);
     if (!member) {
-      return res.status(403).json({ success: false, error: '无权访问该剧集。' });
+      return res.status(403).json({ success: false, error: 'You do not have permission to access this episode.' });
     }
 
     const context = await getEpisodeContext(req.params.id);
@@ -565,11 +587,11 @@ app.get('/api/episodes/:id/workspace', authRequired, async (req, res) => {
   try {
     const episode = await getEpisodeById(req.params.id);
     if (!episode) {
-      return res.status(404).json({ success: false, error: '剧集不存在。' });
+      return res.status(404).json({ success: false, error: 'Episode not found.' });
     }
     const member = await getProjectMember(episode.projectId, req.user.id);
     if (!member) {
-      return res.status(403).json({ success: false, error: '无权访问该剧集。' });
+      return res.status(403).json({ success: false, error: 'You do not have permission to access this episode.' });
     }
 
     const workspace = await getEpisodeWorkspace(req.params.id);
@@ -583,11 +605,11 @@ app.patch('/api/episodes/:id/workspace', authRequired, async (req, res) => {
   try {
     const episode = await getEpisodeById(req.params.id);
     if (!episode) {
-      return res.status(404).json({ success: false, error: '剧集不存在。' });
+      return res.status(404).json({ success: false, error: 'Episode not found.' });
     }
     const member = await getProjectMember(episode.projectId, req.user.id);
     if (!member) {
-      return res.status(403).json({ success: false, error: '无权编辑该剧集。' });
+      return res.status(403).json({ success: false, error: 'You do not have permission to edit this episode.' });
     }
 
     const workspace = await upsertEpisodeWorkspace({
@@ -607,7 +629,7 @@ app.get('/api/studio/workspaces', authRequired, async (req, res) => {
     if (workspaces.length === 0) {
       workspaces = [await createStudioWorkspace({
         userId: req.user.id,
-        title: '我的 Studio',
+        title: 'My Studio',
         content: {
           nodes: [],
         },
@@ -624,7 +646,7 @@ app.post('/api/studio/workspaces', authRequired, async (req, res) => {
   try {
     const workspace = await createStudioWorkspace({
       userId: req.user.id,
-      title: String(req.body?.title || '我的 Studio'),
+      title: String(req.body?.title || 'My Studio'),
       content: req.body?.content || { nodes: [] },
       importedAssets: req.body?.importedAssets || [],
     });
@@ -638,7 +660,7 @@ app.get('/api/studio/workspaces/:id', authRequired, async (req, res) => {
   try {
     const workspace = await getStudioWorkspace(req.params.id, req.user.id);
     if (!workspace) {
-      return res.status(404).json({ success: false, error: 'Studio 不存在。' });
+      return res.status(404).json({ success: false, error: 'Studio workspace not found.' });
     }
     res.json({ success: true, data: workspace });
   } catch (error) {
@@ -650,7 +672,7 @@ app.patch('/api/studio/workspaces/:id', authRequired, async (req, res) => {
   try {
     const workspace = await updateStudioWorkspace(req.params.id, req.user.id, req.body || {});
     if (!workspace) {
-      return res.status(404).json({ success: false, error: 'Studio 不存在。' });
+      return res.status(404).json({ success: false, error: 'Studio workspace not found.' });
     }
     res.json({ success: true, data: workspace });
   } catch (error) {
@@ -662,13 +684,13 @@ app.post('/api/studio/workspaces/:id/import-project-assets', authRequired, async
   try {
     const workspace = await getStudioWorkspace(req.params.id, req.user.id);
     if (!workspace) {
-      return res.status(404).json({ success: false, error: 'Studio 不存在。' });
+      return res.status(404).json({ success: false, error: 'Studio workspace not found.' });
     }
 
     const projectId = String(req.body?.projectId || '').trim();
     const member = await getProjectMember(projectId, req.user.id);
     if (!member) {
-      return res.status(403).json({ success: false, error: '无权导入该项目资产。' });
+      return res.status(403).json({ success: false, error: 'You do not have permission to import assets from this project.' });
     }
 
     const assets = await listAssetsByProjectId(projectId);
@@ -694,14 +716,14 @@ app.post('/api/capability-runs', authRequired, async (req, res) => {
     const capabilityId = String(req.body?.capabilityId || '').trim();
     const capability = getCapability(capabilityId);
     if (!capability) {
-      return res.status(400).json({ success: false, error: '未知能力。' });
+      return res.status(400).json({ success: false, error: 'Unknown capability.' });
     }
 
     const projectId = req.body?.projectId || null;
     if (projectId) {
       const member = await getProjectMember(projectId, req.user.id);
       if (!member) {
-        return res.status(403).json({ success: false, error: '无权操作该项目。' });
+        return res.status(403).json({ success: false, error: 'You do not have permission to operate on this project.' });
       }
     }
 
