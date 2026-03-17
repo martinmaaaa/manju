@@ -270,6 +270,42 @@ export function useNodeActions(params: UseNodeActionsParams) {
         provider: 'jimeng',
     });
 
+    const buildImageGenerationJobMetadata = (
+        nodeId: string,
+        model?: string,
+    ) => ({
+        nodeId,
+        nodeType: NodeType.IMAGE_GENERATOR,
+        triggerAction: 'generate-image-node',
+        cancelAction: 'cancel-image-generation',
+        source: 'image-generator',
+        model,
+    });
+
+    const buildAudioGenerationJobMetadata = (
+        nodeId: string,
+        model?: string,
+    ) => ({
+        nodeId,
+        nodeType: NodeType.AUDIO_GENERATOR,
+        triggerAction: 'generate-audio-node',
+        cancelAction: 'cancel-audio-generation',
+        source: 'audio-generator',
+        model,
+    });
+
+    const buildImageEditorGenerationJobMetadata = (
+        nodeId: string,
+        model?: string,
+    ) => ({
+        nodeId,
+        nodeType: NodeType.IMAGE_EDITOR,
+        triggerAction: 'edit-image-node',
+        cancelAction: 'cancel-image-edit',
+        source: 'image-editor',
+        model,
+    });
+
     const queueTrackedNodeGenerationJob = async (
         existingId: string | undefined,
         draft: {
@@ -308,6 +344,25 @@ export function useNodeActions(params: UseNodeActionsParams) {
             : await createTrackedGenerationJob(payload);
     };
 
+    const createGenerationAbortError = () => {
+        const error = new Error('Task cancelled.') as Error & { name: string };
+        error.name = 'AbortError';
+        return error;
+    };
+
+    const isGenerationCancelledError = (error: any, signal?: AbortSignal) => {
+        const errorMessage = typeof error?.message === 'string'
+            ? error.message
+            : '';
+        return Boolean(
+            signal?.aborted
+            || error?.name === 'AbortError'
+            || errorMessage === 'Task cancelled.'
+            || /cancel/i.test(errorMessage)
+            || errorMessage.includes('\u53d6\u6d88')
+        );
+    };
+
     const buildStoryboardGenerationSourcePayload = (
         node: AppNode,
         selectedPlatform: string,
@@ -337,6 +392,32 @@ export function useNodeActions(params: UseNodeActionsParams) {
         hasInputImage: Boolean(strategy.inputImageForGeneration),
         hasVideoInput: Boolean(strategy.videoInput),
         referenceImagesCount: strategy.referenceImages?.length || 0,
+    });
+
+    const buildImageGenerationSourcePayload = (
+        node: AppNode,
+        inputImages: string[],
+    ) => ({
+        aspectRatio: node.data.aspectRatio || '16:9',
+        resolution: node.data.resolution,
+        count: node.data.imageCount || 1,
+        inputImagesCount: inputImages.length,
+    });
+
+    const buildAudioGenerationSourcePayload = (node: AppNode) => ({
+        hasReferenceAudio: Boolean(node.data.referenceAudio),
+        persona: node.data.persona,
+        emotion: node.data.emotion,
+    });
+
+    const buildImageEditorSourcePayload = (
+        node: AppNode,
+        inputImagesCount: number,
+    ) => ({
+        aspectRatio: node.data.aspectRatio || '16:9',
+        resolution: node.data.resolution,
+        inputImagesCount,
+        hasInlineImage: Boolean(node.data.image),
     });
 
     const collectJimengReferenceFiles = async (node: AppNode, inputs: AppNode[]) => {
@@ -1872,6 +1953,12 @@ export function useNodeActions(params: UseNodeActionsParams) {
             }).filter(t => t && t.trim().length > 0) as string[];
 
             const controlPromptOverrides = new Set([
+                'generate-image-node',
+                'cancel-image-generation',
+                'generate-audio-node',
+                'cancel-audio-generation',
+                'edit-image-node',
+                'cancel-image-edit',
                 'generate-video-node',
                 'cancel-video-generation',
                 'generate-jimeng-video',
@@ -2287,6 +2374,32 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 }
 
             } else if (node.type === NodeType.IMAGE_GENERATOR) {
+                if (promptOverride === 'cancel-image-generation') {
+                    const generationJobId = node.data.generationJobId;
+                    const abortController = abortControllersRef.current.get(id);
+                    if (abortController) {
+                        abortController.abort();
+                        abortControllersRef.current.delete(id);
+                    }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'CANCELLED',
+                        phase: 'CANCELLED',
+                        error: 'Task cancelled.',
+                        metadata: buildImageGenerationJobMetadata(id, getUserDefaultModel('image')),
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        progress: 0,
+                        error: undefined,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                }
+
                 // Extract style preset from inputs
                 const stylePresetNode = inputs.find(n => n.type === NodeType.STYLE_PRESET);
                 const stylePrefix = stylePresetNode?.data.stylePrompt || '';
@@ -2353,31 +2466,147 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                 // ✅ 检查缓存
                 const cachedImages = await checkImageNodeCache(id);
-                if (cachedImages && cachedImages.length > 0) {
+                const imageModel = getUserDefaultModel('image');
+                const generationMetadata = buildImageGenerationJobMetadata(id, imageModel);
+                const forceRegenerate = promptOverride === 'generate-image-node';
+                const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
+                    provider: 'gemini',
+                    model: imageModel,
+                    capability: 'image',
+                    prompt: finalPrompt,
+                    metadata: generationMetadata,
+                    sourcePayload: buildImageGenerationSourcePayload(node, inputImages),
+                });
+                const generationJobId = trackedJob?.id ?? node.data.generationJobId;
+                const resolvedCachedImages = forceRegenerate ? null : cachedImages;
+                if (resolvedCachedImages && resolvedCachedImages.length > 0) {
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'COMPLETED',
+                        phase: 'COMPLETED',
+                        progress: 100,
+                        error: null,
+                        resultUrl: resolvedCachedImages[0],
+                        resultPayload: {
+                            cached: true,
+                            imageCount: resolvedCachedImages.length,
+                        },
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
                     handleNodeUpdate(id, {
-                        image: cachedImages[0],
-                        images: cachedImages,
+                        image: resolvedCachedImages[0],
+                        images: resolvedCachedImages,
                         status: NodeStatus.SUCCESS,
                         isCached: true,
-                        cacheLocation: 'filesystem'
+                        cacheLocation: 'filesystem',
+                        isWorking: false,
+                        generationJobId,
                     });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
                 } else {
                     // ❌ 没有缓存，调用 API
-                    const { generateImageFromText } = await import('../services/geminiService');
-                    const res = await generateImageFromText(
-                        finalPrompt,
-                        getUserDefaultModel('image'),
-                        inputImages,
-                        { aspectRatio: node.data.aspectRatio || '16:9', resolution: node.data.resolution, count: node.data.imageCount },
-                        { nodeId: id, nodeType: node.type }
-                    );
                     handleNodeUpdate(id, {
-                        image: res[0],
-                        images: res,
-                        isCached: false
+                        progress: 0,
+                        error: undefined,
+                        isCached: false,
+                        isWorking: true,
+                        generationJobId,
                     });
-                    // Save to local storage
-                    await saveImageNodeOutput(id, res, 'IMAGE_GENERATOR');
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'RUNNING',
+                        phase: 'RUNNING',
+                        progress: 10,
+                        error: null,
+                        metadata: generationMetadata,
+                    });
+
+                    const abortController = new AbortController();
+                    abortControllersRef.current.set(id, abortController);
+
+                    try {
+                        const { generateImageFromText } = await import('../services/geminiService');
+                        const res = await generateImageFromText(
+                            finalPrompt,
+                            imageModel,
+                            inputImages,
+                            { aspectRatio: node.data.aspectRatio || '16:9', resolution: node.data.resolution, count: node.data.imageCount },
+                            { nodeId: id, nodeType: node.type }
+                        );
+
+                        if (abortController.signal.aborted) {
+                            throw createGenerationAbortError();
+                        }
+
+                        abortControllersRef.current.delete(id);
+
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'COMPLETED',
+                            phase: 'COMPLETED',
+                            progress: 100,
+                            error: null,
+                            resultUrl: res[0] ?? null,
+                            resultPayload: {
+                                cached: false,
+                                imageCount: res.length,
+                            },
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
+                        handleNodeUpdate(id, {
+                            image: res[0],
+                            images: res,
+                            isCached: false,
+                            isWorking: false,
+                            generationJobId,
+                        });
+                        await saveImageNodeOutput(id, res, 'IMAGE_GENERATOR');
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
+                    } catch (error: any) {
+                        abortControllersRef.current.delete(id);
+
+                        if (isGenerationCancelledError(error, abortController.signal)) {
+                            await updateTrackedGenerationJob(generationJobId, {
+                                status: 'CANCELLED',
+                                phase: 'CANCELLED',
+                                error: 'Task cancelled.',
+                                metadata: generationMetadata,
+                                completedAt: new Date().toISOString(),
+                            });
+
+                            handleNodeUpdate(id, {
+                                progress: 0,
+                                error: undefined,
+                                isWorking: false,
+                                generationJobId,
+                            });
+                            setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                            return;
+                        }
+
+                        const errorMessage = typeof error?.message === 'string'
+                            ? error.message
+                            : 'Image generation failed.';
+
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'FAILED',
+                            phase: 'FAILED',
+                            error: errorMessage,
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
+                        handleNodeUpdate(id, {
+                            error: errorMessage,
+                            isWorking: false,
+                            generationJobId,
+                        });
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                        throw error;
+                    }
                 }
 
             } else if (node.type === NodeType.VIDEO_GENERATOR) {
@@ -2604,6 +2833,32 @@ export function useNodeActions(params: UseNodeActionsParams) {
                 }
 
             } else if (node.type === NodeType.AUDIO_GENERATOR) {
+                if (promptOverride === 'cancel-audio-generation') {
+                    const generationJobId = node.data.generationJobId;
+                    const abortController = abortControllersRef.current.get(id);
+                    if (abortController) {
+                        abortController.abort();
+                        abortControllersRef.current.delete(id);
+                    }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'CANCELLED',
+                        phase: 'CANCELLED',
+                        error: 'Task cancelled.',
+                        metadata: buildAudioGenerationJobMetadata(id, node.data.model || getUserDefaultModel('audio')),
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        progress: 0,
+                        error: undefined,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                }
+
                 // Extract style preset from inputs
                 const stylePresetNode = inputs.find(n => n.type === NodeType.STYLE_PRESET);
                 const stylePrefix = stylePresetNode?.data.stylePrompt || '';
@@ -2611,23 +2866,138 @@ export function useNodeActions(params: UseNodeActionsParams) {
 
                 // ✅ 检查缓存
                 const cachedAudio = await checkAudioNodeCache(id);
-                if (cachedAudio) {
+                const audioModel = node.data.model || getUserDefaultModel('audio');
+                const generationMetadata = buildAudioGenerationJobMetadata(id, audioModel);
+                const forceRegenerate = promptOverride === 'generate-audio-node';
+                const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
+                    provider: 'gemini',
+                    model: audioModel,
+                    capability: 'audio',
+                    prompt: finalPrompt,
+                    metadata: generationMetadata,
+                    sourcePayload: buildAudioGenerationSourcePayload(node),
+                });
+                const generationJobId = trackedJob?.id ?? node.data.generationJobId;
+                const resolvedCachedAudio = forceRegenerate ? null : cachedAudio;
+
+                if (resolvedCachedAudio) {
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'COMPLETED',
+                        phase: 'COMPLETED',
+                        progress: 100,
+                        error: null,
+                        resultUrl: resolvedCachedAudio,
+                        resultPayload: {
+                            cached: true,
+                        },
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
                     handleNodeUpdate(id, {
-                        audioUri: cachedAudio,
+                        audioUri: resolvedCachedAudio,
                         status: NodeStatus.SUCCESS,
                         isCached: true,
-                        cacheLocation: 'filesystem'
+                        cacheLocation: 'filesystem',
+                        isWorking: false,
+                        generationJobId,
                     });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
                 } else {
                     // ❌ 没有缓存，调用 API
-                    const { generateAudio } = await import('../services/geminiService');
-                    const audioUri = await generateAudio(finalPrompt, node.data.model);
                     handleNodeUpdate(id, {
-                        audioUri: audioUri,
-                        isCached: false
+                        progress: 0,
+                        error: undefined,
+                        isCached: false,
+                        isWorking: true,
+                        generationJobId,
                     });
-                    // Save to local storage
-                    await saveAudioNodeOutput(id, audioUri, 'AUDIO_GENERATOR');
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'RUNNING',
+                        phase: 'RUNNING',
+                        progress: 10,
+                        error: null,
+                        metadata: generationMetadata,
+                    });
+
+                    const abortController = new AbortController();
+                    abortControllersRef.current.set(id, abortController);
+
+                    try {
+                        const { generateAudio } = await import('../services/geminiService');
+                        const audioUri = await generateAudio(finalPrompt, audioModel);
+
+                        if (abortController.signal.aborted) {
+                            throw createGenerationAbortError();
+                        }
+
+                        abortControllersRef.current.delete(id);
+
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'COMPLETED',
+                            phase: 'COMPLETED',
+                            progress: 100,
+                            error: null,
+                            resultUrl: audioUri,
+                            resultPayload: {
+                                cached: false,
+                            },
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
+                        handleNodeUpdate(id, {
+                            audioUri,
+                            isCached: false,
+                            isWorking: false,
+                            generationJobId,
+                        });
+                        await saveAudioNodeOutput(id, audioUri, 'AUDIO_GENERATOR');
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
+                    } catch (error: any) {
+                        abortControllersRef.current.delete(id);
+
+                        if (isGenerationCancelledError(error, abortController.signal)) {
+                            await updateTrackedGenerationJob(generationJobId, {
+                                status: 'CANCELLED',
+                                phase: 'CANCELLED',
+                                error: 'Task cancelled.',
+                                metadata: generationMetadata,
+                                completedAt: new Date().toISOString(),
+                            });
+
+                            handleNodeUpdate(id, {
+                                progress: 0,
+                                error: undefined,
+                                isWorking: false,
+                                generationJobId,
+                            });
+                            setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                            return;
+                        }
+
+                        const errorMessage = typeof error?.message === 'string'
+                            ? error.message
+                            : 'Audio generation failed.';
+
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'FAILED',
+                            phase: 'FAILED',
+                            error: errorMessage,
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
+                        handleNodeUpdate(id, {
+                            error: errorMessage,
+                            isWorking: false,
+                            generationJobId,
+                        });
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                        throw error;
+                    }
                 }
 
             } else if (node.type === NodeType.STORYBOARD_GENERATOR) {
@@ -3591,6 +3961,32 @@ Everything else must be purely visual with no text whatsoever.
                 const txt = await analyzeVideo(vidData, prompt, node.data.model);
                 handleNodeUpdate(id, { analysis: txt });
             } else if (node.type === NodeType.IMAGE_EDITOR) {
+                if (promptOverride === 'cancel-image-edit') {
+                    const generationJobId = node.data.generationJobId;
+                    const abortController = abortControllersRef.current.get(id);
+                    if (abortController) {
+                        abortController.abort();
+                        abortControllersRef.current.delete(id);
+                    }
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'CANCELLED',
+                        phase: 'CANCELLED',
+                        error: 'Task cancelled.',
+                        metadata: buildImageEditorGenerationJobMetadata(id, node.data.model || getUserDefaultModel('image')),
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        progress: 0,
+                        error: undefined,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                }
+
                 // Extract style preset from inputs
                 const stylePresetNode = inputs.find(n => n.type === NodeType.STYLE_PRESET);
                 const stylePrefix = stylePresetNode?.data.stylePrompt || '';
@@ -3599,9 +3995,113 @@ Everything else must be purely visual with no text whatsoever.
                 const inputImages: string[] = [];
                 inputs.forEach(n => { if (n?.data.image) inputImages.push(n.data.image); });
                 const img = node.data.image || inputImages[0];
-                const { editImageWithText } = await import('../services/geminiService');
-                const res = await editImageWithText(img, finalPrompt, node.data.model);
-                handleNodeUpdate(id, { image: res });
+                if (!img) {
+                    throw new Error('Image editor requires at least one source image.');
+                }
+
+                const imageEditModel = node.data.model || getUserDefaultModel('image');
+                const generationMetadata = buildImageEditorGenerationJobMetadata(id, imageEditModel);
+                const trackedJob = await queueTrackedNodeGenerationJob(node.data.generationJobId, {
+                    provider: 'gemini',
+                    model: imageEditModel,
+                    capability: 'image',
+                    prompt: finalPrompt,
+                    metadata: generationMetadata,
+                    sourcePayload: buildImageEditorSourcePayload(node, inputImages.length),
+                });
+                const generationJobId = trackedJob?.id ?? node.data.generationJobId;
+
+                handleNodeUpdate(id, {
+                    progress: 0,
+                    error: undefined,
+                    isWorking: true,
+                    generationJobId,
+                });
+
+                await updateTrackedGenerationJob(generationJobId, {
+                    status: 'RUNNING',
+                    phase: 'RUNNING',
+                    progress: 10,
+                    error: null,
+                    metadata: generationMetadata,
+                });
+
+                const abortController = new AbortController();
+                abortControllersRef.current.set(id, abortController);
+
+                try {
+                    const { editImageWithText } = await import('../services/geminiService');
+                    const res = await editImageWithText(img, finalPrompt, imageEditModel);
+
+                    if (abortController.signal.aborted) {
+                        throw createGenerationAbortError();
+                    }
+
+                    abortControllersRef.current.delete(id);
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'COMPLETED',
+                        phase: 'COMPLETED',
+                        progress: 100,
+                        error: null,
+                        resultUrl: res,
+                        resultPayload: {
+                            edited: true,
+                        },
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        image: res,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    await saveImageNodeOutput(id, [res], 'IMAGE_EDITOR');
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                    return;
+                } catch (error: any) {
+                    abortControllersRef.current.delete(id);
+
+                    if (isGenerationCancelledError(error, abortController.signal)) {
+                        await updateTrackedGenerationJob(generationJobId, {
+                            status: 'CANCELLED',
+                            phase: 'CANCELLED',
+                            error: 'Task cancelled.',
+                            metadata: generationMetadata,
+                            completedAt: new Date().toISOString(),
+                        });
+
+                        handleNodeUpdate(id, {
+                            progress: 0,
+                            error: undefined,
+                            isWorking: false,
+                            generationJobId,
+                        });
+                        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
+                        return;
+                    }
+
+                    const errorMessage = typeof error?.message === 'string'
+                        ? error.message
+                        : 'Image edit failed.';
+
+                    await updateTrackedGenerationJob(generationJobId, {
+                        status: 'FAILED',
+                        phase: 'FAILED',
+                        error: errorMessage,
+                        metadata: generationMetadata,
+                        completedAt: new Date().toISOString(),
+                    });
+
+                    handleNodeUpdate(id, {
+                        error: errorMessage,
+                        isWorking: false,
+                        generationJobId,
+                    });
+                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR } : n));
+                    throw error;
+                }
             }
             setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS } : n));
         } catch (e: any) {

@@ -1326,6 +1326,9 @@ export const App = () => {
 
     if (
       source === 'storyboard-video-generator'
+      || source === 'image-generator'
+      || source === 'audio-generator'
+      || source === 'image-editor'
       || source === 'video-generator'
       || source === 'jimeng-video-generator'
     ) {
