@@ -4,6 +4,49 @@ export interface ApiResponse<T = unknown> {
   error?: string;
 }
 
+export interface UploadedAudioReference {
+  url: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+export type CanvasNodeType = 'text' | 'image' | 'audio' | 'video';
+export type CanvasRunStatus = 'idle' | 'running' | 'success' | 'error';
+export type CanvasInputValueType = 'text' | 'image' | 'video' | 'audio';
+
+export interface CanvasModelInputDefinition {
+  type: CanvasInputValueType;
+  label?: string;
+  required?: boolean;
+  multiple?: boolean;
+  maxItems?: number;
+}
+
+export interface CanvasConfigFieldDefinition {
+  type: 'string' | 'number' | 'boolean';
+  label?: string;
+  default?: string | number | boolean;
+  enum?: Array<string | number>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface CanvasConnection {
+  id: string;
+  from: string;
+  to: string;
+  inputType?: CanvasInputValueType;
+}
+
+export interface CanvasNodeOutput {
+  text?: string;
+  previewUrl?: string;
+  providerJobId?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface ReviewResult {
   policyId: string;
   passed: boolean;
@@ -26,12 +69,17 @@ export interface ReviewPolicy {
 }
 
 export interface ModelDefinition {
-  id: string;
+  familyId: string;
+  familyName: string;
+  deploymentId: string;
+  providerModelId: string;
+  aliases?: string[];
   name: string;
   vendor: string;
-  modality: 'text' | 'image' | 'audio' | 'video';
+  modality: CanvasNodeType;
   capabilities: string[];
-  configSchema: Record<string, unknown>;
+  inputSchema: Record<string, CanvasModelInputDefinition>;
+  configSchema: Record<string, CanvasConfigFieldDefinition>;
   adapter: string;
 }
 
@@ -72,6 +120,7 @@ export interface StageConfig {
   reviewPolicyIds: string[];
   capabilityId: string;
   modelId: string;
+  modelParams?: Record<string, unknown>;
   promptRecipeId?: string;
 }
 
@@ -198,13 +247,21 @@ export interface EpisodeContext {
 
 export interface CanvasNode {
   id: string;
-  type: 'text' | 'image' | 'audio' | 'video';
+  type: CanvasNodeType;
   title: string;
   x: number;
   y: number;
   width: number;
   height: number;
   content: string;
+  modelId?: string;
+  prompt?: string;
+  params?: Record<string, unknown>;
+  output?: CanvasNodeOutput;
+  runStatus?: CanvasRunStatus;
+  error?: string | null;
+  lastRunAt?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface EpisodeWorkspace {
@@ -212,6 +269,7 @@ export interface EpisodeWorkspace {
   projectId: string;
   content: {
     nodes: CanvasNode[];
+    connections?: CanvasConnection[];
     [key: string]: unknown;
   };
   updatedAt: string;
@@ -237,6 +295,7 @@ export interface StudioWorkspace {
   title: string;
   content: {
     nodes: CanvasNode[];
+    connections?: CanvasConnection[];
     [key: string]: unknown;
   };
   importedAssets: Array<{
@@ -284,4 +343,42 @@ export interface WorkflowRun {
 export interface ProjectRunBundle {
   capabilityRuns: CapabilityRun[];
   workflowRuns: WorkflowRun[];
+}
+
+export interface CanvasNodeRunResult {
+  workspaceKind: 'episode' | 'studio';
+  episodeId?: string;
+  workspaceId?: string;
+  nodeId: string;
+  content: {
+    nodes: CanvasNode[];
+    connections?: CanvasConnection[];
+    [key: string]: unknown;
+  };
+  pending?: boolean;
+  providerJob?: {
+    id: string;
+    status: string;
+    phase?: string;
+    videoUrl?: string;
+    error?: string;
+    progress?: number;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+export interface JimengJob {
+  id: string;
+  prompt: string;
+  status: string;
+  phase: string;
+  progress: number;
+  error?: string;
+  videoUrl?: string;
+  metadata?: Record<string, unknown>;
+  attempts?: number;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  completed_at?: string;
 }

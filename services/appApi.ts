@@ -4,9 +4,11 @@ import type {
   CapabilityDefinition,
   CapabilityRun,
   CanonicalAsset,
+  CanvasNodeRunResult,
   Episode,
   EpisodeContext,
   EpisodeWorkspace,
+  JimengJob,
   ModelDefinition,
   ProjectDetail,
   ProjectMember,
@@ -18,6 +20,7 @@ import type {
   SkillPack,
   StageConfigMap,
   StudioWorkspace,
+  UploadedAudioReference,
 } from '../types/workflowApp';
 
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || '/api';
@@ -84,6 +87,15 @@ export const appApi = {
     });
   },
 
+  uploadAudioReference: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return apiRequest<UploadedAudioReference>('/uploads/audio-reference', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+
   getProjectSetup: (projectId: string) =>
     apiRequest<{ setup: ProjectSetup | null; storyBible: ProjectDetail['storyBible']; latestScriptSource: ScriptSource | null }>(
       `/projects/${projectId}/setup`,
@@ -115,6 +127,15 @@ export const appApi = {
       body: JSON.stringify(payload),
     }),
 
+  runCanvasNode: (payload: Record<string, unknown>) =>
+    apiRequest<CanvasNodeRunResult>('/canvas/node-runs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getJimengJob: (jobId: string) =>
+    apiRequest<JimengJob>(`/jimeng/jobs/${jobId}`),
+
   listAssets: (projectId: string) => apiRequest<CanonicalAsset[]>(`/projects/${projectId}/assets`),
   createAsset: (projectId: string, payload: Record<string, unknown>) =>
     apiRequest<{ asset: CanonicalAsset }>(`/projects/${projectId}/assets`, {
@@ -144,7 +165,7 @@ export const appApi = {
   createStudioWorkspace: (payload: { title: string }) =>
     apiRequest<StudioWorkspace>('/studio/workspaces', {
       method: 'POST',
-      body: JSON.stringify({ ...payload, content: { nodes: [] }, importedAssets: [] }),
+      body: JSON.stringify({ ...payload, content: { nodes: [], connections: [] }, importedAssets: [] }),
     }),
   getStudioWorkspace: (workspaceId: string) =>
     apiRequest<StudioWorkspace>(`/studio/workspaces/${workspaceId}`),

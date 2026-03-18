@@ -42,25 +42,16 @@ export default defineConfig(({ mode }) => {
               }
 
               // Services
-              if (id.includes('/services/geminiService') || id.includes('/services/geminiServiceWithFallback') || id.includes('/services/modelFallback')) return 'services-ai';
               if (id.includes('/services/storage/') || id.includes('/services/ossService')) return 'services-storage';
-              if (id.includes('/services/soraProviders/') || id.includes('/services/soraService') || id.includes('/services/soraConfigService') || id.includes('/services/soraModelConfig') || id.includes('/services/soraPromptBuilder')) return 'services-sora';
-              if (id.includes('/services/characterActionHandler') || id.includes('/services/characterGenerationManager')) return 'services-character';
-              if (id.includes('/services/modelConfig') || id.includes('/services/modelConfigManager') || id.includes('/services/modelConfigLoader') || id.includes('/services/promptManager')) return 'services-config';
-              if (id.includes('/services/videoPlatforms/') || id.includes('/services/videoGenerationService')) return 'services-video-platforms';
-              if (id.includes('/services/nodes/')) return 'services-nodes';
+              if (id.includes('/services/characterGenerationManager')) return 'services-character';
               if (id.includes('/services/apiInterceptor/')) return 'services-interceptor';
-
-              // Handlers
-              if (id.includes('/handlers/useNodeActions')) return 'services-node-handlers';
 
               // Editor components (lazy-loaded)
               if (id.includes('/components/VideoEditor') || id.includes('/components/StoryboardVideoNode') || id.includes('/components/StoryboardEditor') || id.includes('/components/StoryboardTimeline')) return 'editor-video';
-              if (id.includes('/components/SonicStudio')) return 'editor-audio';
               if (id.includes('/components/CharacterLibrary') || id.includes('/components/CharacterDetailModal')) return 'editor-character';
 
               // Panel components
-              if (id.includes('/components/SmartSequenceDock') || id.includes('/components/AssistantPanel') || id.includes('/components/ChatWindow') || id.includes('/components/SidebarDock') || id.includes('/components/Galaxy')) return 'panels-ui';
+              if (id.includes('/components/SmartSequenceDock') || id.includes('/components/ChatWindow') || id.includes('/components/Galaxy')) return 'panels-ui';
             },
           },
         },

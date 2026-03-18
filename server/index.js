@@ -14,10 +14,13 @@ import {
   setSessionCookie,
 } from './auth.js';
 import { ensureDatabaseReady, getResolvedDatabaseUrl } from './db.js';
+import { applyCanvasNodePatch, executeCanvasNode } from './canvasNodeRuntime.js';
 import { runCapability } from './capabilityEngine.js';
-import { CAPABILITIES, MODELS, REVIEW_POLICIES, SKILL_PACKS, buildDefaultStageConfig, getCapability, getSkillPack } from './registries.js';
+import { CAPABILITIES, MODELS, REVIEW_POLICIES, SKILL_PACKS, buildDefaultStageConfig, getCapability, getModel, getSkillPack } from './registries.js';
 import { extractScriptContent, extractTitle } from './scriptExtraction.js';
 import { createVideoTaskWithModel, generateImageWithModel, generateTextWithModel, pollVideoTask } from './modelRuntime.js';
+import { getJimengJobStatus, initializeJimengJobWorker, enqueueJimengJob } from './services/jimengJobManager.js';
+import jimengService from './services/jimengService.js';
 import {
   createOrUpdateAsset,
   createProject,
@@ -70,6 +73,11 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+const audioReferenceDir = path.join(uploadDir, 'audio-references');
+if (!fs.existsSync(audioReferenceDir)) {
+  fs.mkdirSync(audioReferenceDir, { recursive: true });
+}
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, uploadDir),
@@ -79,6 +87,18 @@ const upload = multer({
     fileSize: 15 * 1024 * 1024,
   },
 });
+
+const audioReferenceUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, audioReferenceDir),
+    filename: (_req, file, cb) => cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname || '')}`),
+  }),
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+  },
+});
+
+app.use('/media/audio-references', express.static(audioReferenceDir, { index: false }));
 
 function sendError(res, error, status = 500) {
   console.error(error);
@@ -168,12 +188,6 @@ function removeUploadedFile(file) {
   }
 }
 
-function resolveLegacyModel(preferredId, modality) {
-  return MODELS.find((item) => item.id === preferredId)
-    || MODELS.find((item) => item.modality === modality)
-    || null;
-}
-
 app.get('/api/health', async (_req, res) => {
   const dbReady = await ensureDatabaseReady();
   res.status(200).json({
@@ -253,122 +267,196 @@ app.get('/api/review-policies', authRequired, async (_req, res) => {
   res.json({ success: true, data: REVIEW_POLICIES });
 });
 
-app.post('/api/legacy/llm/content', authRequired, async (req, res) => {
+app.get('/api/jimeng/login', authRequired, async (_req, res) => {
   try {
-    const model = resolveLegacyModel(String(req.body?.model || '').trim(), 'text');
-    if (!model) {
-      return res.status(400).json({ success: false, error: 'No text model is available.' });
-    }
-
-    const text = await generateTextWithModel({
-      model,
-      prompt: String(req.body?.prompt || ''),
-      systemInstruction: req.body?.options?.systemInstruction || null,
-      contents: Array.isArray(req.body?.contents) ? req.body.contents : null,
-    });
-
-    res.json({
-      success: true,
-      data: {
-        text,
-        modelId: model.id,
-      },
-    });
+    const ready = await jimengService.login();
+    res.json({ success: true, data: { ready } });
   } catch (error) {
     sendError(res, error, 400);
   }
 });
 
-app.post('/api/legacy/llm/images', authRequired, async (req, res) => {
+app.post('/api/jimeng/jobs/seedance2', authRequired, upload.array('files', 2), async (req, res) => {
   try {
-    const model = resolveLegacyModel(String(req.body?.model || '').trim(), 'image');
-    if (!model) {
-      return res.status(400).json({ success: false, error: 'No image model is available.' });
+    const prompt = String(req.body?.prompt || '').trim();
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: 'Prompt is required.' });
     }
 
-    const image = await generateImageWithModel({
-      model,
-      prompt: String(req.body?.prompt || ''),
-      aspectRatio: String(req.body?.options?.aspectRatio || '9:16'),
-      imageSize: String(req.body?.options?.resolution || '2K'),
-      referenceImages: Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [],
-    });
-
-    res.json({
-      success: true,
-      data: {
-        images: image ? [image] : [],
-        modelId: model.id,
+    const files = Array.isArray(req.files) ? req.files : [];
+    const job = await enqueueJimengJob({
+      prompt,
+      referenceFiles: files,
+      metadata: {
+        projectId: String(req.body?.projectId || '').trim() || null,
+        workflowInstanceId: String(req.body?.workflowInstanceId || '').trim() || null,
+        source: 'jimeng-api',
       },
     });
+
+    res.status(201).json({ success: true, data: job });
   } catch (error) {
+    if (Array.isArray(req.files)) {
+      req.files.forEach((file) => removeUploadedFile(file));
+    }
     sendError(res, error, 400);
   }
 });
 
-app.post('/api/legacy/llm/video', authRequired, async (req, res) => {
+app.get('/api/jimeng/jobs/:id', authRequired, async (req, res) => {
   try {
-    const model = resolveLegacyModel(String(req.body?.model || '').trim(), 'video');
-    if (!model) {
-      return res.status(400).json({ success: false, error: 'No video model is available.' });
+    const job = await getJimengJobStatus(req.params.id);
+    if (!job) {
+      return res.status(404).json({ success: false, error: 'Jimeng job not found.' });
+    }
+    res.json({ success: true, data: job });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.post('/api/uploads/audio-reference', authRequired, audioReferenceUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'Please upload an audio file.' });
     }
 
-    const imagePayload = req.body?.image?.imageBytes
-      ? [`data:${req.body?.image?.mimeType || 'image/png'};base64,${req.body.image.imageBytes}`]
-      : [];
+    if (!String(req.file.mimetype || '').startsWith('audio/')) {
+      removeUploadedFile(req.file);
+      return res.status(400).json({ success: false, error: 'Only audio files can be used as audio references.' });
+    }
 
-    const referenceImages = Array.isArray(req.body?.config?.referenceImages)
-      ? req.body.config.referenceImages
-          .map((item) => item?.image?.imageBytes ? `data:${item?.image?.mimeType || 'image/png'};base64,${item.image.imageBytes}` : null)
-          .filter(Boolean)
-      : [];
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const url = new URL(`/media/audio-references/${encodeURIComponent(req.file.filename)}`, baseUrl).toString();
 
-    const images = [...imagePayload, ...referenceImages].slice(0, 1);
+    res.status(201).json({
+      success: true,
+      data: {
+        url,
+        name: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      },
+    });
+  } catch (error) {
+    removeUploadedFile(req.file);
+    sendError(res, error, 400);
+  }
+});
 
-    let previewUrl = null;
-    let taskId = null;
+app.post('/api/canvas/node-runs', authRequired, async (req, res) => {
+  let saveWorkspace = null;
+  let workingContent = null;
+  let nodeId = '';
+  let workspaceKind = req.body?.workspaceKind === 'studio' ? 'studio' : 'episode';
 
-    try {
-      taskId = await createVideoTaskWithModel({
-        model,
-        prompt: String(req.body?.prompt || ''),
-        ratio: req.body?.config?.aspectRatio || '16:9',
-        resolution: req.body?.config?.resolution || '720P',
-        duration: 5,
-        images,
-      });
+  try {
+    nodeId = String(req.body?.nodeId || '').trim();
+    if (!nodeId) {
+      return res.status(400).json({ success: false, error: 'nodeId is required.' });
+    }
 
-      const result = await pollVideoTask({ taskId });
-      previewUrl = result.output || null;
-    } catch (error) {
-      const imageModel = resolveLegacyModel('', 'image');
-      if (!imageModel) {
-        throw error;
+    if (workspaceKind === 'episode') {
+      const episodeId = String(req.body?.episodeId || '').trim();
+      if (!episodeId) {
+        return res.status(400).json({ success: false, error: 'episodeId is required.' });
       }
 
-      previewUrl = await generateImageWithModel({
-        model: imageModel,
-        prompt: `Cinematic frame, ${String(req.body?.prompt || '')}`,
-        aspectRatio: req.body?.config?.aspectRatio || '16:9',
-        referenceImages: images,
+      const episode = await getEpisodeById(episodeId);
+      if (!episode) {
+        return res.status(404).json({ success: false, error: 'Episode not found.' });
+      }
+
+      const member = await getProjectMember(episode.projectId, req.user.id);
+      if (!member) {
+        return res.status(403).json({ success: false, error: 'You do not have permission to operate on this episode.' });
+      }
+
+      const currentWorkspace = await getEpisodeWorkspace(episodeId);
+      const currentContent = req.body?.content || currentWorkspace?.content || { nodes: [], connections: [] };
+      saveWorkspace = (nextContent) => upsertEpisodeWorkspace({
+        episodeId,
+        projectId: episode.projectId,
+        content: nextContent,
       });
-      taskId = null;
+      workingContent = {
+        ...currentContent,
+        nodes: Array.isArray(currentContent?.nodes) ? currentContent.nodes : [],
+        connections: Array.isArray(currentContent?.connections) ? currentContent.connections : [],
+      };
+    } else {
+      const workspaceId = String(req.body?.workspaceId || '').trim();
+      if (!workspaceId) {
+        return res.status(400).json({ success: false, error: 'workspaceId is required.' });
+      }
+
+      const currentWorkspace = await getStudioWorkspace(workspaceId, req.user.id);
+      if (!currentWorkspace) {
+        return res.status(404).json({ success: false, error: 'Studio workspace not found.' });
+      }
+
+      const currentContent = req.body?.content || currentWorkspace.content || { nodes: [], connections: [] };
+      saveWorkspace = (nextContent) => updateStudioWorkspace(workspaceId, req.user.id, { content: nextContent });
+      workingContent = {
+        ...currentContent,
+        nodes: Array.isArray(currentContent?.nodes) ? currentContent.nodes : [],
+        connections: Array.isArray(currentContent?.connections) ? currentContent.connections : [],
+      };
     }
+
+    const node = Array.isArray(workingContent?.nodes)
+      ? workingContent.nodes.find((item) => item.id === nodeId) || null
+      : null;
+    if (!node) {
+      return res.status(404).json({ success: false, error: 'Canvas node not found.' });
+    }
+
+    if (!node.modelId) {
+      return res.status(400).json({ success: false, error: 'Please choose a model for this node first.' });
+    }
+
+    const model = getModel(node.modelId);
+    if (!model) {
+      return res.status(400).json({ success: false, error: 'Unknown model.' });
+    }
+
+    const runningContent = applyCanvasNodePatch(workingContent, nodeId, {
+      runStatus: 'running',
+      error: null,
+    });
+    const runningWorkspace = await saveWorkspace(runningContent);
+    const result = await executeCanvasNode({
+      content: runningWorkspace?.content || runningContent,
+      nodeId,
+      model,
+      uploadDir,
+    });
+    const savedWorkspace = await saveWorkspace(result.content);
 
     res.json({
       success: true,
       data: {
-        operation: {
-          done: true,
-          response: {
-            generatedVideos: previewUrl
-              ? [{ video: { uri: previewUrl, taskId } }]
-              : [],
-          },
-        },
+        workspaceKind,
+        ...(workspaceKind === 'episode'
+          ? { episodeId: String(req.body?.episodeId || '').trim() }
+          : { workspaceId: String(req.body?.workspaceId || '').trim() }),
+        nodeId,
+        content: savedWorkspace?.content || result.content,
+        pending: Boolean(result.pending),
+        providerJob: result.providerJob || null,
       },
     });
   } catch (error) {
+    if (saveWorkspace && workingContent && nodeId) {
+      try {
+        await saveWorkspace(applyCanvasNodePatch(workingContent, nodeId, {
+          runStatus: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      } catch (persistError) {
+        console.error('[canvas-node-run] Failed to persist error state:', persistError);
+      }
+    }
     sendError(res, error, 400);
   }
 });
@@ -659,7 +747,7 @@ app.post('/api/projects/:projectId/episodes/:episodeId/analyze', authRequired, a
       || 'seedance-director-v1';
     const modelId = req.body?.modelId
       || project?.setup?.stageConfig?.episode_expand?.modelId
-      || 'gemini-3.1-pro-preview';
+      || 'gemini-3.1-pro@bltcy';
 
     const run = await runCapability({
       capabilityId: 'episode_expand',
@@ -759,6 +847,7 @@ app.get('/api/studio/workspaces', authRequired, async (req, res) => {
         title: 'My Studio',
         content: {
           nodes: [],
+          connections: [],
         },
         importedAssets: [],
       })];
@@ -774,7 +863,7 @@ app.post('/api/studio/workspaces', authRequired, async (req, res) => {
     const workspace = await createStudioWorkspace({
       userId: req.user.id,
       title: String(req.body?.title || 'My Studio'),
-      content: req.body?.content || { nodes: [] },
+      content: req.body?.content || { nodes: [], connections: [] },
       importedAssets: req.body?.importedAssets || [],
     });
     res.status(201).json({ success: true, data: workspace });
@@ -871,6 +960,9 @@ app.post('/api/capability-runs', authRequired, async (req, res) => {
 
 app.listen(port, async () => {
   const initialized = await ensureDatabaseReady();
+  await initializeJimengJobWorker().catch((error) => {
+    console.error('[jimeng-job] Failed to initialize worker:', error);
+  });
   const host = getResolvedDatabaseUrl().replace(/:[^:@/]+@/, ':****@');
   console.log(`[workflow] online server listening on http://localhost:${port}`);
   console.log(`[workflow] database ${initialized ? 'ready' : 'unavailable'} -> ${host}`);

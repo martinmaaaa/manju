@@ -1,4 +1,4 @@
-const JIMENG_API_BASE = 'http://localhost:3001/api/jimeng';
+const JIMENG_API_BASE = `${(import.meta as any).env?.VITE_API_BASE || '/api'}/jimeng`;
 
 export interface JimengGenerateOptions {
     prompt: string;
@@ -63,7 +63,9 @@ function mapJob(payload: any): JimengJob | undefined {
 export const jimengApi = {
     async login(): Promise<JimengLoginResult> {
         try {
-            const res = await fetch(`${JIMENG_API_BASE}/login`);
+            const res = await fetch(`${JIMENG_API_BASE}/login`, {
+                credentials: 'include',
+            });
             const data = await res.json();
             return {
                 success: Boolean(data.success),
@@ -97,6 +99,7 @@ export const jimengApi = {
             const res = await fetch(`${JIMENG_API_BASE}/jobs/seedance2`, {
                 method: 'POST',
                 body: formData,
+                credentials: 'include',
             });
             const data = await res.json();
 
@@ -113,7 +116,9 @@ export const jimengApi = {
 
     async getJob(jobId: string): Promise<JimengJobResult> {
         try {
-            const res = await fetch(`${JIMENG_API_BASE}/jobs/${jobId}`);
+            const res = await fetch(`${JIMENG_API_BASE}/jobs/${jobId}`, {
+                credentials: 'include',
+            });
             const data = await res.json();
 
             return {

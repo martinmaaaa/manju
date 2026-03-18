@@ -273,6 +273,34 @@ export function buildEpisodeWorkspaceSeed({ episode, lockedAssets, storyBible, p
     .filter(Boolean)
     .join('\n');
 
+  const assetNodes = lockedAssets.map((asset, index) => {
+    const currentVersion = Array.isArray(asset.versions)
+      ? asset.versions.find((item) => item.id === asset.currentVersionId) || asset.versions[0]
+      : null;
+
+    return {
+      id: `asset-${asset.id}`,
+      type: 'image',
+      title: `${asset.type} · ${asset.name}`,
+      x: 60 + (index % 4) * 250,
+      y: 650 + Math.floor(index / 4) * 220,
+      width: 220,
+      height: 180,
+      content: currentVersion?.previewUrl || '',
+      prompt: currentVersion?.promptText || asset.description || '',
+      params: {},
+      output: currentVersion?.previewUrl ? { previewUrl: currentVersion.previewUrl } : {},
+      runStatus: 'idle',
+      error: null,
+      lastRunAt: null,
+      metadata: {
+        lockedAssetId: asset.id,
+        assetType: asset.type,
+        sourceVersionId: asset.currentVersionId || null,
+      },
+    };
+  });
+
   return {
     nodes: [
       {
@@ -284,6 +312,13 @@ export function buildEpisodeWorkspaceSeed({ episode, lockedAssets, storyBible, p
         width: 320,
         height: 220,
         content: episode.synopsis,
+        prompt: '',
+        params: {},
+        output: { text: episode.synopsis },
+        runStatus: 'idle',
+        error: null,
+        lastRunAt: null,
+        metadata: {},
       },
       {
         id: `storyboard-${episode.id}`,
@@ -294,6 +329,13 @@ export function buildEpisodeWorkspaceSeed({ episode, lockedAssets, storyBible, p
         width: 320,
         height: 220,
         content: '待补充分镜节拍与镜头运动。',
+        prompt: '',
+        params: {},
+        output: {},
+        runStatus: 'idle',
+        error: null,
+        lastRunAt: null,
+        metadata: {},
       },
       {
         id: `prompt-${episode.id}`,
@@ -304,37 +346,54 @@ export function buildEpisodeWorkspaceSeed({ episode, lockedAssets, storyBible, p
         width: 360,
         height: 260,
         content: promptSeed,
+        prompt: '',
+        params: {},
+        output: { text: promptSeed },
+        runStatus: 'idle',
+        error: null,
+        lastRunAt: null,
+        metadata: {},
       },
       {
         id: `visual-${episode.id}`,
         type: 'image',
-        title: '视觉参考',
+        title: '图片参考',
         x: 120,
         y: 360,
         width: 300,
         height: 220,
         content: '',
-      },
-      {
-        id: `audio-${episode.id}`,
-        type: 'audio',
-        title: '音频设计',
-        x: 500,
-        y: 360,
-        width: 300,
-        height: 220,
-        content: '对白、环境音与音乐提示待补充。',
+        prompt: '',
+        params: {},
+        output: {},
+        runStatus: 'idle',
+        error: null,
+        lastRunAt: null,
+        metadata: {},
       },
       {
         id: `video-${episode.id}`,
         type: 'video',
-        title: '视频输出',
+        title: '视频生成',
         x: 880,
         y: 380,
         width: 300,
         height: 220,
         content: '',
+        prompt: '',
+        params: {},
+        output: {},
+        runStatus: 'idle',
+        error: null,
+        lastRunAt: null,
+        metadata: {},
       },
+      ...assetNodes,
+    ],
+    connections: [
+      { id: `conn-script-storyboard-${episode.id}`, from: `script-${episode.id}`, to: `storyboard-${episode.id}`, inputType: 'text' },
+      { id: `conn-storyboard-prompt-${episode.id}`, from: `storyboard-${episode.id}`, to: `prompt-${episode.id}`, inputType: 'text' },
+      { id: `conn-prompt-video-${episode.id}`, from: `prompt-${episode.id}`, to: `video-${episode.id}`, inputType: 'text' },
     ],
   };
 }

@@ -39,6 +39,10 @@ function isBltcyAdapter(model, adapter) {
   return Boolean(model) && model.adapter === adapter;
 }
 
+function getProviderModelId(model) {
+  return model?.providerModelId || model?.deploymentId || '';
+}
+
 export function hasLiveTextModelSupport(model) {
   return Boolean(getApiKey()) && isBltcyAdapter(model, 'bltcy-openai-chat');
 }
@@ -116,7 +120,7 @@ export async function generateTextWithModel({
       Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({
-      model: model.id,
+      model: getProviderModelId(model),
       temperature,
       messages,
     }),
@@ -146,7 +150,7 @@ export async function generateJsonWithModel({
       Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({
-      model: model.id,
+      model: getProviderModelId(model),
       temperature,
       messages: [
         {
@@ -190,7 +194,7 @@ export async function generateImageWithModel({
       Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({
-      model: model.id,
+      model: getProviderModelId(model),
       prompt,
       aspect_ratio: aspectRatio,
       image_size: imageSize,
@@ -216,24 +220,50 @@ export async function createVideoTaskWithModel({
   resolution = '720P',
   duration = 5,
   images = [],
+  generateAudio = false,
+  audioReferenceUrls = [],
 }) {
   assertConfigured();
 
-  const response = await fetch(`${getBaseUrl()}/v2/videos/generations`, {
+  const supportsAudioOutput = Boolean(model?.configSchema?.generateAudio);
+  const requestHeaders = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${getApiKey()}`,
+  };
+  const basePayload = {
+    prompt,
+    model: getProviderModelId(model),
+    ratio,
+    resolution,
+    duration,
+    images: Array.isArray(images) ? images : [],
+  };
+  const primaryPayload = {
+    ...basePayload,
+    ...(supportsAudioOutput && generateAudio ? { generate_audio: true } : {}),
+    ...(supportsAudioOutput && generateAudio && Array.isArray(audioReferenceUrls) && audioReferenceUrls.length > 0
+      ? { audio_urls: audioReferenceUrls }
+      : {}),
+  };
+
+  let response = await fetch(`${getBaseUrl()}/v2/videos/generations`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getApiKey()}`,
-    },
-    body: JSON.stringify({
-      prompt,
-      model: model.id,
-      ratio,
-      resolution,
-      duration,
-      images: Array.isArray(images) ? images : [],
-    }),
+    headers: requestHeaders,
+    body: JSON.stringify(primaryPayload),
   });
+
+  if (!response.ok && Array.isArray(primaryPayload.audio_urls) && primaryPayload.audio_urls.length > 0) {
+    const fallbackPayload = {
+      ...basePayload,
+      ...(supportsAudioOutput && generateAudio ? { generate_audio: true } : {}),
+    };
+
+    response = await fetch(`${getBaseUrl()}/v2/videos/generations`, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify(fallbackPayload),
+    });
+  }
 
   if (!response.ok) {
     const body = await response.text();

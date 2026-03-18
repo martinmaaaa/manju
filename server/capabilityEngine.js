@@ -42,6 +42,34 @@ function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function isHttpUrl(value) {
+  return /^https?:\/\//i.test(String(value || '').trim());
+}
+
+function isPublicReferenceUrl(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    return ['http:', 'https:'].includes(parsed.protocol)
+      && !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function modelConfigDefault(model, key, fallbackValue) {
+  const entry = model?.configSchema?.[key];
+  if (entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'default')) {
+    return entry.default;
+  }
+
+  return fallbackValue;
+}
+
 function summarizeStyle(project) {
   return [
     project.setup?.styleSummary || '',
@@ -234,10 +262,13 @@ function evaluateReviewPolicies({ reviewPolicyIds, stageKind, outputPayload }) {
           ? '资产设计输出有效，可进入资产锁定或继续出图。'
           : '资产阶段没有产出可用资产或预览结果。';
       } else if (stageKind === 'video_prompt_generate') {
-        passed = typeof outputPayload.prompt === 'string' && outputPayload.prompt.length >= 80;
+        const promptText = typeof outputPayload.prompt === 'string' ? outputPayload.prompt : '';
+        const voicePrompt = typeof outputPayload.voicePrompt === 'string' ? outputPayload.voicePrompt : '';
+        const beatSheet = cleanArray(outputPayload.beatSheet || outputPayload.beats);
+        passed = promptText.length >= 80 || voicePrompt.length >= 30 || beatSheet.length > 0;
         notes = passed
-          ? '视频提示词内容完整，可继续进入视频生成。'
-          : '视频提示词过短，无法作为稳定的视频生成输入。';
+          ? '视频提示词阶段已有可用输出，可继续进入后续生成。'
+          : '视频提示词阶段没有产出足够完整的提示词、配音稿或分镜节拍。';
       } else if (stageKind === 'video_generate') {
         passed = typeof outputPayload.previewUrl === 'string' && outputPayload.previewUrl.length > 0;
         notes = passed
@@ -592,9 +623,6 @@ async function runVideoPromptGenerate({ project, episode, model, skillPack, inpu
       if (String(node.id).startsWith('prompt-')) {
         return { ...node, content: promptPayload.prompt };
       }
-      if (String(node.id).startsWith('audio-') && promptPayload.voicePrompt) {
-        return { ...node, content: promptPayload.voicePrompt };
-      }
       if (String(node.id).startsWith('storyboard-') && promptPayload.beatSheet.length > 0) {
         return { ...node, content: promptPayload.beatSheet.join('\n') };
       }
@@ -619,18 +647,66 @@ async function runVideoPromptGenerate({ project, episode, model, skillPack, inpu
   };
 }
 
+async function runVoicePromptGenerate({ project, episode, model, skillPack, inputPayload }) {
+  const promptBundle = await runVideoPromptGenerate({
+    project,
+    episode,
+    model,
+    skillPack,
+    inputPayload,
+  });
+
+  return {
+    prompt: promptBundle.voicePrompt,
+    voicePrompt: promptBundle.voicePrompt,
+    promptRecipeId: promptBundle.promptRecipeId,
+    videoPrompt: promptBundle.prompt,
+  };
+}
+
+async function runStoryboardGenerate({ project, episode, model, skillPack, inputPayload }) {
+  const promptBundle = await runVideoPromptGenerate({
+    project,
+    episode,
+    model,
+    skillPack,
+    inputPayload,
+  });
+
+  return {
+    beats: promptBundle.beatSheet,
+    beatSheet: promptBundle.beatSheet,
+    promptRecipeId: promptBundle.promptRecipeId,
+    prompt: promptBundle.prompt,
+  };
+}
+
 async function runVideoGenerate({ project, episode, model, inputPayload }) {
   const workspace = await getEpisodeWorkspace(episode.id);
-  const promptNode = cleanArray(workspace?.content?.nodes).find((node) => String(node.id).startsWith('prompt-'));
-  const imageNodes = cleanArray(workspace?.content?.nodes)
-    .filter((node) => node.type === 'image' && /^https?:\/\//.test(String(node.content || '').trim()))
-    .map((node) => String(node.content).trim())
-    .slice(0, 1);
+  const workspaceNodes = cleanArray(workspace?.content?.nodes);
+  const promptNode = workspaceNodes.find((node) => String(node.id).startsWith('prompt-'));
+  const imageNodes = workspaceNodes
+    .filter((node) => node.type === 'image' && isHttpUrl(node.content))
+    .map((node) => String(node.content || '').trim());
+  const workspaceAudioReferenceUrls = workspaceNodes
+    .filter((node) => node.type === 'audio' && isHttpUrl(node.content))
+    .map((node) => String(node.content || '').trim());
+  const requestedAudioReferenceUrls = cleanArray(inputPayload.audioReferenceUrls)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  const audioReferenceUrls = (requestedAudioReferenceUrls.length > 0 ? requestedAudioReferenceUrls : workspaceAudioReferenceUrls)
+    .filter((value, index, array) => array.indexOf(value) === index);
+  const forwardedAudioReferenceUrls = audioReferenceUrls.filter(isPublicReferenceUrl);
 
   const prompt = String(inputPayload.prompt || '').trim() || String(promptNode?.content || '').trim() || episode.synopsis;
   if (!prompt) {
     throw new Error('Video generation requires a prompt.');
   }
+
+  const ratio = String(inputPayload.ratio || project.setup?.aspectRatio || modelConfigDefault(model, 'ratio', '9:16'));
+  const resolution = String(inputPayload.resolution || modelConfigDefault(model, 'resolution', '720P'));
+  const duration = Number(inputPayload.duration || modelConfigDefault(model, 'durationSeconds', 5));
+  const generateAudio = Boolean(inputPayload.generateAudio ?? modelConfigDefault(model, 'generateAudio', false));
 
   let taskId = null;
   let previewUrl = buildMockVideoUrl(episode.id);
@@ -639,10 +715,12 @@ async function runVideoGenerate({ project, episode, model, inputPayload }) {
     taskId = await createVideoTaskWithModel({
       model,
       prompt,
-      ratio: String(inputPayload.ratio || project.setup?.aspectRatio || '9:16'),
-      resolution: String(inputPayload.resolution || '720P'),
-      duration: Number(inputPayload.duration || 5),
+      ratio,
+      resolution,
+      duration,
       images: Array.isArray(inputPayload.images) && inputPayload.images.length > 0 ? inputPayload.images : imageNodes,
+      generateAudio,
+      audioReferenceUrls: forwardedAudioReferenceUrls,
     });
 
     const result = await pollVideoTask({ taskId });
@@ -672,11 +750,17 @@ async function runVideoGenerate({ project, episode, model, inputPayload }) {
     videoPreviewUrl: previewUrl,
     videoTaskId: taskId,
     usedLiveModel: hasLiveVideoModelSupport(model),
+    generateAudio,
+    audioReferenceDetected: audioReferenceUrls.length > 0,
+    forwardedAudioReferenceCount: forwardedAudioReferenceUrls.length,
   });
 
   return {
     previewUrl,
     taskId,
+    generateAudio,
+    audioReferenceDetected: audioReferenceUrls.length > 0,
+    forwardedAudioReferenceCount: forwardedAudioReferenceUrls.length,
   };
 }
 
@@ -702,7 +786,7 @@ export async function runCapability({
     projectId: inputPayload.projectId ?? null,
     episodeId: inputPayload.episodeId ?? null,
     capabilityId,
-    modelId: model.id,
+    modelId: model.deploymentId,
     skillPackId: skillPack?.id ?? null,
     inputPayload,
   });
@@ -713,7 +797,7 @@ export async function runCapability({
         stageKind: capability.stageKind,
         capabilityRunId: capabilityRun.id,
         config: {
-          modelId: model.id,
+          modelId: model.deploymentId,
           skillPackId: skillPack?.id ?? null,
         },
       })
@@ -776,6 +860,32 @@ export async function runCapability({
       if (!project) throw new Error('Project not found.');
 
       outputPayload = await runVideoPromptGenerate({
+        project,
+        episode,
+        model,
+        skillPack,
+        inputPayload,
+      });
+    } else if (capabilityId === 'voice_prompt_generate') {
+      const episode = await getEpisodeById(inputPayload.episodeId);
+      if (!episode) throw new Error('Episode not found.');
+      project = await getProjectById(episode.projectId);
+      if (!project) throw new Error('Project not found.');
+
+      outputPayload = await runVoicePromptGenerate({
+        project,
+        episode,
+        model,
+        skillPack,
+        inputPayload,
+      });
+    } else if (capabilityId === 'storyboard_generate') {
+      const episode = await getEpisodeById(inputPayload.episodeId);
+      if (!episode) throw new Error('Episode not found.');
+      project = await getProjectById(episode.projectId);
+      if (!project) throw new Error('Project not found.');
+
+      outputPayload = await runStoryboardGenerate({
         project,
         episode,
         model,

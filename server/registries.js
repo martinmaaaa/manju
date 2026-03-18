@@ -15,7 +15,11 @@ export const REVIEW_POLICIES = [
 
 export const MODELS = [
   {
-    id: 'gemini-3.1-pro-preview',
+    familyId: 'gemini-3.1-pro',
+    familyName: 'Gemini 3.1 Pro',
+    deploymentId: 'gemini-3.1-pro@bltcy',
+    providerModelId: 'gemini-3.1-pro-preview',
+    aliases: ['gemini-3.1-pro-preview'],
     name: 'Gemini 3.1 Pro',
     vendor: 'bltcy',
     modality: 'text',
@@ -28,36 +32,70 @@ export const MODELS = [
       'voice_prompt_generate',
       'storyboard_generate',
     ],
+    inputSchema: {},
     configSchema: {
-      temperature: { type: 'number', min: 0, max: 2, default: 0.4 },
-      maxOutputTokens: { type: 'number', min: 256, max: 32768, default: 4096 },
+      temperature: { type: 'number', label: '温度', min: 0, max: 2, default: 0.4, step: 0.1 },
+      maxOutputTokens: { type: 'number', label: '最大输出', min: 256, max: 32768, default: 4096, step: 256 },
     },
     adapter: 'bltcy-openai-chat',
   },
   {
-    id: 'nano-banana-2',
+    familyId: 'nano-banana-2',
+    familyName: 'Nano Banana 2',
+    deploymentId: 'nano-banana-2@bltcy',
+    providerModelId: 'nano-banana-2',
+    aliases: ['nano-banana-2'],
     name: 'Nano Banana 2',
     vendor: 'bltcy',
     modality: 'image',
     capabilities: ['character_generate', 'scene_generate', 'prop_generate'],
+    inputSchema: {
+      text: { type: 'text', label: '文本提示', required: false, maxItems: 1 },
+      images: { type: 'image', label: '参考图片', required: false, multiple: true, maxItems: 4 },
+    },
     configSchema: {
-      aspectRatio: { type: 'string', enum: ['1:1', '3:4', '4:3', '9:16', '16:9'], default: '9:16' },
-      imageSize: { type: 'string', enum: ['1K', '2K', '4K'], default: '2K' },
+      aspectRatio: { type: 'string', label: '比例', enum: ['1:1', '3:4', '4:3', '9:16', '16:9'], default: '9:16' },
+      imageSize: { type: 'string', label: '清晰度', enum: ['1K', '2K', '4K'], default: '2K' },
     },
     adapter: 'bltcy-image-generation',
   },
   {
-    id: 'grok-video-3',
+    familyId: 'grok-video-3',
+    familyName: 'Grok Video 3',
+    deploymentId: 'grok-video-3@bltcy',
+    providerModelId: 'grok-video-3',
+    aliases: ['grok-video-3'],
     name: 'Grok Video 3',
     vendor: 'bltcy',
     modality: 'video',
     capabilities: ['video_generate'],
+    inputSchema: {
+      text: { type: 'text', label: '文本提示', required: false, maxItems: 1 },
+      images: { type: 'image', label: '参考图片', required: false, multiple: true, maxItems: 1 },
+    },
     configSchema: {
-      ratio: { type: 'string', enum: ['1:1', '3:4', '4:3', '9:16', '16:9'], default: '9:16' },
-      resolution: { type: 'string', enum: ['720P', '1080P'], default: '720P' },
-      durationSeconds: { type: 'number', enum: [5, 10, 15], default: 5 },
+      ratio: { type: 'string', label: '比例', enum: ['1:1', '3:4', '4:3', '9:16', '16:9'], default: '9:16' },
+      resolution: { type: 'string', label: '清晰度', enum: ['720P', '1080P'], default: '720P' },
+      durationSeconds: { type: 'number', label: '时长', enum: [5, 10, 15], default: 5 },
     },
     adapter: 'bltcy-video-generation',
+  },
+  {
+    familyId: 'seedance-2.0',
+    familyName: 'Seedance 2.0',
+    deploymentId: 'seedance-2.0@bendi',
+    providerModelId: 'doubao-seedance-1-0-pro-250528',
+    aliases: ['seedance-2.0@jimeng', 'doubao-seedance-1-0-pro-250528'],
+    name: 'seedance2-bendi',
+    vendor: 'bendi',
+    modality: 'video',
+    capabilities: ['video_generate'],
+    inputSchema: {
+      text: { type: 'text', label: '文本提示', required: false, maxItems: 1 },
+      images: { type: 'image', label: '参考图片', required: false, multiple: true, maxItems: 2 },
+    },
+    configSchema: {},
+    adapter: 'jimeng-video-generation',
   },
 ];
 
@@ -75,8 +113,8 @@ export const CAPABILITIES = [
       createdAssetCount: 'number',
       createdEpisodeCount: 'number',
     },
-    defaultModelId: 'gemini-3.1-pro-preview',
-    allowedModelIds: ['gemini-3.1-pro-preview'],
+    defaultModelId: 'gemini-3.1-pro@bltcy',
+    allowedModelIds: ['gemini-3.1-pro@bltcy'],
   },
   {
     id: 'episode_expand',
@@ -89,8 +127,8 @@ export const CAPABILITIES = [
       episodeContext: 'object',
       workspaceSeed: 'object',
     },
-    defaultModelId: 'gemini-3.1-pro-preview',
-    allowedModelIds: ['gemini-3.1-pro-preview'],
+    defaultModelId: 'gemini-3.1-pro@bltcy',
+    allowedModelIds: ['gemini-3.1-pro@bltcy'],
   },
   {
     id: 'asset_extract',
@@ -103,8 +141,8 @@ export const CAPABILITIES = [
     outputSchema: {
       assets: 'array',
     },
-    defaultModelId: 'gemini-3.1-pro-preview',
-    allowedModelIds: ['gemini-3.1-pro-preview'],
+    defaultModelId: 'gemini-3.1-pro@bltcy',
+    allowedModelIds: ['gemini-3.1-pro@bltcy'],
   },
   {
     id: 'character_generate',
@@ -117,8 +155,8 @@ export const CAPABILITIES = [
     outputSchema: {
       previewUrl: 'string',
     },
-    defaultModelId: 'nano-banana-2',
-    allowedModelIds: ['nano-banana-2'],
+    defaultModelId: 'nano-banana-2@bltcy',
+    allowedModelIds: ['nano-banana-2@bltcy'],
   },
   {
     id: 'scene_generate',
@@ -131,8 +169,8 @@ export const CAPABILITIES = [
     outputSchema: {
       previewUrl: 'string',
     },
-    defaultModelId: 'nano-banana-2',
-    allowedModelIds: ['nano-banana-2'],
+    defaultModelId: 'nano-banana-2@bltcy',
+    allowedModelIds: ['nano-banana-2@bltcy'],
   },
   {
     id: 'prop_generate',
@@ -145,8 +183,8 @@ export const CAPABILITIES = [
     outputSchema: {
       previewUrl: 'string',
     },
-    defaultModelId: 'nano-banana-2',
-    allowedModelIds: ['nano-banana-2'],
+    defaultModelId: 'nano-banana-2@bltcy',
+    allowedModelIds: ['nano-banana-2@bltcy'],
   },
   {
     id: 'image_prompt_generate',
@@ -159,8 +197,8 @@ export const CAPABILITIES = [
     outputSchema: {
       prompt: 'string',
     },
-    defaultModelId: 'gemini-3.1-pro-preview',
-    allowedModelIds: ['gemini-3.1-pro-preview'],
+    defaultModelId: 'gemini-3.1-pro@bltcy',
+    allowedModelIds: ['gemini-3.1-pro@bltcy'],
   },
   {
     id: 'video_prompt_generate',
@@ -174,8 +212,8 @@ export const CAPABILITIES = [
       prompt: 'string',
       promptRecipeId: 'string',
     },
-    defaultModelId: 'gemini-3.1-pro-preview',
-    allowedModelIds: ['gemini-3.1-pro-preview'],
+    defaultModelId: 'gemini-3.1-pro@bltcy',
+    allowedModelIds: ['gemini-3.1-pro@bltcy'],
   },
   {
     id: 'voice_prompt_generate',
@@ -187,8 +225,8 @@ export const CAPABILITIES = [
     outputSchema: {
       prompt: 'string',
     },
-    defaultModelId: 'gemini-3.1-pro-preview',
-    allowedModelIds: ['gemini-3.1-pro-preview'],
+    defaultModelId: 'gemini-3.1-pro@bltcy',
+    allowedModelIds: ['gemini-3.1-pro@bltcy'],
   },
   {
     id: 'storyboard_generate',
@@ -200,8 +238,8 @@ export const CAPABILITIES = [
     outputSchema: {
       beats: 'array',
     },
-    defaultModelId: 'gemini-3.1-pro-preview',
-    allowedModelIds: ['gemini-3.1-pro-preview'],
+    defaultModelId: 'gemini-3.1-pro@bltcy',
+    allowedModelIds: ['gemini-3.1-pro@bltcy'],
   },
   {
     id: 'video_generate',
@@ -210,13 +248,19 @@ export const CAPABILITIES = [
     inputSchema: {
       episodeId: 'string',
       prompt: 'string?',
+      ratio: 'string?',
+      resolution: 'string?',
+      duration: 'number?',
+      images: 'array?',
+      audioReferenceUrls: 'array?',
+      generateAudio: 'boolean?',
     },
     outputSchema: {
       previewUrl: 'string',
       taskId: 'string?',
     },
-    defaultModelId: 'grok-video-3',
-    allowedModelIds: ['grok-video-3'],
+    defaultModelId: 'seedance-2.0@bendi',
+    allowedModelIds: ['seedance-2.0@bendi', 'grok-video-3@bltcy'],
   },
 ];
 
@@ -308,8 +352,21 @@ export function getCapability(capabilityId) {
   return CAPABILITIES.find((item) => item.id === capabilityId);
 }
 
+function matchesModelIdentifier(model, modelId) {
+  const normalizedModelId = String(modelId || '').trim();
+  if (!normalizedModelId) {
+    return false;
+  }
+
+  return [
+    model.deploymentId,
+    model.providerModelId,
+    ...(Array.isArray(model.aliases) ? model.aliases : []),
+  ].filter(Boolean).includes(normalizedModelId);
+}
+
 export function getModel(modelId) {
-  return MODELS.find((item) => item.id === modelId);
+  return MODELS.find((item) => matchesModelIdentifier(item, modelId));
 }
 
 export function getSkillPack(skillPackId) {
@@ -322,31 +379,48 @@ export function buildDefaultStageConfig() {
       skillPackId: 'seedance-director-v1',
       reviewPolicyIds: ['business-review', 'compliance-review'],
       capabilityId: 'script_decompose',
-      modelId: 'gemini-3.1-pro-preview',
+      modelId: 'gemini-3.1-pro@bltcy',
+      modelParams: {
+        temperature: 0.4,
+        maxOutputTokens: 4096,
+      },
     },
     asset_design: {
       skillPackId: 'seedance-art-design-v1',
       reviewPolicyIds: ['business-review', 'compliance-review'],
       capabilityId: 'asset_extract',
-      modelId: 'gemini-3.1-pro-preview',
+      modelId: 'gemini-3.1-pro@bltcy',
+      modelParams: {
+        temperature: 0.4,
+        maxOutputTokens: 4096,
+      },
     },
     episode_expand: {
       skillPackId: 'seedance-director-v1',
       reviewPolicyIds: [],
       capabilityId: 'episode_expand',
-      modelId: 'gemini-3.1-pro-preview',
+      modelId: 'gemini-3.1-pro@bltcy',
+      modelParams: {
+        temperature: 0.4,
+        maxOutputTokens: 4096,
+      },
     },
     video_prompt_generate: {
       skillPackId: 'seedance-storyboard-v1',
       reviewPolicyIds: ['business-review', 'compliance-review'],
       capabilityId: 'video_prompt_generate',
-      modelId: 'gemini-3.1-pro-preview',
+      modelId: 'gemini-3.1-pro@bltcy',
+      modelParams: {
+        temperature: 0.4,
+        maxOutputTokens: 4096,
+      },
       promptRecipeId: 'seedance-cinematic-v1',
     },
     video_generate: {
       reviewPolicyIds: [],
       capabilityId: 'video_generate',
-      modelId: 'grok-video-3',
+      modelId: 'seedance-2.0@bendi',
+      modelParams: {},
     },
   };
 }
