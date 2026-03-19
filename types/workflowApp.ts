@@ -14,13 +14,23 @@ export interface UploadedAudioReference {
 export type CanvasNodeType = 'text' | 'image' | 'audio' | 'video';
 export type CanvasRunStatus = 'idle' | 'running' | 'success' | 'error';
 export type CanvasInputValueType = 'text' | 'image' | 'video' | 'audio';
+export type CanvasInputSlotKind = 'frame' | 'reference' | 'analysis' | 'prompt';
+
+export interface CanvasGenerationModeDefinition {
+  id: string;
+  label: string;
+  summaryLabel: string;
+  enabledInputKeys: string[];
+}
 
 export interface CanvasModelInputDefinition {
-  type: CanvasInputValueType;
+  accepts: CanvasInputValueType[];
   label?: string;
+  slotKind?: CanvasInputSlotKind;
   required?: boolean;
   multiple?: boolean;
   maxItems?: number;
+  showInNode?: boolean;
 }
 
 export interface CanvasConfigFieldDefinition {
@@ -37,6 +47,7 @@ export interface CanvasConnection {
   id: string;
   from: string;
   to: string;
+  inputKey: string;
   inputType?: CanvasInputValueType;
 }
 
@@ -53,6 +64,25 @@ export interface ReviewResult {
   notes: string;
 }
 
+export interface ReviewRuleDefinition {
+  id: string;
+  type: 'required_string' | 'min_array_length' | 'truthy' | 'blocklist';
+  description: string;
+  field?: string;
+  minLength?: number;
+  min?: number;
+  blockedTerms?: string[];
+}
+
+export interface ReviewProfileDefinition {
+  id: string;
+  strategy: 'all' | 'any' | 'blocklist';
+  ruleIds: string[];
+  successMessage?: string;
+  failureMessage?: string;
+  failureMessagePrefix?: string;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -66,6 +96,8 @@ export interface ReviewPolicy {
   name: string;
   description: string;
   defaultEnabledStageKinds: string[];
+  defaultProfileId?: string;
+  stageProfileIds?: Record<string, string>;
 }
 
 export interface ModelDefinition {
@@ -80,6 +112,8 @@ export interface ModelDefinition {
   capabilities: string[];
   inputSchema: Record<string, CanvasModelInputDefinition>;
   configSchema: Record<string, CanvasConfigFieldDefinition>;
+  generationModes?: CanvasGenerationModeDefinition[];
+  defaultGenerationModeId?: string;
   adapter: string;
 }
 
@@ -99,12 +133,59 @@ export interface SkillPackPromptRecipe {
   description: string;
 }
 
+export interface SkillSchemaPromptBlock {
+  id: string;
+  label: string;
+  template: string;
+  requiredKeys?: string[];
+}
+
+export interface SkillSchemaOutputField {
+  key: string;
+  type: 'string' | 'number' | 'boolean' | 'string[]' | 'object' | 'object[]';
+  description: string;
+  itemFields?: SkillSchemaOutputField[];
+}
+
+export interface SkillSchemaArtifactBinding {
+  target: string;
+  sourceField: string;
+  transform?: 'identity' | 'joinLines';
+}
+
+export interface SkillSchemaReviewConfigEntry {
+  profileId: string;
+}
+
+export interface SkillExecutionSchema {
+  id: string;
+  version: string;
+  stageKind: string;
+  systemInstruction: string;
+  promptBlocks: SkillSchemaPromptBlock[];
+  outputContract: {
+    format: 'json';
+    fields: SkillSchemaOutputField[];
+  };
+  artifactBindings?: {
+    workspaceNodes?: SkillSchemaArtifactBinding[];
+    episodeContextRecord?: SkillSchemaArtifactBinding[];
+    episodeContext?: SkillSchemaArtifactBinding[];
+    storyBible?: SkillSchemaArtifactBinding[];
+    assetRecords?: SkillSchemaArtifactBinding[];
+    setupMetadata?: SkillSchemaArtifactBinding[];
+  };
+  reviewConfig?: Record<string, SkillSchemaReviewConfigEntry>;
+}
+
 export interface SkillPack {
   id: string;
   name: string;
   stageKind: string;
   source: string;
   executionRole: string;
+  schemaId?: string;
+  capabilitySchemaIds?: Record<string, string>;
   description: string;
   promptMethodology: string;
   templates: {
@@ -113,6 +194,8 @@ export interface SkillPack {
   };
   reviewPolicies: string[];
   promptRecipes: SkillPackPromptRecipe[];
+  schema?: SkillExecutionSchema;
+  schemasByCapability?: Record<string, SkillExecutionSchema>;
 }
 
 export interface StageConfig {
@@ -255,6 +338,7 @@ export interface CanvasNode {
   height: number;
   content: string;
   modelId?: string;
+  modeId?: string;
   prompt?: string;
   params?: Record<string, unknown>;
   output?: CanvasNodeOutput;
@@ -264,14 +348,59 @@ export interface CanvasNode {
   metadata?: Record<string, unknown>;
 }
 
+export interface EpisodeShotClip {
+  videoUrl: string;
+  sourceNodeId: string;
+  savedAt: string;
+  modelId: string;
+  promptText: string;
+  durationLabel?: string;
+  thumbnailUrl?: string;
+}
+
+export interface EpisodeShotJob {
+  sourceNodeId: string;
+  providerJobId?: string | null;
+  status: string;
+  phase?: string;
+  progress?: number;
+  error?: string | null;
+  updatedAt: string;
+  previewUrl?: string;
+}
+
+export interface EpisodeShotSlot {
+  id: string;
+  source: 'storyboard' | 'manual';
+  title: string;
+  summary: string;
+  promptText: string;
+  order: number;
+  durationLabel?: string;
+  recommendedModelId?: string;
+  recommendedModeId?: string;
+  referenceAssetNames?: string[];
+  clip: EpisodeShotClip | null;
+  job?: EpisodeShotJob | null;
+}
+
+export interface EpisodeShotStrip {
+  selectedShotId: string | null;
+  slots: EpisodeShotSlot[];
+  removedSlotIds?: string[];
+}
+
+export interface EpisodeWorkspaceContent {
+  nodes: CanvasNode[];
+  connections?: CanvasConnection[];
+  shotStrip?: EpisodeShotStrip;
+  [key: string]: unknown;
+}
+
 export interface EpisodeWorkspace {
   episodeId: string;
   projectId: string;
-  content: {
-    nodes: CanvasNode[];
-    connections?: CanvasConnection[];
-    [key: string]: unknown;
-  };
+  content: EpisodeWorkspaceContent;
   updatedAt: string;
 }
 

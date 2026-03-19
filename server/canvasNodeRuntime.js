@@ -59,6 +59,35 @@ function isMatchingSourceValue(type, value) {
   return false;
 }
 
+function getAcceptedInputTypes(definition) {
+  return Array.isArray(definition?.accepts)
+    ? definition.accepts.filter((value) => typeof value === 'string')
+    : [];
+}
+
+function getModelGenerationMode(model, modeId) {
+  const generationModes = Array.isArray(model?.generationModes) ? model.generationModes.filter((mode) => mode?.id) : [];
+  if (generationModes.length === 0) {
+    return null;
+  }
+
+  return generationModes.find((mode) => mode.id === modeId)
+    || generationModes.find((mode) => mode.id === model?.defaultGenerationModeId)
+    || generationModes[0]
+    || null;
+}
+
+function getEnabledInputDefinitions(node, model) {
+  const definitions = Object.entries(model?.inputSchema || {}).filter(([, definition]) => Array.isArray(definition?.accepts));
+  const activeMode = getModelGenerationMode(model, node?.modeId);
+  if (!activeMode) {
+    return definitions;
+  }
+
+  const enabledInputKeys = new Set(activeMode.enabledInputKeys || []);
+  return definitions.filter(([inputKey]) => enabledInputKeys.has(inputKey));
+}
+
 export function applyCanvasNodePatch(content, nodeId, patch) {
   const nextContent = {
     ...(content || {}),
@@ -72,12 +101,14 @@ export function applyCanvasNodePatch(content, nodeId, patch) {
 export function collectCanvasNodeInputs(content, node, model) {
   const nodes = cleanArray(content?.nodes);
   const connections = cleanArray(content?.connections);
-  const groupedInputs = {
-    text: [],
-    image: [],
-    video: [],
-    audio: [],
-  };
+  const enabledDefinitions = new Map(getEnabledInputDefinitions(node, model));
+  const groupedInputs = Array.from(enabledDefinitions.entries()).reduce((accumulator, [inputKey, definition]) => {
+    accumulator[inputKey] = {
+      definition,
+      items: [],
+    };
+    return accumulator;
+  }, {});
 
   if (!model?.inputSchema) {
     return groupedInputs;
@@ -97,24 +128,89 @@ export function collectCanvasNodeInputs(content, node, model) {
         return;
       }
 
-      const matchingDefinition = Object.values(model.inputSchema).find((definition) => definition?.type === sourceType);
+      const matchingDefinition = enabledDefinitions.get(connection.inputKey);
       if (!matchingDefinition) {
         return;
       }
 
-      groupedInputs[sourceType].push({
+      if (!getAcceptedInputTypes(matchingDefinition).includes(sourceType)) {
+        return;
+      }
+
+      groupedInputs[connection.inputKey].items.push({
         node: sourceNode,
         value: sourceValue,
+        inputType: sourceType,
       });
     });
 
   return groupedInputs;
 }
 
+function flattenInputsByType(groupedInputs) {
+  return Object.values(groupedInputs).reduce((accumulator, bucket) => {
+    bucket.items.forEach((item) => {
+      if (!accumulator[item.inputType]) {
+        accumulator[item.inputType] = [];
+      }
+      accumulator[item.inputType].push(item);
+    });
+    return accumulator;
+  }, {
+    text: [],
+    image: [],
+    video: [],
+    audio: [],
+  });
+}
+
+function summarizeAssetReferences(groupedInputs) {
+  const references = [];
+
+  Object.entries(groupedInputs).forEach(([inputKey, bucket]) => {
+    cleanArray(bucket?.items).forEach((item) => {
+      const metadata = asObject(item?.node?.metadata);
+      const assetId = String(metadata.lockedAssetId || '').trim();
+      if (!assetId) {
+        return;
+      }
+
+      const versionNumber = Number(metadata.sourceVersionNumber);
+      references.push({
+        assetId,
+        assetName: String(metadata.lockedAssetName || item.node?.title || '').trim(),
+        assetType: String(metadata.assetType || item.node?.type || '').trim(),
+        versionId: String(metadata.sourceVersionId || '').trim() || null,
+        versionNumber: Number.isFinite(versionNumber) ? versionNumber : null,
+        versionLabel: String(metadata.sourceVersionLabel || '').trim() || 'manual',
+        inputKey,
+        inputType: item.inputType,
+        nodeId: item.node?.id || null,
+      });
+    });
+  });
+
+  return Array.from(new Map(references.map((reference) => [
+    `${reference.assetId}:${reference.versionId || 'none'}:${reference.inputKey}:${reference.nodeId || 'none'}`,
+    reference,
+  ])).values());
+}
+
+function summarizeInputCounts(groupedInputs) {
+  const inputsByType = flattenInputsByType(groupedInputs);
+  return {
+    text: inputsByType.text.length,
+    image: inputsByType.image.length,
+    video: inputsByType.video.length,
+    audio: inputsByType.audio.length,
+  };
+}
+
 function joinTextInputs(node, groupedInputs) {
+  const inputsByType = flattenInputsByType(groupedInputs);
   return [
     getNodePrompt(node),
-    ...groupedInputs.text.map((item) => item.value),
+    ...inputsByType.text.map((item) => item.value),
   ]
     .map((item) => String(item || '').trim())
     .filter(Boolean)
@@ -131,6 +227,10 @@ function extensionFromMimeType(mimeType = '') {
   if (normalized.includes('webp')) return '.webp';
   if (normalized.includes('jpeg') || normalized.includes('jpg')) return '.jpg';
   if (normalized.includes('bmp')) return '.bmp';
+  if (normalized.includes('mp4')) return '.mp4';
+  if (normalized.includes('quicktime') || normalized.includes('mov')) return '.mov';
+  if (normalized.includes('mpeg') || normalized.includes('mp3')) return '.mp3';
+  if (normalized.includes('wav')) return '.wav';
   return '.bin';
 }
 
@@ -149,10 +249,10 @@ async function writeReferenceBuffer(buffer, mimeType, directory) {
 }
 
 async function downloadReferenceFile(source, directory) {
-  if (/^data:image\/[\w.+-]+;base64,/i.test(source)) {
+  if (/^data:[\w.+-]+\/[\w.+-]+;base64,/i.test(source)) {
     const [header, base64Data] = source.split(',', 2);
     const mimeMatch = header.match(/^data:([^;]+);base64$/i);
-    const mimeType = mimeMatch?.[1] || 'image/png';
+    const mimeType = mimeMatch?.[1] || 'application/octet-stream';
     const buffer = Buffer.from(base64Data || '', 'base64');
     return writeReferenceBuffer(buffer, mimeType, directory);
   }
@@ -167,11 +267,22 @@ async function downloadReferenceFile(source, directory) {
   return writeReferenceBuffer(buffer, mimeType, directory);
 }
 
-async function prepareJimengReferenceFiles(imageInputs, uploadDir) {
-  const referenceSources = imageInputs
-    .map((item) => item.value)
-    .filter(Boolean)
-    .slice(0, 2);
+function isJimengAllReferenceMode(modeId) {
+  return modeId === 'all_references' || modeId === 'references';
+}
+
+async function prepareJimengReferenceFiles(groupedInputs, uploadDir, modeId) {
+  const referenceSources = isJimengAllReferenceMode(modeId)
+    ? [
+        ...(groupedInputs.referenceAssets?.items || []).map((item) => item.value),
+        ...(groupedInputs.referenceImages?.items || []).map((item) => item.value),
+        ...(groupedInputs.referenceVideos?.items || []).map((item) => item.value),
+        ...(groupedInputs.referenceAudios?.items || []).map((item) => item.value),
+      ].filter(Boolean).slice(0, 12)
+    : [
+        ...(groupedInputs.startFrame?.items || []).map((item) => item.value),
+        ...(groupedInputs.endFrame?.items || []).map((item) => item.value),
+      ].filter(Boolean).slice(0, 2);
 
   if (referenceSources.length === 0) {
     return [];
@@ -201,8 +312,14 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
   }
 
   const groupedInputs = collectCanvasNodeInputs(content, node, model);
+  const inputsByType = flattenInputsByType(groupedInputs);
   const prompt = joinTextInputs(node, groupedInputs);
   const lastRunAt = new Date().toISOString();
+  const assetReferences = summarizeAssetReferences(groupedInputs);
+  const inputSummary = {
+    ...summarizeInputCounts(groupedInputs),
+    assetReferences: assetReferences.length,
+  };
 
   if (model.modality === 'text') {
     const finalPrompt = prompt || String(node.content || '').trim();
@@ -214,6 +331,16 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
       ? await generateTextWithModel({
           model,
           prompt: finalPrompt,
+          contents: inputsByType.image.length > 0 ? [{
+            role: 'user',
+            parts: [
+              { type: 'text', text: finalPrompt },
+              ...inputsByType.image.map((item) => ({
+                type: 'imageUrl',
+                url: item.value,
+              })),
+            ],
+          }] : undefined,
           temperature: normalizeNumber(node.params?.temperature, 0.3),
         })
       : finalPrompt;
@@ -225,6 +352,11 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
         output: {
           ...(asObject(node.output)),
           text: textOutput,
+          metadata: {
+            ...(asObject(node.output?.metadata)),
+            assetReferences,
+            inputSummary,
+          },
         },
         runStatus: 'success',
         error: null,
@@ -244,7 +376,7 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
           prompt,
           aspectRatio: String(node.params?.aspectRatio || model.configSchema?.aspectRatio?.default || '1:1'),
           imageSize: String(node.params?.imageSize || model.configSchema?.imageSize?.default || '2K'),
-          referenceImages: groupedInputs.image.map((item) => item.value),
+          referenceImages: (groupedInputs.referenceImages?.items || []).map((item) => item.value),
         })
       : createMockPreview('canvas-image');
 
@@ -255,6 +387,11 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
         output: {
           ...(asObject(node.output)),
           previewUrl,
+          metadata: {
+            ...(asObject(node.output?.metadata)),
+            assetReferences,
+            inputSummary,
+          },
         },
         runStatus: 'success',
         error: null,
@@ -268,7 +405,8 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
       throw new Error('视频节点缺少文本提示。');
     }
 
-    const referenceFiles = await prepareJimengReferenceFiles(groupedInputs.image, uploadDir);
+    const activeModeId = node.modeId || model.defaultGenerationModeId || '';
+    const referenceFiles = await prepareJimengReferenceFiles(groupedInputs, uploadDir, activeModeId);
     const job = await enqueueJimengJob({
       prompt,
       referenceFiles,
@@ -276,6 +414,10 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
         source: 'canvas-node',
         nodeId,
         modelId: model.deploymentId,
+        modeId: activeModeId || null,
+        inputKeys: Object.keys(groupedInputs).filter((inputKey) => groupedInputs[inputKey]?.items?.length > 0),
+        assetReferences,
+        inputSummary,
       },
     });
 
@@ -293,6 +435,9 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
             provider: 'jimeng',
             phase: job.phase,
             status: job.status,
+            modeId: activeModeId || null,
+            assetReferences,
+            inputSummary,
           },
         },
       }),
@@ -311,7 +456,7 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
           ratio: String(node.params?.ratio || model.configSchema?.ratio?.default || '9:16'),
           resolution: String(node.params?.resolution || model.configSchema?.resolution?.default || '720P'),
           duration: normalizeNumber(node.params?.durationSeconds, Number(model.configSchema?.durationSeconds?.default || 5)),
-          images: groupedInputs.image.map((item) => item.value),
+          images: (groupedInputs.referenceImages?.items || []).map((item) => item.value),
         })
       : null;
     const result = taskId ? await pollVideoTask({ taskId }) : null;
@@ -325,6 +470,11 @@ export async function executeCanvasNode({ content, nodeId, model, uploadDir }) {
           ...(asObject(node.output)),
           previewUrl,
           providerJobId: taskId || undefined,
+          metadata: {
+            ...(asObject(node.output?.metadata)),
+            assetReferences,
+            inputSummary,
+          },
         },
         runStatus: 'success',
         error: null,

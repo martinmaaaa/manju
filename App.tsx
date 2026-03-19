@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, LogOut, Plus, RefreshCw, Sparkles, Upload, UserPlus, Wand2 } from 'lucide-react';
 import { AppShell } from './components/workflow2/AppShell';
 import { CanvasSurface } from './components/workflow2/CanvasSurface';
+import { EpisodeShotStrip } from './components/workflow2/EpisodeShotStrip';
 import { appApi } from './services/appApi';
 import {
   resolveCapabilityModelId,
@@ -9,11 +10,30 @@ import {
   selectCapability,
 } from './services/workflow/runtime/capabilityCatalogHelpers';
 import {
+  buildCanvasNodeModelChangePatch,
+  buildCanvasConnectionId,
   buildCanvasNodeStagePresetPatch,
   createCanvasNode,
   getNodePrimaryValue,
   normalizeCanvasContent,
+  validateCanvasConnection,
 } from './services/workflow/runtime/canvasGraphHelpers';
+import {
+  appendManualEpisodeShotSlot,
+  buildEpisodeShotClip,
+  buildEpisodeShotStrip,
+  clearEpisodeShotClip,
+  clearEpisodeShotJob,
+  deleteEpisodeShotSlot,
+  findSelectedEpisodeShot,
+  renameEpisodeShotSlot,
+  reorderEpisodeShotSlot,
+  saveClipToEpisodeShotStrip,
+  selectEpisodeShotSlot,
+  splitShotStripSegments,
+  summarizeEpisodeShotStrip,
+  upsertEpisodeShotJob,
+} from './services/workflow/runtime/episodeShotStripHelpers';
 import {
   getEpisodeAssetNodeId,
   getEpisodePrimaryNodeId,
@@ -35,6 +55,7 @@ import {
   applyStageModelParamChange,
   applyStageModelSelection,
   resolveStageModelParams,
+  selectSkillPackCapabilitySchemaId,
   selectStagePromptRecipe,
   selectStageSkillPack,
 } from './services/workflow/runtime/stageConfigHelpers';
@@ -45,12 +66,15 @@ import {
 import { SchemaFieldControl } from './components/workflow2/SchemaFieldControl';
 import type {
   AuthUser,
+  AssetVersion,
   CapabilityDefinition,
   CanvasNode,
   CanonicalAsset,
   CapabilityRun,
   Episode,
   EpisodeContext,
+  EpisodeShotJob,
+  EpisodeShotStrip as EpisodeShotStripState,
   EpisodeWorkspace,
   ModelDefinition,
   ProjectDetail,
@@ -171,6 +195,47 @@ function assetPreview(asset: CanonicalAsset) {
   return asset.versions.find((item) => item.id === asset.currentVersionId)?.previewUrl || asset.versions[0]?.previewUrl || '';
 }
 
+function currentAssetVersion(asset: CanonicalAsset): AssetVersion | null {
+  return asset.versions.find((item) => item.id === asset.currentVersionId) || asset.versions[0] || null;
+}
+
+function assetVersionSourceLabel(version: AssetVersion) {
+  return String(
+    (version.sourcePayload as Record<string, unknown>)?.source
+    || (version.metadata as Record<string, unknown>)?.source
+    || 'manual',
+  )
+    .replace(/[_-]+/g, ' ')
+    .trim();
+}
+
+function assetVersionDisplay(asset: CanonicalAsset) {
+  const version = currentAssetVersion(asset);
+  if (!version) {
+    return {
+      versionId: null,
+      versionNumber: null,
+      versionLabel: 'manual',
+    };
+  }
+
+  return {
+    versionId: version.id,
+    versionNumber: version.versionNumber,
+    versionLabel: assetVersionSourceLabel(version) || 'manual',
+  };
+}
+
+function nodeAssetVersionDisplay(node: CanvasNode | null | undefined) {
+  const metadata = (node?.metadata || {}) as Record<string, unknown>;
+  const numericVersion = Number(metadata.sourceVersionNumber);
+  return {
+    versionId: String(metadata.sourceVersionId || '').trim() || null,
+    versionNumber: Number.isFinite(numericVersion) ? numericVersion : null,
+    versionLabel: String(metadata.sourceVersionLabel || '').trim() || 'manual',
+  };
+}
+
 function assetCapability(asset: CanonicalAsset) {
   if (asset.type === 'character') return 'character_generate';
   if (asset.type === 'scene') return 'scene_generate';
@@ -180,6 +245,32 @@ function assetCapability(asset: CanonicalAsset) {
 
 function reviewList(run: CapabilityRun | undefined): ReviewResult[] {
   return Array.isArray(run?.outputPayload?.reviews) ? (run.outputPayload.reviews as ReviewResult[]) : [];
+}
+
+function failedReviewList(run: CapabilityRun | undefined): ReviewResult[] {
+  return reviewList(run).filter((review) => !review.passed);
+}
+
+function latestStageCapabilityRun(bundle: ProjectRunBundle, stageKind: StageKind): CapabilityRun | undefined {
+  const latestWorkflowRun = bundle.workflowRuns
+    .filter((item) => item.stageKind === stageKind)
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())[0];
+
+  if (!latestWorkflowRun?.capabilityRunId) {
+    return undefined;
+  }
+
+  return bundle.capabilityRuns.find((item) => item.id === latestWorkflowRun.capabilityRunId);
+}
+
+function canCancelJimengShotJob(job: EpisodeShotJob | null | undefined) {
+  if (!job) {
+    return false;
+  }
+
+  const status = String(job.status || '').toUpperCase();
+  const phase = String(job.phase || '').trim();
+  return ['QUEUED', 'PENDING', 'CLAIMED'].includes(status) || phase.includes('排队');
 }
 
 function asStringArray(value: unknown): string[] {
@@ -319,12 +410,19 @@ export const App = () => {
     description: '',
     promptText: '',
   });
+  const [assetPromptDrafts, setAssetPromptDrafts] = useState<Record<string, string>>({});
+  const [assetPromptTargetId, setAssetPromptTargetId] = useState<string | null>(null);
+  const [assetPromptSaveId, setAssetPromptSaveId] = useState<string | null>(null);
+  const [expandedAssetId, setExpandedAssetId] = useState<string | null>(null);
+  const [assetVersionCompareIds, setAssetVersionCompareIds] = useState<Record<string, { leftId: string | null; rightId: string | null }>>({});
+  const [assetVersionSwitchId, setAssetVersionSwitchId] = useState<string | null>(null);
 
   const [episodeContext, setEpisodeContext] = useState<EpisodeContext | null>(null);
   const [episodeWorkspace, setEpisodeWorkspace] = useState<EpisodeWorkspace | null>(null);
   const [episodeRuns, setEpisodeRuns] = useState<ProjectRunBundle>(EMPTY_RUNS);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [selectedBeatId, setSelectedBeatId] = useState<string | null>(null);
+  const [episodeSidebarTab, setEpisodeSidebarTab] = useState<'assets' | 'inspector'>('assets');
+  const [selectedAssetCardId, setSelectedAssetCardId] = useState<string | null>(null);
   const [episodeWorkspaceSaveState, setEpisodeWorkspaceSaveState] = useState<'idle' | 'dirty' | 'saving' | 'saved'>('idle');
   const [episodeWorkspaceSavedAt, setEpisodeWorkspaceSavedAt] = useState<string | null>(null);
   const episodeWorkspaceRef = React.useRef<EpisodeWorkspace | null>(null);
@@ -425,7 +523,8 @@ export const App = () => {
     setEpisodeWorkspace(workspaceRes.data || null);
     setEpisodeRuns(runsRes.data || EMPTY_RUNS);
     setSelectedNodeId(workspaceRes.data?.content.nodes?.[0]?.id || null);
-    setSelectedBeatId(null);
+    setEpisodeSidebarTab('assets');
+    setSelectedAssetCardId(null);
     setEpisodeWorkspaceSaveState(workspaceRes.data ? 'saved' : 'idle');
     setEpisodeWorkspaceSavedAt(workspaceRes.data?.updatedAt || null);
   };
@@ -504,6 +603,7 @@ export const App = () => {
     const res = await appApi.runCapability(payload);
     if (!res.success) throw new Error(res.error || fallbackMessage);
     await refreshCurrent();
+    return res.data || null;
   };
 
   const saveCurrentEpisodeWorkspace = async (): Promise<EpisodeWorkspace | null> => {
@@ -530,6 +630,185 @@ export const App = () => {
     await runCapability(buildPayload(syncedWorkspace), fallbackMessage);
   };
 
+  const resolveAssetPromptText = (asset: CanonicalAsset) => assetPromptDrafts[asset.id] || assetPrompt(asset);
+
+  const generateImagePrompt = async (params: { asset?: CanonicalAsset }) => {
+    if (route.kind !== 'project-assets') {
+      return;
+    }
+
+    const stage = stageEntry(stageConfig, 'asset_design');
+    const targetId = params.asset?.id || 'asset-form';
+    setAssetPromptTargetId(targetId);
+
+    try {
+      const run = await runCapability({
+        capabilityId: 'image_prompt_generate',
+        projectId: route.projectId,
+        modelId: getResolvedCapabilityModelId('image_prompt_generate', stage.modelId),
+        skillPackId: stage.skillPackId,
+        assetId: params.asset?.id,
+        assetType: params.asset?.type || assetForm.type,
+        assetName: params.asset?.name || assetForm.name,
+        assetDescription: params.asset?.description || assetForm.description,
+      }, 'Image prompt generation failed.');
+      const prompt = String((run as CapabilityRun | null)?.outputPayload?.prompt || '').trim();
+      if (!prompt) {
+        throw new Error('Image prompt generation returned empty prompt.');
+      }
+
+      if (params.asset) {
+        setAssetPromptDrafts((current) => ({
+          ...current,
+          [params.asset!.id]: prompt,
+        }));
+      } else {
+        setAssetForm((current) => ({
+          ...current,
+          promptText: prompt,
+        }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Image prompt generation failed.');
+    } finally {
+      setAssetPromptTargetId(null);
+    }
+  };
+
+  const saveAssetPromptDraft = async (asset: CanonicalAsset) => {
+    if (route.kind !== 'project-assets') {
+      return;
+    }
+
+    const promptText = String(assetPromptDrafts[asset.id] || '').trim();
+    if (!promptText) {
+      return;
+    }
+
+    setAssetPromptSaveId(asset.id);
+    try {
+      const res = await appApi.saveAssetPromptVersion(asset.id, {
+        promptText,
+        description: asset.description,
+        previewUrl: assetPreview(asset),
+        metadata: asset.metadata,
+        source: 'image_prompt_generate',
+      });
+      if (!res.success) {
+        throw new Error(res.error || 'Save asset prompt failed.');
+      }
+
+      setAssetPromptDrafts((current) => {
+        const next = { ...current };
+        delete next[asset.id];
+        return next;
+      });
+      await refreshCurrent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save asset prompt failed.');
+    } finally {
+      setAssetPromptSaveId(null);
+    }
+  };
+
+  const toggleAssetVersions = (asset: CanonicalAsset) => {
+    setExpandedAssetId((current) => current === asset.id ? null : asset.id);
+    setAssetVersionCompareIds((current) => {
+      if (current[asset.id]) {
+        return current;
+      }
+
+      const currentVersion = currentAssetVersion(asset);
+      const alternateVersion = asset.versions.find((item) => item.id !== currentVersion?.id) || currentVersion;
+      return {
+        ...current,
+        [asset.id]: {
+          leftId: currentVersion?.id || null,
+          rightId: alternateVersion?.id || currentVersion?.id || null,
+        },
+      };
+    });
+  };
+
+  const setAssetCompareSlot = (
+    assetId: string,
+    slot: 'leftId' | 'rightId',
+    versionId: string,
+  ) => {
+    setAssetVersionCompareIds((current) => ({
+      ...current,
+      [assetId]: {
+        leftId: current[assetId]?.leftId || null,
+        rightId: current[assetId]?.rightId || null,
+        [slot]: versionId,
+      },
+    }));
+  };
+
+  const setAssetCurrentVersionSelection = async (asset: CanonicalAsset, versionId: string) => {
+    if (route.kind !== 'project-assets') {
+      return;
+    }
+
+    setAssetVersionSwitchId(versionId);
+    try {
+      const res = await appApi.setAssetCurrentVersion(asset.id, { versionId });
+      if (!res.success) {
+        throw new Error(res.error || 'Set current asset version failed.');
+      }
+      await refreshCurrent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Set current asset version failed.');
+    } finally {
+      setAssetVersionSwitchId(null);
+    }
+  };
+
+  const renderAssetVersionCompareCard = (
+    title: string,
+    version: AssetVersion | null,
+    currentVersionId: string | null,
+  ) => {
+    if (!version) {
+      return (
+        <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/45">
+          No version selected.
+        </div>
+      );
+    }
+
+    const isCurrent = version.id === currentVersionId;
+    return (
+      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.24em] text-white/35">{title}</div>
+            <div className="mt-2 text-sm font-semibold text-white">V{version.versionNumber}</div>
+          </div>
+          {isCurrent ? (
+            <div className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-100">
+              current
+            </div>
+          ) : null}
+        </div>
+        <div className="mt-3 text-xs leading-6 text-white/45">
+          <div>{fmt(version.createdAt)}</div>
+          <div>{assetVersionSourceLabel(version) || 'manual'}</div>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+          {version.previewUrl ? (
+            <img src={version.previewUrl} alt={`Version ${version.versionNumber}`} className="h-48 w-full object-cover" />
+          ) : (
+            <div className="flex h-48 items-center justify-center text-sm text-white/35">No preview</div>
+          )}
+        </div>
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm leading-7 text-slate-300">
+          {version.promptText || 'No prompt text.'}
+        </div>
+      </div>
+    );
+  };
+
   const uploadAudioReference = async (file: File) => {
     const res = await appApi.uploadAudioReference(file);
     if (!res.success || !res.data) {
@@ -539,6 +818,35 @@ export const App = () => {
     return {
       url: res.data.url,
       title: file.name ? `音频参考 · ${file.name}` : `音频参考 · ${res.data.name}`,
+    };
+  };
+
+  const buildEpisodeWorkbenchState = (
+    content: EpisodeWorkspace['content'],
+    episode: Episode,
+    promptRecipeId?: string,
+  ) => {
+    const lockedAssets = assets.filter((asset) => asset.isLocked);
+    const nextContent = harmonizeEpisodeWorkbenchContent({
+      content,
+      episode,
+      lockedAssets,
+      models: catalogs.models,
+      stageConfig,
+      promptRecipeId,
+    });
+    const storyboardNodeText = nextContent.nodes.find((item) => item.id === getEpisodePrimaryNodeId('storyboard', episode.id))?.content || '';
+    const promptNodeText = nextContent.nodes.find((item) => item.id === getEpisodePrimaryNodeId('prompt', episode.id))?.content || '';
+
+    return {
+      ...nextContent,
+      shotStrip: buildEpisodeShotStrip({
+        episode,
+        episodeContext,
+        storyboardText: storyboardNodeText,
+        videoPromptText: promptNodeText,
+        currentStrip: nextContent.shotStrip as EpisodeShotStripState | null | undefined,
+      }),
     };
   };
 
@@ -586,14 +894,11 @@ export const App = () => {
       return;
     }
 
-    const nextContent = harmonizeEpisodeWorkbenchContent({
-      content: episodeWorkspace.content,
-      episode: currentEpisode,
-      lockedAssets: assets.filter((asset) => asset.isLocked),
-      models: catalogs.models,
-      stageConfig,
-      promptRecipeId: stageEntry(stageConfig, 'video_prompt_generate').promptRecipeId,
-    });
+    const nextContent = buildEpisodeWorkbenchState(
+      episodeWorkspace.content,
+      currentEpisode,
+      stageEntry(stageConfig, 'video_prompt_generate').promptRecipeId,
+    );
 
     if (sameCanvasContent(nextContent, episodeWorkspace.content)) {
       return;
@@ -613,7 +918,7 @@ export const App = () => {
         || nextContent.nodes[0]?.id
         || null;
     });
-  }, [assets, catalogs.models, episodeWorkspace, episodes, route, stageConfig]);
+  }, [buildEpisodeWorkbenchState, catalogs.models, episodeWorkspace, episodes, route, stageConfig]);
 
   useEffect(() => {
     if (route.kind !== 'episode-workspace' || episodeWorkspaceSaveState !== 'dirty' || !episodeWorkspace) {
@@ -708,11 +1013,51 @@ export const App = () => {
     return normalizedWorkspace;
   };
 
+  const buildEpisodeShotJobState = (params: {
+    sourceNodeId: string;
+    providerJobId?: string | null;
+    status: string;
+    phase?: string;
+    progress?: number;
+    error?: string | null;
+    updatedAt?: string | null;
+    previewUrl?: string;
+  }) => ({
+    sourceNodeId: params.sourceNodeId,
+    providerJobId: params.providerJobId || null,
+    status: params.status,
+    phase: params.phase,
+    progress: params.progress,
+    error: params.error || null,
+    updatedAt: params.updatedAt || new Date().toISOString(),
+    previewUrl: params.previewUrl,
+  });
+
+  const applyJimengJobPatchToNode = (node: CanvasNode | null, job: JimengJob): Partial<CanvasNode> => ({
+    output: {
+      ...(node?.output || {}),
+      providerJobId: job.id,
+      previewUrl: job.videoUrl,
+      metadata: {
+        ...((node?.output?.metadata || {}) as Record<string, unknown>),
+        provider: 'jimeng',
+        status: job.status,
+        phase: job.phase,
+        progress: job.progress,
+      },
+    },
+    runStatus: job.status === 'SUCCEEDED' ? 'success' : job.status === 'FAILED' || job.status === 'CANCELLED' ? 'error' : 'running',
+    error: job.error || null,
+    lastRunAt: job.updated_at || new Date().toISOString(),
+    ...(job.videoUrl ? { content: job.videoUrl } : {}),
+  });
+
   const pollJimengNodeJob = async (
     workspaceKind: 'episode' | 'studio',
     nodeId: string,
     jobId: string,
     workspaceRefId?: string,
+    targetShotId?: string | null,
   ) => {
     for (;;) {
       const jobRes = await appApi.getJimengJob(jobId);
@@ -721,45 +1066,103 @@ export const App = () => {
       }
 
       const job = jobRes.data;
-      const patch: Partial<CanvasNode> = {
-        output: {
-          providerJobId: job.id,
-          previewUrl: job.videoUrl,
-          metadata: {
-            provider: 'jimeng',
-            status: job.status,
-            phase: job.phase,
-            progress: job.progress,
-          },
-        },
-        runStatus: job.status === 'SUCCEEDED' ? 'success' : job.status === 'FAILED' || job.status === 'CANCELLED' ? 'error' : 'running',
-        error: job.error || null,
-        lastRunAt: job.updated_at || new Date().toISOString(),
-        ...(job.videoUrl ? { content: job.videoUrl } : {}),
-      };
 
       if (workspaceKind === 'episode') {
-        setEpisodeWorkspace((current) => current ? { ...current, content: updateNodeInContent(current.content, nodeId, patch) } : current);
+        let nextEpisodeContent: EpisodeWorkspace['content'] | null = null;
+        let shouldIgnoreUpdate = false;
+        setEpisodeWorkspace((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const currentNode = current.content.nodes.find((item) => item.id === nodeId) || null;
+          const currentProviderJobId = typeof currentNode?.output?.providerJobId === 'string'
+            ? currentNode.output.providerJobId
+            : null;
+          if (currentProviderJobId && currentProviderJobId !== job.id) {
+            shouldIgnoreUpdate = true;
+            return current;
+          }
+
+          const nextContent = updateNodeInContent(current.content, nodeId, applyJimengJobPatchToNode(currentNode, job));
+          const nextShotStrip = targetShotId
+            ? upsertEpisodeShotJob({
+                strip: nextContent.shotStrip as EpisodeShotStripState | undefined,
+                targetShotId,
+                job: buildEpisodeShotJobState({
+                  sourceNodeId: nodeId,
+                  providerJobId: job.id,
+                  status: job.status,
+                  phase: job.phase,
+                  progress: job.progress,
+                  error: job.error,
+                  updatedAt: job.updated_at,
+                  previewUrl: job.videoUrl,
+                }),
+              })
+            : nextContent.shotStrip;
+          nextEpisodeContent = targetShotId
+            ? {
+                ...nextContent,
+                shotStrip: nextShotStrip,
+              }
+            : nextContent;
+          return {
+            ...current,
+            content: nextEpisodeContent,
+          };
+        });
+
+        if (shouldIgnoreUpdate) {
+          return;
+        }
+
+        if ((job.status === 'SUCCEEDED' || job.status === 'FAILED' || job.status === 'CANCELLED') && nextEpisodeContent) {
+          await saveEpisodeWorkspaceContent(
+            normalizeCanvasContent(nextEpisodeContent, catalogs.models, stageConfig),
+          );
+          return;
+        }
       } else if (workspaceRefId) {
-        setStudioWorkspaces((current) => current.map((item) => item.id === workspaceRefId ? { ...item, content: updateNodeInContent(item.content, nodeId, patch) } : item));
+        let shouldIgnoreUpdate = false;
+        setStudioWorkspaces((current) => current.map((item) => {
+          if (item.id !== workspaceRefId) {
+            return item;
+          }
+
+          const currentNode = item.content.nodes.find((entry) => entry.id === nodeId) || null;
+          const currentProviderJobId = typeof currentNode?.output?.providerJobId === 'string'
+            ? currentNode.output.providerJobId
+            : null;
+          if (currentProviderJobId && currentProviderJobId !== job.id) {
+            shouldIgnoreUpdate = true;
+            return item;
+          }
+
+          return {
+            ...item,
+            content: updateNodeInContent(item.content, nodeId, applyJimengJobPatchToNode(currentNode, job)),
+          };
+        }));
+        if (shouldIgnoreUpdate) {
+          return;
+        }
       }
 
       if (job.status === 'SUCCEEDED' || job.status === 'FAILED' || job.status === 'CANCELLED') {
-        if (workspaceKind === 'episode') {
-          const latestEpisodeWorkspace = episodeWorkspaceRef.current;
-          await saveEpisodeWorkspaceContent(
-            updateNodeInContent(
-              normalizeCanvasContent(latestEpisodeWorkspace?.content, catalogs.models, stageConfig),
-              nodeId,
-              patch,
-            ),
-          );
-        } else if (workspaceRefId) {
+        if (workspaceKind !== 'episode' && workspaceRefId) {
           const currentStudio = studioWorkspacesRef.current.find((item) => item.id === workspaceRefId) || null;
           if (currentStudio) {
             await saveStudioWorkspaceContent(
               workspaceRefId,
-              updateNodeInContent(currentStudio.content, nodeId, patch),
+              updateNodeInContent(
+                currentStudio.content,
+                nodeId,
+                applyJimengJobPatchToNode(
+                  currentStudio.content.nodes.find((entry) => entry.id === nodeId) || null,
+                  job,
+                ),
+              ),
             );
           }
         }
@@ -770,12 +1173,29 @@ export const App = () => {
     }
   };
 
-  const runEpisodeCanvasNode = async (nodeId: string) => {
+  const runEpisodeCanvasNode = async (nodeId: string, targetShotIdOverride?: string | null) => {
     if (route.kind !== 'episode-workspace' || !episodeWorkspace) {
       return;
     }
 
-    const snapshot = normalizeCanvasContent(episodeWorkspace.content, catalogs.models, stageConfig);
+    const currentEpisode = episodes.find((item) => item.id === route.episodeId) || null;
+    const lockedAssets = assets.filter((asset) => asset.isLocked);
+    const videoPromptStage = stageEntry(stageConfig, 'video_prompt_generate');
+    const syncedContent = currentEpisode
+      ? harmonizeEpisodeWorkbenchContent({
+          content: episodeWorkspace.content,
+          episode: currentEpisode,
+          lockedAssets,
+          models: catalogs.models,
+          stageConfig,
+          promptRecipeId: videoPromptStage.promptRecipeId,
+        })
+      : episodeWorkspace.content;
+    const snapshot = normalizeCanvasContent(syncedContent, catalogs.models, stageConfig);
+    const sourceNode = snapshot.nodes.find((item) => item.id === nodeId) || null;
+    const targetShotId = sourceNode?.type === 'video'
+      ? targetShotIdOverride || findSelectedEpisodeShot(snapshot.shotStrip as EpisodeShotStripState | undefined)?.id || null
+      : null;
     const res = await appApi.runCanvasNode({
       workspaceKind: 'episode',
       episodeId: route.episodeId,
@@ -786,15 +1206,44 @@ export const App = () => {
       throw new Error(res.error || 'Canvas node run failed.');
     }
 
+    const normalizedContent = normalizeCanvasContent(res.data?.content, catalogs.models, stageConfig);
+    const normalizedNode = normalizedContent.nodes.find((item) => item.id === nodeId) || sourceNode;
+    const nextContent = targetShotId
+      ? {
+          ...normalizedContent,
+          shotStrip: upsertEpisodeShotJob({
+            strip: normalizedContent.shotStrip as EpisodeShotStripState | undefined,
+            targetShotId,
+            job: buildEpisodeShotJobState({
+              sourceNodeId: nodeId,
+              providerJobId: res.data.providerJob?.id || normalizedNode?.output?.providerJobId || null,
+              status: res.data.pending
+                ? String(res.data.providerJob?.status || 'RUNNING')
+                : normalizedNode?.runStatus === 'error'
+                  ? 'FAILED'
+                  : 'SUCCEEDED',
+              phase: res.data.pending
+                ? String(res.data.providerJob?.phase || '排队中')
+                : normalizedNode?.runStatus === 'success'
+                  ? '已完成'
+                  : undefined,
+              progress: typeof res.data.providerJob?.progress === 'number' ? res.data.providerJob.progress : undefined,
+              error: res.data.providerJob?.error || normalizedNode?.error || null,
+              previewUrl: res.data.providerJob?.videoUrl || getNodePrimaryValue(normalizedNode || sourceNode),
+            }),
+          }),
+        }
+      : normalizedContent;
+
     setEpisodeWorkspace((current) => current ? {
       ...current,
-      content: normalizeCanvasContent(res.data?.content, catalogs.models, stageConfig),
+      content: nextContent,
     } : current);
     setEpisodeWorkspaceSaveState('saved');
     setEpisodeWorkspaceSavedAt(new Date().toISOString());
 
     if (res.data.pending && res.data.providerJob?.id) {
-      await pollJimengNodeJob('episode', nodeId, res.data.providerJob.id);
+      await pollJimengNodeJob('episode', nodeId, res.data.providerJob.id, undefined, targetShotId);
     }
   };
 
@@ -1234,6 +1683,11 @@ export const App = () => {
                       <div className="font-semibold text-white">{selectedSkillPack.name}</div>
                       <div className="mt-2 leading-7">{selectedSkillPack.description}</div>
                       <div className="mt-2 text-xs leading-6 text-white/55">Method: {selectedSkillPack.promptMethodology}</div>
+                      {selectSkillPackCapabilitySchemaId(selectedSkillPack, stage.capabilityId) ? (
+                        <div className="mt-2 text-xs leading-6 text-white/45">
+                          Capability schema: {selectSkillPackCapabilitySchemaId(selectedSkillPack, stage.capabilityId)}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                   {stageKind === 'video_prompt_generate' && selectedSkillPack?.promptRecipes.length ? (
@@ -1409,6 +1863,13 @@ export const App = () => {
           <input value={assetForm.name} onChange={(event) => setAssetForm((current) => ({ ...current, name: event.target.value }))} className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none" placeholder="Asset name" />
           <textarea value={assetForm.description} onChange={(event) => setAssetForm((current) => ({ ...current, description: event.target.value }))} className="min-h-[120px] w-full rounded-[24px] border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none" placeholder="Asset description" />
           <textarea value={assetForm.promptText} onChange={(event) => setAssetForm((current) => ({ ...current, promptText: event.target.value }))} className="min-h-[120px] w-full rounded-[24px] border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none" placeholder="Asset prompt" />
+          <button
+            type="button"
+            onClick={() => void generateImagePrompt({})}
+            className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100"
+          >
+            {assetPromptTargetId === 'asset-form' ? 'Generating image prompt...' : 'Generate image prompt'}
+          </button>
           <button className="w-full rounded-2xl bg-cyan-300 px-4 py-3 text-sm font-semibold text-black">Create asset</button>
         </form>
         <div className="mt-6">{renderRuns(projectRuns, ['asset_design'])}</div>
@@ -1436,8 +1897,28 @@ export const App = () => {
                   </div>
                 </div>
                 <p className="mt-3 text-sm leading-7 text-slate-300">{asset.description || 'No description.'}</p>
-                {assetPrompt(asset) ? <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm text-slate-300">{assetPrompt(asset)}</div> : null}
+                {resolveAssetPromptText(asset) ? (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm text-slate-300">
+                    {resolveAssetPromptText(asset)}
+                  </div>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void generateImagePrompt({ asset })}
+                    className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-100"
+                  >
+                    {assetPromptTargetId === asset.id ? 'Generating prompt...' : 'Generate image prompt'}
+                  </button>
+                  {assetPromptDrafts[asset.id] ? (
+                    <button
+                      type="button"
+                      onClick={() => void saveAssetPromptDraft(asset)}
+                      className="rounded-full bg-cyan-300 px-4 py-2 text-sm font-semibold text-black"
+                    >
+                      {assetPromptSaveId === asset.id ? 'Saving prompt...' : 'Save prompt to asset'}
+                    </button>
+                  ) : null}
                   {assetCapability(asset) ? (
                     <button
                       type="button"
@@ -1446,13 +1927,33 @@ export const App = () => {
                         projectId: route.kind === 'project-assets' ? route.projectId : '',
                         assetId: asset.id,
                         modelId: getResolvedCapabilityModelId(assetCapability(asset) || ''),
-                        prompt: assetPrompt(asset),
+                        prompt: resolveAssetPromptText(asset),
                       }, 'Asset preview generation failed.')}
                       className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black"
                     >
                       Generate preview
                     </button>
                   ) : null}
+                  {assetPromptDrafts[asset.id] ? (
+                    <button
+                      type="button"
+                      onClick={() => setAssetPromptDrafts((current) => {
+                        const next = { ...current };
+                        delete next[asset.id];
+                        return next;
+                      })}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-100"
+                    >
+                      Clear prompt draft
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => toggleAssetVersions(asset)}
+                    className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-100"
+                  >
+                    {expandedAssetId === asset.id ? 'Hide versions' : 'Versions'}
+                  </button>
                   <button
                     type="button"
                     onClick={async () => {
@@ -1470,6 +1971,109 @@ export const App = () => {
                   </button>
                   <div className="text-xs text-white/45">Versions {asset.versions.length} · Updated {fmt(asset.updatedAt)}</div>
                 </div>
+                {expandedAssetId === asset.id ? (() => {
+                  const activeVersion = currentAssetVersion(asset);
+                  const orderedVersions = [...asset.versions].sort((left, right) => right.versionNumber - left.versionNumber);
+                  const compareState = assetVersionCompareIds[asset.id] || {
+                    leftId: activeVersion?.id || null,
+                    rightId: orderedVersions.find((item) => item.id !== activeVersion?.id)?.id || activeVersion?.id || null,
+                  };
+                  const leftVersion = asset.versions.find((item) => item.id === compareState.leftId) || null;
+                  const rightVersion = asset.versions.find((item) => item.id === compareState.rightId) || null;
+
+                  return (
+                    <div className="mt-5 grid gap-5 rounded-[28px] border border-white/10 bg-black/25 p-5 xl:grid-cols-[0.94fr_1.06fr]">
+                      <div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Version history</div>
+                            <div className="mt-2 text-sm text-slate-300">Prompt and preview revisions for this asset.</div>
+                          </div>
+                          <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/55">
+                            {orderedVersions.length} versions
+                          </div>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                          {orderedVersions.map((version) => {
+                            const isCurrent = version.id === asset.currentVersionId;
+                            const isCompareLeft = compareState.leftId === version.id;
+                            const isCompareRight = compareState.rightId === version.id;
+
+                            return (
+                              <div
+                                key={version.id}
+                                className={cx(
+                                  'rounded-2xl border p-4 transition',
+                                  isCurrent ? 'border-emerald-300/25 bg-emerald-300/8' : 'border-white/10 bg-white/[0.03]',
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-semibold text-white">V{version.versionNumber}</div>
+                                    <div className="mt-1 text-xs text-white/45">
+                                      {fmt(version.createdAt)} · {assetVersionSourceLabel(version)}
+                                    </div>
+                                  </div>
+                                  {isCurrent ? (
+                                    <div className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-100">
+                                      current
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <div className="mt-3 line-clamp-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-6 text-slate-300">
+                                  {version.promptText || 'No prompt text.'}
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAssetCompareSlot(asset.id, 'leftId', version.id)}
+                                    className={cx(
+                                      'rounded-full border px-3 py-1.5 text-xs',
+                                      isCompareLeft ? 'border-cyan-300/30 bg-cyan-300/12 text-cyan-100' : 'border-white/10 bg-white/[0.04] text-slate-200',
+                                    )}
+                                  >
+                                    Compare A
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAssetCompareSlot(asset.id, 'rightId', version.id)}
+                                    className={cx(
+                                      'rounded-full border px-3 py-1.5 text-xs',
+                                      isCompareRight ? 'border-fuchsia-300/30 bg-fuchsia-300/12 text-fuchsia-100' : 'border-white/10 bg-white/[0.04] text-slate-200',
+                                    )}
+                                  >
+                                    Compare B
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isCurrent || assetVersionSwitchId === version.id}
+                                    onClick={() => void setAssetCurrentVersionSelection(asset, version.id)}
+                                    className={cx(
+                                      'rounded-full px-3 py-1.5 text-xs',
+                                      isCurrent
+                                        ? 'border border-white/10 bg-white/[0.04] text-white/45'
+                                        : 'bg-white text-black',
+                                    )}
+                                  >
+                                    {assetVersionSwitchId === version.id ? 'Switching...' : isCurrent ? 'Current version' : 'Set as current'}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Version compare</div>
+                        <div className="mt-2 text-sm text-slate-300">Use A/B compare to review prompt changes and preview drift before switching the active version.</div>
+                        <div className="mt-4 grid gap-4 2xl:grid-cols-2">
+                          {renderAssetVersionCompareCard('Compare A', leftVersion, asset.currentVersionId)}
+                          {renderAssetVersionCompareCard('Compare B', rightVersion, asset.currentVersionId)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })() : null}
               </div>
             </div>
           ))}
@@ -1604,25 +2208,107 @@ export const App = () => {
     const videoPromptText = episodeWorkspace?.content.nodes.find((item) => item.id.startsWith('prompt-'))?.content || '';
     const storyboardNode = episodeWorkspace?.content.nodes.find((item) => item.id.startsWith('storyboard-')) || null;
     const audioReference = episodeWorkspace?.content.nodes.find((item) => item.id.startsWith('audio-'))?.content || '';
-    const hasAudioReference = isAudioSource(audioReference);
-    const sceneCards = buildEpisodeSceneCards(currentEpisode, episodeContext, storyboardText);
     const episodeConnections = episodeWorkspace?.content.connections || [];
     const selectedWorkspaceNode = episodeWorkspace?.content.nodes.find((item) => item.id === selectedNodeId) || null;
     const videoNode = episodeWorkspace?.content.nodes.find((item) => item.id.startsWith('video-')) || null;
     const imageNode = episodeWorkspace?.content.nodes.find((item) => item.id.startsWith('visual-')) || null;
     const promptNode = episodeWorkspace?.content.nodes.find((item) => item.id.startsWith('prompt-')) || null;
-    const previewNode = selectedWorkspaceNode || videoNode || imageNode || null;
-    const previewValue = previewNode ? getNodePrimaryValue(previewNode) : '';
-    const selectedPreviewModel = previewNode?.modelId ? findModelByIdentifier(catalogs.models, previewNode.modelId) : null;
     const lockedAssets = assets.filter((asset) => asset.isLocked);
     const assetNodesByAssetId = new Map(
       (episodeWorkspace?.content.nodes || [])
         .filter((node) => String(node.metadata?.lockedAssetId || '').trim())
         .map((node) => [String(node.metadata?.lockedAssetId || '').trim(), node]),
     );
+    const assetSyncStateByAssetId = new Map(lockedAssets.map((asset) => {
+      const assetNode = assetNodesByAssetId.get(asset.id) || null;
+      const assetVersion = assetVersionDisplay(asset);
+      const nodeVersion = nodeAssetVersionDisplay(assetNode);
+      const isSynced = Boolean(assetNode) && assetVersion.versionId === nodeVersion.versionId;
+      return [asset.id, {
+        assetNode,
+        assetVersion,
+        nodeVersion,
+        isSynced,
+      }];
+    }));
     const syncedAssetCount = lockedAssets.filter((asset) => assetNodesByAssetId.has(asset.id)).length;
+    const syncedAssetVersionCount = lockedAssets.filter((asset) => assetSyncStateByAssetId.get(asset.id)?.isSynced).length;
     const workspaceVideoInputs = collectEpisodeWorkspaceVideoInputs(episodeWorkspace);
-    const activeScene = sceneCards.find((item) => item.id === selectedBeatId) || sceneCards[0] || null;
+    const connectedAudioReference = workspaceVideoInputs.audioReferenceUrls[0] || audioReference;
+    const hasAudioReference = isAudioSource(connectedAudioReference);
+    const shotStrip = (episodeWorkspace?.content.shotStrip as EpisodeShotStripState | undefined) || buildEpisodeShotStrip({
+      episode: currentEpisode,
+      episodeContext,
+      storyboardText,
+      videoPromptText,
+    });
+    const activeShot = findSelectedEpisodeShot(shotStrip);
+    const activeShotJob = activeShot?.job || null;
+    const previewNode = selectedWorkspaceNode || videoNode || imageNode || null;
+    const selectedPreviewModel = previewNode?.modelId ? findModelByIdentifier(catalogs.models, previewNode.modelId) : null;
+    const previewNodeMetadata = (previewNode?.output?.metadata || {}) as Record<string, unknown>;
+    const previewAsyncState = activeShotJob || (
+      previewNode?.type === 'video' && (
+        typeof previewNodeMetadata.status === 'string'
+        || previewNode.runStatus === 'running'
+        || previewNode.runStatus === 'error'
+      )
+        ? buildEpisodeShotJobState({
+            sourceNodeId: previewNode.id,
+            providerJobId: typeof previewNode.output?.providerJobId === 'string' ? previewNode.output.providerJobId : null,
+            status: typeof previewNodeMetadata.status === 'string'
+              ? previewNodeMetadata.status
+              : previewNode.runStatus === 'error'
+                ? 'FAILED'
+                : 'RUNNING',
+            phase: typeof previewNodeMetadata.phase === 'string' ? previewNodeMetadata.phase : undefined,
+            progress: typeof previewNodeMetadata.progress === 'number' ? previewNodeMetadata.progress : undefined,
+            error: previewNode.error || null,
+            updatedAt: previewNode.lastRunAt,
+            previewUrl: getNodePrimaryValue(previewNode),
+          })
+        : null
+    );
+    const previewValue = activeShot?.clip?.videoUrl || activeShotJob?.previewUrl || (previewNode ? getNodePrimaryValue(previewNode) : '');
+    const previewTitle = activeShot?.title || previewNode?.title || 'Current preview';
+    const previewSummary = activeShot?.summary || activeShot?.clip?.promptText || '';
+    const assetGroups = [
+      { key: 'character', label: '人物资产', items: lockedAssets.filter((asset) => asset.type === 'character') },
+      { key: 'scene', label: '场景资产', items: lockedAssets.filter((asset) => asset.type === 'scene') },
+      { key: 'prop', label: '道具资产', items: lockedAssets.filter((asset) => asset.type === 'prop') },
+    ].filter((group) => group.items.length > 0);
+    const shotStripSummary = summarizeEpisodeShotStrip(shotStrip);
+    const activeShotRecommendedModel = activeShot?.recommendedModelId
+      ? findModelByIdentifier(catalogs.models, activeShot.recommendedModelId)
+      : null;
+    const promptStageRun = latestStageCapabilityRun(episodeRuns, 'video_prompt_generate');
+    const videoStageRun = latestStageCapabilityRun(episodeRuns, 'video_generate');
+    const reviewPolicyNameMap = new Map(catalogs.reviewPolicies.map((policy) => [policy.id, policy.name]));
+    const reviewGateWarnings = [
+      { stageLabel: '视频提示词', run: promptStageRun },
+      { stageLabel: '视频生成', run: videoStageRun },
+    ].flatMap(({ stageLabel, run }) => {
+      const failedReviews = failedReviewList(run);
+      const reviewIssues = failedReviews.map((review) => ({
+        stageLabel,
+        label: reviewPolicyNameMap.get(review.policyId) || review.policyId,
+        notes: review.notes,
+      }));
+
+      if (reviewIssues.length > 0) {
+        return reviewIssues;
+      }
+
+      if (run?.status === 'failed' && run.error) {
+        return [{
+          stageLabel,
+          label: '运行失败',
+          notes: run.error,
+        }];
+      }
+
+      return [];
+    });
     const workbenchSaveLabel = episodeWorkspaceSaveState === 'saving'
       ? '保存中...'
       : episodeWorkspaceSaveState === 'dirty'
@@ -1636,15 +2322,27 @@ export const App = () => {
         return;
       }
 
-      updateEpisodeWorkspaceDraft((currentContent) => harmonizeEpisodeWorkbenchContent({
-        content: currentContent,
-        episode: currentEpisode,
-        lockedAssets,
-        models: catalogs.models,
-        stageConfig,
-        promptRecipeId: videoPromptStage.promptRecipeId,
-        forceLayout,
-      }));
+      updateEpisodeWorkspaceDraft((currentContent) => {
+        const nextContent = harmonizeEpisodeWorkbenchContent({
+          content: currentContent,
+          episode: currentEpisode,
+          lockedAssets,
+          models: catalogs.models,
+          stageConfig,
+          promptRecipeId: videoPromptStage.promptRecipeId,
+          forceLayout,
+        });
+        return {
+          ...nextContent,
+          shotStrip: buildEpisodeShotStrip({
+            episode: currentEpisode,
+            episodeContext,
+            storyboardText: nextContent.nodes.find((item) => item.id === getEpisodePrimaryNodeId('storyboard', currentEpisode.id))?.content || '',
+            videoPromptText: nextContent.nodes.find((item) => item.id === getEpisodePrimaryNodeId('prompt', currentEpisode.id))?.content || '',
+            currentStrip: nextContent.shotStrip as EpisodeShotStripState | null | undefined,
+          }),
+        };
+      });
     };
 
     const applyStagePresetToEpisodeNode = (stageKind: 'video_prompt_generate' | 'video_generate') => {
@@ -1703,17 +2401,378 @@ export const App = () => {
         return;
       }
       setSelectedNodeId(node.id);
-      if (beatId !== undefined) {
-        setSelectedBeatId(beatId);
-      }
     };
 
     const focusLockedAsset = (assetId: string) => {
+      setSelectedAssetCardId(assetId);
       const node = assetNodesByAssetId.get(assetId) || null;
       if (!node) {
         return;
       }
       focusEpisodeNode(node);
+    };
+
+    const selectShot = (slotId: string) => {
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: selectEpisodeShotSlot(currentContent.shotStrip as EpisodeShotStripState | undefined, slotId),
+      }));
+    };
+
+    const addShotSlot = () => {
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: appendManualEpisodeShotSlot(currentContent.shotStrip as EpisodeShotStripState | undefined),
+      }));
+    };
+
+    const renameShot = (slotId: string, title: string) => {
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: renameEpisodeShotSlot(currentContent.shotStrip as EpisodeShotStripState | undefined, slotId, title),
+      }));
+    };
+
+    const deleteShot = (slotId: string) => {
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: deleteEpisodeShotSlot(currentContent.shotStrip as EpisodeShotStripState | undefined, slotId),
+      }));
+    };
+
+    const moveShot = (fromShotId: string, toShotId?: string | null) => {
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: reorderEpisodeShotSlot({
+          strip: currentContent.shotStrip as EpisodeShotStripState | undefined,
+          fromShotId,
+          toShotId,
+        }),
+      }));
+    };
+
+    const storeVideoNodeToShot = (nodeId: string) => {
+      const sourceNode = episodeWorkspace?.content.nodes.find((item) => item.id === nodeId) || null;
+      const sourceVideoUrl = sourceNode ? getNodePrimaryValue(sourceNode) : '';
+      const targetShot = findSelectedEpisodeShot(episodeWorkspace?.content.shotStrip as EpisodeShotStripState | undefined);
+
+      if (!targetShot) {
+        setError('请先在下方视频条选中当前分镜槽。');
+        return;
+      }
+
+      if (!sourceNode || sourceNode.type !== 'video' || !isVideoSource(sourceVideoUrl)) {
+        setError('当前节点还没有可保存的视频结果。');
+        return;
+      }
+
+      const clip = buildEpisodeShotClip({
+        slot: targetShot,
+        node: sourceNode,
+        videoUrl: sourceVideoUrl,
+        fallbackPromptText: targetShot.promptText || workspaceVideoInputs.prompt || videoPromptText,
+      });
+
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: saveClipToEpisodeShotStrip({
+          strip: currentContent.shotStrip as EpisodeShotStripState | undefined,
+          targetShotId: targetShot.id,
+          clip,
+        }),
+      }), { selectedNodeId: sourceNode.id });
+    };
+
+    const clearShotResult = (slotId: string) => {
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: clearEpisodeShotClip(currentContent.shotStrip as EpisodeShotStripState | undefined, slotId),
+      }));
+    };
+
+    const retryShotJob = (slotId: string) => {
+      const slot = shotStrip.slots.find((item) => item.id === slotId) || null;
+      const sourceNodeId = slot?.job?.sourceNodeId || null;
+      if (!sourceNodeId) {
+        setError('当前分镜没有可重试的生成节点。');
+        return;
+      }
+
+      updateEpisodeWorkspaceDraft((currentContent) => ({
+        ...currentContent,
+        shotStrip: clearEpisodeShotJob(
+          selectEpisodeShotSlot(currentContent.shotStrip as EpisodeShotStripState | undefined, slotId),
+          slotId,
+        ),
+      }), { selectedNodeId: sourceNodeId });
+
+      void runEpisodeCanvasNode(sourceNodeId, slotId).catch((err) => {
+        setError(err instanceof Error ? err.message : 'Shot retry failed.');
+      });
+    };
+
+    const cancelShotJob = async (slotId: string) => {
+      const slot = shotStrip.slots.find((item) => item.id === slotId) || null;
+      const providerJobId = slot?.job?.providerJobId || null;
+      if (!providerJobId || !slot?.job) {
+        setError('当前分镜没有可取消的排队任务。');
+        return;
+      }
+      if (!canCancelJimengShotJob(slot.job)) {
+        setError('即梦当前只支持取消排队中的任务。');
+        return;
+      }
+
+      try {
+        const res = await appApi.cancelJimengJob(providerJobId);
+        if (!res.success || !res.data) {
+          throw new Error(res.error || 'Cancel Jimeng job failed.');
+        }
+
+        updateEpisodeWorkspaceDraft((currentContent) => {
+          const currentNode = currentContent.nodes.find((item) => item.id === slot.job?.sourceNodeId) || null;
+          const nextContent = currentNode
+            ? updateNodeInContent(currentContent, currentNode.id, applyJimengJobPatchToNode(currentNode, res.data))
+            : currentContent;
+
+          return {
+            ...nextContent,
+            shotStrip: upsertEpisodeShotJob({
+              strip: nextContent.shotStrip as EpisodeShotStripState | undefined,
+              targetShotId: slotId,
+              job: buildEpisodeShotJobState({
+                sourceNodeId: slot.job?.sourceNodeId || '',
+                providerJobId: res.data.id,
+                status: res.data.status,
+                phase: res.data.phase,
+                progress: res.data.progress,
+                error: res.data.error,
+                updatedAt: res.data.updated_at,
+                previewUrl: res.data.videoUrl,
+              }),
+            }),
+          };
+        }, { selectedNodeId: slot.job?.sourceNodeId || null });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Cancel Jimeng job failed.');
+      }
+    };
+
+    const normalizeAssetReferenceName = (value: string) => String(value || '')
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .trim();
+
+    const activeShotRecommendedAssets = activeShot?.referenceAssetNames?.length
+      ? activeShot.referenceAssetNames.map((name) => {
+          const normalized = normalizeAssetReferenceName(name);
+          const matchedAsset = lockedAssets.find((asset) => {
+            const assetName = normalizeAssetReferenceName(asset.name);
+            return assetName === normalized || assetName.includes(normalized) || normalized.includes(assetName);
+          }) || null;
+          return {
+            name,
+            asset: matchedAsset,
+          };
+        })
+      : [];
+
+    const applyActiveShotRecommendation = () => {
+      if (!activeShot || !episodeWorkspace || route.kind !== 'episode-workspace') {
+        return;
+      }
+
+      const primaryVideoNodeId = getEpisodePrimaryNodeId('video', route.episodeId);
+      updateEpisodeWorkspaceDraft((currentContent) => {
+        const currentNode = currentContent.nodes.find((item) => item.id === primaryVideoNodeId) || null;
+        if (!currentNode) {
+          return currentContent;
+        }
+
+        const nextPatch = activeShot.recommendedModelId
+          ? buildCanvasNodeModelChangePatch(currentNode, activeShot.recommendedModelId, catalogs.models)
+          : {};
+
+        return updateNodeInContent(currentContent, primaryVideoNodeId, {
+          ...nextPatch,
+          modeId: activeShot.recommendedModeId || nextPatch.modeId || currentNode.modeId,
+        });
+      }, { selectedNodeId: primaryVideoNodeId });
+    };
+
+    const connectActiveShotRecommendedAssets = () => {
+      if (!activeShot || !episodeWorkspace || !currentEpisode || route.kind !== 'episode-workspace') {
+        return;
+      }
+
+      const matchedAssets = activeShotRecommendedAssets
+        .map((entry) => entry.asset)
+        .filter((asset): asset is CanonicalAsset => Boolean(asset));
+      if (matchedAssets.length === 0) {
+        setError('当前分镜还没有可匹配的推荐资产。');
+        return;
+      }
+
+      const primaryVideoNodeId = getEpisodePrimaryNodeId('video', route.episodeId);
+      let nextSelectedId: string | null = primaryVideoNodeId;
+      let skippedReason: string | null = null;
+
+      updateEpisodeWorkspaceDraft((currentContent) => {
+        const syncedContent = harmonizeEpisodeWorkbenchContent({
+          content: currentContent,
+          episode: currentEpisode,
+          lockedAssets,
+          models: catalogs.models,
+          stageConfig,
+          promptRecipeId: videoPromptStage.promptRecipeId,
+        });
+        const videoNode = syncedContent.nodes.find((node) => node.id === primaryVideoNodeId) || null;
+        if (!videoNode) {
+          skippedReason = '当前工作台还没有主视频节点。';
+          return syncedContent;
+        }
+
+        const nextConnections = Array.isArray(syncedContent.connections) ? [...syncedContent.connections] : [];
+        for (const asset of matchedAssets) {
+          const assetNodeId = getEpisodeAssetNodeId(asset.id);
+          const assetNode = syncedContent.nodes.find((node) => node.id === assetNodeId) || null;
+          if (!assetNode) {
+            skippedReason = `推荐资产 ${asset.name} 还没有同步到工作台。`;
+            continue;
+          }
+
+          const validation = validateCanvasConnection(assetNode, videoNode, catalogs.models, nextConnections);
+          if (!validation.valid || !validation.resolvedInputKey) {
+            skippedReason = validation.error || `推荐资产 ${asset.name} 无法接入当前视频节点。`;
+            continue;
+          }
+
+          const exists = nextConnections.some((connection) => (
+            connection.from === assetNode.id
+            && connection.to === videoNode.id
+            && connection.inputKey === validation.resolvedInputKey
+          ));
+          if (exists) {
+            continue;
+          }
+
+          nextConnections.push({
+            id: buildCanvasConnectionId(assetNode.id, videoNode.id, validation.resolvedInputKey),
+            from: assetNode.id,
+            to: videoNode.id,
+            inputKey: validation.resolvedInputKey,
+            inputType: assetNode.type,
+          });
+        }
+
+        return {
+          ...syncedContent,
+          connections: nextConnections,
+        };
+      }, { selectedNodeId: nextSelectedId });
+
+      if (skippedReason) {
+        setError(skippedReason);
+      }
+    };
+
+    const prepareActiveShotWorkbench = () => {
+      if (!activeShot || !episodeWorkspace || !currentEpisode || route.kind !== 'episode-workspace') {
+        return;
+      }
+
+      const primaryVideoNodeId = getEpisodePrimaryNodeId('video', route.episodeId);
+      const primaryPromptNodeId = getEpisodePrimaryNodeId('prompt', route.episodeId);
+      const matchedAssets = activeShotRecommendedAssets
+        .map((entry) => entry.asset)
+        .filter((asset): asset is CanonicalAsset => Boolean(asset));
+      let skippedReason: string | null = null;
+
+      updateEpisodeWorkspaceDraft((currentContent) => {
+        const syncedContent = harmonizeEpisodeWorkbenchContent({
+          content: currentContent,
+          episode: currentEpisode,
+          lockedAssets,
+          models: catalogs.models,
+          stageConfig,
+          promptRecipeId: videoPromptStage.promptRecipeId,
+        });
+
+        const promptNode = syncedContent.nodes.find((node) => node.id === primaryPromptNodeId) || null;
+        const videoNode = syncedContent.nodes.find((node) => node.id === primaryVideoNodeId) || null;
+        let nextContent = syncedContent;
+
+        if (promptNode && activeShot.promptText) {
+          nextContent = updateNodeInContent(nextContent, promptNode.id, {
+            content: activeShot.promptText,
+            output: {
+              ...(promptNode.output || {}),
+              text: activeShot.promptText,
+            },
+          });
+        }
+
+        if (videoNode) {
+          const currentVideoNode = nextContent.nodes.find((node) => node.id === primaryVideoNodeId) || videoNode;
+          const nextPatch = activeShot.recommendedModelId
+            ? buildCanvasNodeModelChangePatch(currentVideoNode, activeShot.recommendedModelId, catalogs.models)
+            : {};
+          nextContent = updateNodeInContent(nextContent, primaryVideoNodeId, {
+            ...nextPatch,
+            modeId: activeShot.recommendedModeId || nextPatch.modeId || currentVideoNode.modeId,
+          });
+        } else {
+          skippedReason = '当前工作台还没有主视频节点。';
+          return nextContent;
+        }
+
+        const resolvedVideoNode = nextContent.nodes.find((node) => node.id === primaryVideoNodeId) || null;
+        if (!resolvedVideoNode) {
+          return nextContent;
+        }
+
+        const nextConnections = Array.isArray(nextContent.connections) ? [...nextContent.connections] : [];
+        for (const asset of matchedAssets) {
+          const assetNodeId = getEpisodeAssetNodeId(asset.id);
+          const assetNode = nextContent.nodes.find((node) => node.id === assetNodeId) || null;
+          if (!assetNode) {
+            skippedReason = `推荐资产 ${asset.name} 还没有同步到工作台。`;
+            continue;
+          }
+
+          const validation = validateCanvasConnection(assetNode, resolvedVideoNode, catalogs.models, nextConnections);
+          if (!validation.valid || !validation.resolvedInputKey) {
+            skippedReason = validation.error || `推荐资产 ${asset.name} 无法接入当前视频节点。`;
+            continue;
+          }
+
+          const exists = nextConnections.some((connection) => (
+            connection.from === assetNode.id
+            && connection.to === resolvedVideoNode.id
+            && connection.inputKey === validation.resolvedInputKey
+          ));
+          if (exists) {
+            continue;
+          }
+
+          nextConnections.push({
+            id: buildCanvasConnectionId(assetNode.id, resolvedVideoNode.id, validation.resolvedInputKey),
+            from: assetNode.id,
+            to: resolvedVideoNode.id,
+            inputKey: validation.resolvedInputKey,
+            inputType: assetNode.type,
+          });
+        }
+
+        return {
+          ...nextContent,
+          connections: nextConnections,
+        };
+      }, { selectedNodeId: primaryVideoNodeId });
+
+      if (skippedReason) {
+        setError(skippedReason);
+      }
     };
 
     const addEpisodeNode = (type: CanvasNode['type']) => {
@@ -1751,6 +2810,19 @@ export const App = () => {
                 </button>
               ))}
               {!lockedAssets.length ? <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-400">No locked assets yet</div> : null}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-200">
+                分镜 {shotStripSummary.completedSlots} / {shotStripSummary.totalSlots} 已成片
+              </div>
+              <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-200">
+                当前集时长 {Math.floor(shotStripSummary.totalSeconds / 60).toString().padStart(2, '0')}:{String(shotStripSummary.totalSeconds % 60).padStart(2, '0')}
+              </div>
+              {activeShot ? (
+                <div className="rounded-full border border-cyan-300/25 bg-cyan-300/[0.08] px-3 py-2 text-xs text-cyan-100">
+                  当前分镜：{activeShot.title}
+                </div>
+              ) : null}
             </div>
             <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
               <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Video Prompt Method</div>
@@ -1823,7 +2895,7 @@ export const App = () => {
                 }}
                 className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black"
               >
-                生成视频
+                运行主视频节点
               </button>
               <button
                 type="button"
@@ -1854,9 +2926,9 @@ export const App = () => {
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
                 <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Audio reference</div>
                 {hasAudioReference ? (
-                  <audio controls src={audioReference} className="mt-3 w-full" />
+                  <audio controls src={connectedAudioReference} className="mt-3 w-full" />
                 ) : (
-                  <div className="mt-2 text-sm leading-7 text-slate-300">在画布音频节点上传音频文件，把它作为这一集工作台保留的音色参考素材。</div>
+                  <div className="mt-2 text-sm leading-7 text-slate-300">把音频节点连到视频节点的全能参考槽位后，这里会显示当前接入的音频参考。</div>
                 )}
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
@@ -1877,14 +2949,61 @@ export const App = () => {
                     <span>{workspaceVideoInputs.imageUrls.length} 张</span>
                   </div>
                   <div className="flex items-center justify-between">
+                    <span>视频参考</span>
+                    <span>{workspaceVideoInputs.videoReferenceUrls.length} 条</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>音频参考</span>
+                    <span>{workspaceVideoInputs.audioReferenceUrls.length} 条</span>
+                  </div>
+                  <div className="flex items-center justify-between">
                     <span>锁定资产节点</span>
                     <span>{syncedAssetCount} / {lockedAssets.length}</span>
                   </div>
+                  <div className="flex items-center justify-between">
+                    <span>当前资产版本已同步</span>
+                    <span>{syncedAssetVersionCount} / {lockedAssets.length}</span>
+                  </div>
                 </div>
+                {workspaceVideoInputs.assetReferences.length ? (
+                  <div className="mt-4 space-y-2">
+                    <div className="text-[11px] uppercase tracking-[0.24em] text-white/35">Connected asset versions</div>
+                    {workspaceVideoInputs.assetReferences.map((reference) => (
+                      <div
+                        key={`${reference.assetId}-${reference.versionId || 'none'}-${reference.inputKey}`}
+                        className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-xs text-slate-200"
+                      >
+                        <div>
+                          <div className="font-semibold text-white">{reference.assetName || reference.assetId}</div>
+                          <div className="mt-1 text-white/45">
+                            {reference.assetType} · {reference.inputKey} · {reference.versionLabel}
+                          </div>
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/60">
+                          {reference.versionNumber ? `V${reference.versionNumber}` : 'No version'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           </Card>
         </div>
+
+        {reviewGateWarnings.length ? (
+          <Card eyebrow="Review Gate" title="当前阻塞与修改建议">
+            <div className="grid gap-3">
+              {reviewGateWarnings.map((issue, index) => (
+                <div key={`${issue.stageLabel}-${issue.label}-${index}`} className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-4">
+                  <div className="text-[11px] uppercase tracking-[0.24em] text-amber-100/80">{issue.stageLabel}</div>
+                  <div className="mt-2 text-sm font-semibold text-white">{issue.label}</div>
+                  <div className="mt-2 text-sm leading-7 text-amber-50/90">{issue.notes}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ) : null}
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <Card
@@ -1960,15 +3079,17 @@ export const App = () => {
               stageConfig={stageConfig}
               onRunNode={(nodeId) => void runEpisodeCanvasNode(nodeId).catch((err) => setError(err instanceof Error ? err.message : 'Canvas node run failed.'))}
               onUploadAudio={uploadAudioReference}
+              canStoreVideoToShot={Boolean(activeShot)}
+              onStoreVideoToShot={storeVideoNodeToShot}
               onError={(message) => setError(message)}
             />
           </Card>
 
           <section className="space-y-6">
-            <Card eyebrow="Preview" title={previewNode?.title || 'Current preview'}>
-              {previewNode?.type === 'image' && isImageSource(previewValue) ? (
-                <img src={previewValue} alt={previewNode.title} className="h-[280px] w-full rounded-[24px] object-cover" />
-              ) : previewNode?.type === 'video' && isVideoSource(previewValue) ? (
+            <Card eyebrow="Preview" title={previewTitle}>
+              {isImageSource(previewValue) ? (
+                <img src={previewValue} alt={previewTitle} className="h-[280px] w-full rounded-[24px] object-cover" />
+              ) : isVideoSource(previewValue) ? (
                 <video src={previewValue} controls className="h-[280px] w-full rounded-[24px] bg-black object-cover" />
               ) : previewNode?.type === 'audio' && isAudioSource(previewValue) ? (
                 <audio src={previewValue} controls className="w-full" />
@@ -1977,135 +3098,308 @@ export const App = () => {
                   {previewValue || 'Select a node on the canvas to inspect it here.'}
                 </div>
               )}
-            </Card>
-
-            <Card eyebrow="Inspector" title="Current materials">
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                  <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Selected node</div>
-                  <div className="mt-2 text-sm font-semibold text-white">{previewNode?.title || 'None'}</div>
-                  <div className="mt-2 text-sm text-slate-300">{previewNode?.type || 'Select a node from the canvas.'}</div>
-                  {selectedPreviewModel ? (
-                    <div className="mt-3 grid gap-2 text-xs text-slate-300">
-                      <div className="flex items-center justify-between gap-3">
-                        <span>模型</span>
-                        <span className="text-slate-100">{formatModelDisplayName(selectedPreviewModel)}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span>运行方式</span>
-                        <span className="text-right text-slate-100">{describeModelRuntime(selectedPreviewModel)}</span>
-                      </div>
-                    </div>
+              {previewAsyncState ? (
+                <div className={cx(
+                  'mt-4 rounded-2xl border px-4 py-4 text-sm',
+                  previewAsyncState.status === 'FAILED' || previewAsyncState.status === 'CANCELLED'
+                    ? 'border-red-400/20 bg-red-400/10 text-red-100'
+                    : previewAsyncState.status === 'SUCCEEDED'
+                      ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-100'
+                      : 'border-cyan-300/20 bg-cyan-300/10 text-cyan-100',
+                )}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{previewAsyncState.phase || previewAsyncState.status}</span>
+                    <span>
+                      {typeof previewAsyncState.progress === 'number'
+                        ? `${previewAsyncState.progress}%`
+                        : previewAsyncState.status === 'SUCCEEDED'
+                          ? '结果已可预览'
+                          : '异步任务'}
+                    </span>
+                  </div>
+                  {previewAsyncState.error ? (
+                    <div className="mt-2 text-xs text-red-100/90">{previewAsyncState.error}</div>
+                  ) : previewAsyncState.status === 'SUCCEEDED' && activeShot && !activeShot.clip ? (
+                    <div className="mt-2 text-xs text-emerald-100/90">当前结果已完成，右键画布里的视频节点后可存储到这个分镜槽。</div>
                   ) : null}
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {storyboardNode ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {activeShot?.job && canCancelJimengShotJob(activeShot.job) ? (
                       <button
                         type="button"
-                        onClick={() => focusEpisodeNode(storyboardNode)}
-                        className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100"
+                        onClick={() => void cancelShotJob(activeShot.id)}
+                        className="rounded-full border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs text-amber-100"
                       >
-                        选中分镜节点
+                        取消排队
                       </button>
                     ) : null}
-                    {promptNode ? (
+                    {activeShot?.job && !canCancelJimengShotJob(activeShot.job) && (activeShot.job.status === 'FAILED' || activeShot.job.status === 'CANCELLED') ? (
                       <button
                         type="button"
-                        onClick={() => focusEpisodeNode(promptNode)}
-                        className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100"
-                      >
-                        选中提示词节点
-                      </button>
-                    ) : null}
-                    {videoNode ? (
-                      <button
-                        type="button"
-                        onClick={() => focusEpisodeNode(videoNode)}
-                        className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100"
-                      >
-                        选中视频节点
-                      </button>
-                    ) : null}
-                    {selectedWorkspaceNode?.modelId ? (
-                      <button
-                        type="button"
-                        onClick={() => void runEpisodeCanvasNode(selectedWorkspaceNode.id).catch((err) => setError(err instanceof Error ? err.message : 'Canvas node run failed.'))}
+                        onClick={() => retryShotJob(activeShot.id)}
                         className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-black"
                       >
-                        运行当前节点
+                        重试当前分镜
                       </button>
+                    ) : null}
+                    {activeShot?.clip ? (
+                      <button
+                        type="button"
+                        onClick={() => clearShotResult(activeShot.id)}
+                        className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100"
+                      >
+                        清空当前分镜结果
+                      </button>
+                    ) : null}
+                    {activeShot?.promptText ? (
+                      <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-slate-300">
+                        {activeShot.promptText}
+                      </div>
+                    ) : null}
+                    {activeShot?.referenceAssetNames?.length ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {activeShotRecommendedAssets.map((entry) => (
+                          <span
+                            key={entry.name}
+                            className={cx(
+                              'rounded-full border px-3 py-1 text-xs',
+                              entry.asset
+                                ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100'
+                                : 'border-amber-300/25 bg-amber-300/10 text-amber-100',
+                            )}
+                          >
+                            {entry.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {activeShotRecommendedAssets.length ? (
+                      <button
+                        type="button"
+                        onClick={connectActiveShotRecommendedAssets}
+                        className="mt-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-100"
+                      >
+                        接入推荐资产
+                      </button>
+                    ) : null}
+                    {(activeShot?.recommendedModelId || activeShot?.recommendedModeId) ? (
+                      <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                        <div className="text-[11px] uppercase tracking-[0.24em] text-white/35">Shot recommendation</div>
+                        <div className="mt-3 grid gap-2 text-xs text-slate-300">
+                          <div className="flex items-center justify-between gap-3">
+                            <span>模型</span>
+                            <span className="text-right text-slate-100">
+                              {activeShotRecommendedModel ? formatModelDisplayName(activeShotRecommendedModel) : (activeShot?.recommendedModelId || '未指定')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span>模式</span>
+                            <span className="text-right text-slate-100">{activeShot?.recommendedModeId || '未指定'}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={prepareActiveShotWorkbench}
+                          className="mt-3 rounded-full bg-cyan-300 px-3 py-2 text-xs font-semibold text-black"
+                        >
+                          准备当前分镜
+                        </button>
+                        <button
+                          type="button"
+                          onClick={applyActiveShotRecommendation}
+                          className="mt-3 rounded-full bg-white px-3 py-2 text-xs font-semibold text-black"
+                        >
+                          应用到主视频节点
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                  <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Active beat</div>
-                  <div className="mt-2 text-sm font-semibold text-white">{activeScene?.title || 'No beat selected'}</div>
-                  <div className="mt-2 text-sm leading-7 text-slate-300">{activeScene?.summary || '点击下方时间线片段，把当前镜头节拍和工作台节点联动起来。'}</div>
-                  {activeScene ? (
-                    <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
-                      <span>{activeScene.shotCount} 镜头</span>
-                      <span>{activeScene.durationLabel}</span>
+              ) : null}
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-sm leading-7 text-slate-300">
+                {previewSummary || activeShot?.clip?.promptText || '当前预览会优先显示下方已选分镜的视频结果。'}
+              </div>
+            </Card>
+
+            <Card eyebrow="Sidebar" title={episodeSidebarTab === 'assets' ? 'Episode assets' : 'Inspector'}>
+              <div className="mb-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEpisodeSidebarTab('assets')}
+                  className={cx(
+                    'rounded-full px-4 py-2 text-sm transition',
+                    episodeSidebarTab === 'assets'
+                      ? 'bg-white text-black'
+                      : 'border border-white/10 bg-white/[0.04] text-slate-200',
+                  )}
+                >
+                  资产
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEpisodeSidebarTab('inspector')}
+                  className={cx(
+                    'rounded-full px-4 py-2 text-sm transition',
+                    episodeSidebarTab === 'inspector'
+                      ? 'bg-white text-black'
+                      : 'border border-white/10 bg-white/[0.04] text-slate-200',
+                  )}
+                >
+                  检查器
+                </button>
+              </div>
+
+              {episodeSidebarTab === 'assets' ? (
+                <div className="space-y-4">
+                  {assetGroups.map((group) => (
+                    <div key={group.key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                      <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">{group.label}</div>
+                      <div className="mt-4 grid gap-3">
+                        {group.items.map((asset) => (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            onClick={() => focusLockedAsset(asset.id)}
+                            className={cx(
+                              'grid gap-3 rounded-2xl border p-3 text-left transition',
+                              selectedAssetCardId === asset.id
+                                ? 'border-cyan-300/35 bg-cyan-300/[0.08]'
+                                : 'border-white/10 bg-black/20 hover:border-cyan-300/30',
+                            )}
+                          >
+                            {assetPreview(asset) ? (
+                              <img
+                                src={assetPreview(asset) || ''}
+                                alt={asset.name}
+                                className="h-28 w-full rounded-[18px] object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-28 items-center justify-center rounded-[18px] border border-dashed border-white/10 bg-white/[0.02] text-sm text-slate-400">
+                                暂无预览
+                              </div>
+                            )}
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="text-sm font-semibold text-white">{asset.name}</div>
+                                <div className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
+                                  {assetVersionDisplay(asset).versionNumber ? `V${assetVersionDisplay(asset).versionNumber}` : 'No version'}
+                                </div>
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.18em]">
+                                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-white/55">
+                                  {assetVersionDisplay(asset).versionLabel}
+                                </span>
+                                <span className={cx(
+                                  'rounded-full border px-2 py-1',
+                                  assetSyncStateByAssetId.get(asset.id)?.isSynced
+                                    ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100'
+                                    : 'border-amber-300/25 bg-amber-300/10 text-amber-100',
+                                )}>
+                                  {assetSyncStateByAssetId.get(asset.id)?.isSynced
+                                    ? `宸插悓姝?${nodeAssetVersionDisplay(assetSyncStateByAssetId.get(asset.id)?.assetNode).versionNumber ? `V${nodeAssetVersionDisplay(assetSyncStateByAssetId.get(asset.id)?.assetNode).versionNumber}` : ''}`
+                                    : `寰呭悓姝?${assetVersionDisplay(asset).versionNumber ? `V${assetVersionDisplay(asset).versionNumber}` : ''}`}
+                                </span>
+                              </div>
+                              <div className="mt-2 text-sm leading-6 text-slate-300 line-clamp-3">
+                                {asset.description || assetPrompt(asset) || '暂无资产说明。'}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {!assetGroups.length ? (
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-10 text-sm text-slate-300">
+                      当前这一集还没有锁定资产。
                     </div>
                   ) : null}
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                  <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Locked assets</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {lockedAssets.slice(0, 8).map((asset) => (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        onClick={() => focusLockedAsset(asset.id)}
-                        className={cx(
-                          'rounded-full border px-3 py-2 text-xs transition',
-                          assetNodesByAssetId.has(asset.id)
-                            ? 'border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100'
-                            : 'border-white/10 bg-black/20 text-slate-200 hover:border-cyan-300/30',
-                        )}
-                      >
-                        {asset.name}
-                      </button>
-                    ))}
-                    {!lockedAssets.length ? <div className="text-sm text-slate-400">No locked assets.</div> : null}
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Selected node</div>
+                    <div className="mt-2 text-sm font-semibold text-white">{previewNode?.title || 'None'}</div>
+                    <div className="mt-2 text-sm text-slate-300">{previewNode?.type || 'Select a node from the canvas.'}</div>
+                    {selectedPreviewModel ? (
+                      <div className="mt-3 grid gap-2 text-xs text-slate-300">
+                        <div className="flex items-center justify-between gap-3">
+                          <span>模型</span>
+                          <span className="text-slate-100">{formatModelDisplayName(selectedPreviewModel)}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span>运行方式</span>
+                          <span className="text-right text-slate-100">{describeModelRuntime(selectedPreviewModel)}</span>
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {storyboardNode ? (
+                        <button
+                          type="button"
+                          onClick={() => focusEpisodeNode(storyboardNode)}
+                          className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100"
+                        >
+                          选中分镜节点
+                        </button>
+                      ) : null}
+                      {promptNode ? (
+                        <button
+                          type="button"
+                          onClick={() => focusEpisodeNode(promptNode)}
+                          className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100"
+                        >
+                          选中提示词节点
+                        </button>
+                      ) : null}
+                      {videoNode ? (
+                        <button
+                          type="button"
+                          onClick={() => focusEpisodeNode(videoNode)}
+                          className="rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100"
+                        >
+                          选中视频节点
+                        </button>
+                      ) : null}
+                      {selectedWorkspaceNode?.modelId ? (
+                        <button
+                          type="button"
+                          onClick={() => void runEpisodeCanvasNode(selectedWorkspaceNode.id).catch((err) => setError(err instanceof Error ? err.message : 'Canvas node run failed.'))}
+                          className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-black"
+                        >
+                          运行当前节点
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.28em] text-white/35">Current shot</div>
+                    <div className="mt-2 text-sm font-semibold text-white">{activeShot?.title || 'No shot selected'}</div>
+                    <div className="mt-2 text-sm leading-7 text-slate-300">{activeShot?.summary || '点击下方分镜视频条，把当前工作台聚焦到某个镜头片段。'}</div>
+                    {activeShot ? (
+                      <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
+                        <span>{activeShot.source === 'manual' ? '手动分镜' : '自动分镜'}</span>
+                        <span>{activeShot.durationLabel || '未定长'}</span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
-              </div>
+              )}
             </Card>
           </section>
         </div>
 
-        <Card eyebrow="Timeline" title="Beat timeline">
-          <div className="overflow-x-auto">
-            <div className="flex min-w-max gap-3">
-              {sceneCards.map((scene) => (
-                <button
-                  key={scene.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedBeatId(scene.id);
-                    focusEpisodeNode(storyboardNode || promptNode || videoNode, scene.id);
-                  }}
-                  className={cx(
-                    'w-[180px] rounded-[20px] border p-4 text-left transition',
-                    activeScene?.id === scene.id
-                      ? 'border-cyan-300/35 bg-cyan-300/[0.08]'
-                      : 'border-white/10 bg-white/[0.03] hover:border-cyan-300/30',
-                  )}
-                >
-                  <div className="text-xs uppercase tracking-[0.24em] text-white/35">{scene.title}</div>
-                  <div className="mt-3 line-clamp-4 text-sm leading-6 text-slate-200">{scene.summary}</div>
-                  <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
-                    <span>{scene.shotCount} 镜头</span>
-                    <span>{scene.durationLabel}</span>
-                  </div>
-                </button>
-              ))}
-              {!sceneCards.length ? (
-                <div className="rounded-[20px] border border-dashed border-white/10 bg-white/[0.02] px-5 py-10 text-sm text-slate-300">
-                  分镜节拍会显示在这里，便于在生成前预览整集时间线。
-                </div>
-              ) : null}
-            </div>
-          </div>
+        <Card eyebrow="Shot Strip" title="分镜视频条">
+          <EpisodeShotStrip
+            strip={shotStrip}
+            onSelectShot={selectShot}
+            onAddShot={addShotSlot}
+            onRenameShot={renameShot}
+            onDeleteShot={deleteShot}
+            onMoveShot={moveShot}
+            onClearShotResult={clearShotResult}
+            onRetryShotJob={retryShotJob}
+            onCancelShotJob={cancelShotJob}
+          />
         </Card>
 
         <Card eyebrow="Runs" title="Episode run log">
@@ -2273,7 +3567,7 @@ export const App = () => {
     : route.kind === 'episode-scenes'
       ? 'Review script content and scene/shot breakdown before entering the generation workbench.'
       : route.kind === 'episode-workspace'
-        ? 'Use locked assets, connected references, and skill-generated prompts to produce video and review the beat timeline.'
+        ? 'Use locked assets, connected references, and skill-generated prompts to produce video and review the shot strip.'
         : 'Upload script -> decompose -> lock assets -> enter episodes -> work per episode.';
 
   return (

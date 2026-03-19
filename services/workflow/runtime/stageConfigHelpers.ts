@@ -44,6 +44,17 @@ export function selectStagePromptRecipe(
   return skillPack.promptRecipes.find((item) => item.id === stage.promptRecipeId) || skillPack.promptRecipes[0] || null;
 }
 
+export function selectSkillPackCapabilitySchemaId(
+  skillPack: SkillPack | null,
+  capabilityId: string,
+): string | null {
+  if (!skillPack) {
+    return null;
+  }
+
+  return skillPack.capabilitySchemaIds?.[capabilityId] || skillPack.schemaId || null;
+}
+
 export function applySkillPackSelection(
   stageKind: string,
   stage: StageConfig,

@@ -1,6 +1,7 @@
 import type {
   CanvasConnection,
   CanvasConfigFieldDefinition,
+  CanvasGenerationModeDefinition,
   CanvasInputValueType,
   CanvasModelInputDefinition,
   CanvasNode,
@@ -9,7 +10,13 @@ import type {
   StageConfig,
   StageConfigMap,
 } from '../../../types/workflowApp';
-import { findModelByIdentifier, getModelOptionValue } from './modelDeploymentHelpers';
+import {
+  findModelByIdentifier,
+  getModelDefaultGenerationModeId,
+  getModelGenerationModes,
+  getModelOptionValue,
+  resolveModelGenerationMode,
+} from './modelDeploymentHelpers';
 
 const MEDIA_SOURCE_PATTERNS: Record<CanvasInputValueType, RegExp> = {
   text: /[\s\S]+/,
@@ -51,8 +58,21 @@ function safeTitle(type: CanvasNodeType, title?: string): string {
   return '节点';
 }
 
-export function buildCanvasConnectionId(from: string, to: string): string {
-  return `conn_${from}_${to}`;
+export function buildCanvasConnectionId(from: string, to: string, inputKey = ''): string {
+  return inputKey ? `conn_${from}_${to}_${inputKey}` : `conn_${from}_${to}`;
+}
+
+function sanitizeModeIdForModel(
+  model: ModelDefinition | null | undefined,
+  modeId: string | null | undefined,
+): string | undefined {
+  return resolveModelGenerationMode(model, modeId)?.id || getModelDefaultGenerationModeId(model);
+}
+
+function getAcceptedInputTypes(definition: CanvasModelInputDefinition | null | undefined): CanvasInputValueType[] {
+  return Array.isArray(definition?.accepts)
+    ? definition.accepts.filter((value): value is CanvasInputValueType => typeof value === 'string')
+    : [];
 }
 
 function sanitizeParamsForModel(
@@ -192,6 +212,7 @@ export function buildCanvasNodeModelChangePatch(
 
   return {
     modelId: nextModel?.deploymentId || nextModelId,
+    modeId: sanitizeModeIdForModel(nextModel, node.modeId),
     params: nextParams,
     metadata: writeModelParamMemory(node, nextMemory),
     runStatus: 'idle',
@@ -224,6 +245,7 @@ export function buildCanvasNodeStagePresetPatch(
 
   return {
     modelId: nextModel?.deploymentId || stage.modelId,
+    modeId: sanitizeModeIdForModel(nextModel, node.modeId),
     params: nextParams,
     metadata: writeModelParamMemory(node, nextMemory),
     runStatus: 'idle',
@@ -335,6 +357,7 @@ export function createCanvasNode(
   return {
     ...baseNode,
     modelId,
+    modeId: sanitizeModeIdForModel(model, undefined),
     params: resolveCanvasNodeDefaultParams(type, model, stageConfig),
     metadata: model?.deploymentId
       ? writeModelParamMemory(baseNode, {
@@ -371,6 +394,7 @@ export function normalizeCanvasNode(
     content: String(node.content || ''),
     prompt: typeof node.prompt === 'string' ? node.prompt : '',
     modelId: model?.deploymentId || modelId,
+    modeId: sanitizeModeIdForModel(model, node.modeId),
     params: mergeNodeParamsWithModelDefaults(model, isObject(node.params) ? node.params : {}),
     output: isObject(node.output) ? node.output : {},
     runStatus: node.runStatus || 'idle',
@@ -392,15 +416,27 @@ export function normalizeCanvasContent(
   const nodes = Array.isArray(content?.nodes)
     ? content.nodes.map((node) => normalizeCanvasNode(node, models, stageConfig))
     : [];
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const connections = Array.isArray(content?.connections)
     ? content.connections
         .filter((connection) => Boolean(connection?.from) && Boolean(connection?.to))
-        .map((connection) => ({
-          id: connection.id || buildCanvasConnectionId(connection.from, connection.to),
-          from: connection.from,
-          to: connection.to,
-          inputType: connection.inputType,
-        }))
+        .map((connection) => {
+          const targetNode = nodeById.get(connection.to);
+          const sourceNode = nodeById.get(connection.from);
+          const derivedInputKey = connection.inputKey
+            || (targetNode && sourceNode
+              ? getCompatibleNodeInputDefinitions(targetNode, sourceNode.type, models)[0]?.[0]
+              : undefined)
+            || '';
+          return {
+            id: connection.id || buildCanvasConnectionId(connection.from, connection.to, derivedInputKey),
+            from: connection.from,
+            to: connection.to,
+            inputKey: derivedInputKey,
+            inputType: connection.inputType,
+          };
+        })
+        .filter((connection) => Boolean(connection.inputKey))
     : [];
 
   return {
@@ -417,12 +453,54 @@ export function getModelInputDefinitions(model: ModelDefinition | null | undefin
 
   return Object.entries(model.inputSchema).filter((entry): entry is [string, CanvasModelInputDefinition] => {
     const [, value] = entry;
-    return isObject(value) && typeof value.type === 'string';
+    return isObject(value) && Array.isArray(value.accepts);
   });
 }
 
-function findMatchingInputDefinition(model: ModelDefinition | null | undefined, sourceType: CanvasNodeType) {
-  return getModelInputDefinitions(model).find(([, definition]) => definition.type === sourceType);
+export function getNodeGenerationMode(
+  node: Pick<CanvasNode, 'modeId'>,
+  model: ModelDefinition | null | undefined,
+): CanvasGenerationModeDefinition | null {
+  return resolveModelGenerationMode(model, node.modeId);
+}
+
+export function getNodeEnabledInputDefinitions(
+  node: Pick<CanvasNode, 'modeId'>,
+  model: ModelDefinition | null | undefined,
+): Array<[string, CanvasModelInputDefinition]> {
+  const definitions = getModelInputDefinitions(model);
+  const generationModes = getModelGenerationModes(model);
+  if (generationModes.length === 0) {
+    return definitions;
+  }
+
+  const mode = getNodeGenerationMode(node, model);
+  if (!mode) {
+    return definitions;
+  }
+
+  const enabledInputKeys = new Set(mode.enabledInputKeys);
+  return definitions.filter(([inputKey]) => enabledInputKeys.has(inputKey));
+}
+
+export function getVisibleNodeInputDefinitions(
+  node: Pick<CanvasNode, 'modeId'>,
+  model: ModelDefinition | null | undefined,
+): Array<[string, CanvasModelInputDefinition]> {
+  return getNodeEnabledInputDefinitions(node, model)
+    .filter(([, definition]) => definition.showInNode !== false);
+}
+
+export function getCompatibleNodeInputDefinitions(
+  node: Pick<CanvasNode, 'modeId'>,
+  sourceType: CanvasNodeType,
+  modelsOrModel: ModelDefinition[] | ModelDefinition | null | undefined,
+): Array<[string, CanvasModelInputDefinition]> {
+  const model = Array.isArray(modelsOrModel)
+    ? findModelByIdentifier(modelsOrModel, (node as Pick<CanvasNode, 'modeId' | 'modelId'> & { modelId?: string }).modelId)
+    : modelsOrModel;
+  return getNodeEnabledInputDefinitions(node, model)
+    .filter(([, definition]) => getAcceptedInputTypes(definition).includes(sourceType as CanvasInputValueType));
 }
 
 export function validateCanvasConnection(
@@ -430,7 +508,8 @@ export function validateCanvasConnection(
   targetNode: CanvasNode,
   models: ModelDefinition[],
   connections: CanvasConnection[],
-): { valid: boolean; error?: string } {
+  inputKey?: string,
+): { valid: boolean; error?: string; resolvedInputKey?: string; candidateInputKeys?: string[] } {
   if (sourceNode.id === targetNode.id) {
     return { valid: false, error: '节点不能连接到自己。' };
   }
@@ -440,35 +519,52 @@ export function validateCanvasConnection(
   }
 
   const targetModel = findModelByIdentifier(models, targetNode.modelId);
-  const inputDefinition = findMatchingInputDefinition(targetModel, sourceNode.type);
-  if (!inputDefinition) {
+  const compatibleDefinitions = getCompatibleNodeInputDefinitions(targetNode, sourceNode.type, targetModel);
+  if (compatibleDefinitions.length === 0) {
     return { valid: false, error: `${targetNode.title} 当前模型不接受 ${sourceNode.type} 输入。` };
   }
 
-  const duplicate = connections.find((connection) => connection.from === sourceNode.id && connection.to === targetNode.id);
-  if (duplicate) {
-    return { valid: false, error: '这条连接已经存在。' };
-  }
-
-  const sameTypeConnections = connections.filter((connection) => {
-    if (connection.to !== targetNode.id) {
-      return false;
+  const candidateInputKeys = compatibleDefinitions.reduce<string[]>((accumulator, [candidateInputKey, definition]) => {
+    const duplicate = connections.find((connection) => connection.from === sourceNode.id && connection.to === targetNode.id && connection.inputKey === candidateInputKey);
+    if (duplicate) {
+      return accumulator;
     }
 
-    const fromNode = sourceNode.id === connection.from ? sourceNode : null;
-    if (fromNode) {
-      return fromNode.type === sourceNode.type;
+    const sameInputConnections = connections.filter((connection) => connection.to === targetNode.id && connection.inputKey === candidateInputKey);
+    const maxItems = definition.maxItems ?? (definition.multiple ? Number.POSITIVE_INFINITY : 1);
+    if (Number.isFinite(maxItems) && sameInputConnections.length >= maxItems) {
+      return accumulator;
     }
 
-    return connection.inputType === sourceNode.type;
-  });
+    accumulator.push(candidateInputKey);
+    return accumulator;
+  }, []);
 
-  const maxItems = inputDefinition[1].maxItems ?? (inputDefinition[1].multiple ? Number.POSITIVE_INFINITY : 1);
-  if (Number.isFinite(maxItems) && sameTypeConnections.length >= maxItems) {
-    return { valid: false, error: `${targetNode.title} 的 ${sourceNode.type} 输入已达到上限。` };
+  if (candidateInputKeys.length === 0) {
+    return { valid: false, error: `${targetNode.title} 没有可用输入槽位。` };
   }
 
-  return { valid: true };
+  if (inputKey) {
+    if (!candidateInputKeys.includes(inputKey)) {
+      return {
+        valid: false,
+        error: `${targetNode.title} 当前模式不接受 ${sourceNode.type} 接到 ${inputKey}。`,
+        candidateInputKeys,
+      };
+    }
+
+    return {
+      valid: true,
+      resolvedInputKey: inputKey,
+      candidateInputKeys,
+    };
+  }
+
+  return {
+    valid: true,
+    resolvedInputKey: candidateInputKeys[0],
+    candidateInputKeys,
+  };
 }
 
 export function isNodeExecutable(node: CanvasNode): boolean {
@@ -486,20 +582,21 @@ export function collectCanvasNodeInputs(
   nodes: CanvasNode[],
   connections: CanvasConnection[],
   models: ModelDefinition[],
-): Record<CanvasInputValueType, Array<{ node: CanvasNode; value: string }>> {
-  const inputs: Record<CanvasInputValueType, Array<{ node: CanvasNode; value: string }>> = {
-    text: [],
-    image: [],
-    video: [],
-    audio: [],
-  };
-
+): Record<string, { definition: CanvasModelInputDefinition; items: Array<{ node: CanvasNode; value: string; inputType: CanvasInputValueType }> }> {
   if (!node.modelId) {
-    return inputs;
+    return {};
   }
 
   const model = findModelByIdentifier(models, node.modelId);
+  const definitions = new Map(getNodeEnabledInputDefinitions(node, model));
   const nodeById = new Map(nodes.map((item) => [item.id, item]));
+  const inputs = Array.from(definitions.entries()).reduce<Record<string, { definition: CanvasModelInputDefinition; items: Array<{ node: CanvasNode; value: string; inputType: CanvasInputValueType }> }>>((acc, [inputKey, definition]) => {
+    acc[inputKey] = {
+      definition,
+      items: [],
+    };
+    return acc;
+  }, {});
 
   connections
     .filter((connection) => connection.to === node.id)
@@ -509,8 +606,8 @@ export function collectCanvasNodeInputs(
         return;
       }
 
-      const matchedDefinition = findMatchingInputDefinition(model, sourceNode.type);
-      if (!matchedDefinition) {
+      const inputDefinition = definitions.get(connection.inputKey);
+      if (!inputDefinition) {
         return;
       }
 
@@ -519,9 +616,14 @@ export function collectCanvasNodeInputs(
         return;
       }
 
-      inputs[sourceNode.type as CanvasInputValueType].push({
+      if (!getAcceptedInputTypes(inputDefinition).includes(sourceNode.type as CanvasInputValueType)) {
+        return;
+      }
+
+      inputs[connection.inputKey]?.items.push({
         node: sourceNode,
         value: nextValue,
+        inputType: sourceNode.type as CanvasInputValueType,
       });
     });
 

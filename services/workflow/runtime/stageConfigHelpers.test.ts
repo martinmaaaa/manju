@@ -5,6 +5,7 @@ import {
   applyStageModelParamChange,
   applyStageModelSelection,
   resolveStageModelParams,
+  selectSkillPackCapabilitySchemaId,
   selectStagePromptRecipe,
   selectStageSkillPack,
 } from './stageConfigHelpers';
@@ -15,8 +16,12 @@ const directorPack: SkillPack = {
   stageKind: 'script_decompose',
   source: 'seedance/director',
   executionRole: 'director',
+  schemaId: 'director-core-v1',
   description: 'Director decomposition pack',
   promptMethodology: 'Break story into structured beats.',
+  capabilitySchemaIds: {
+    script_decompose: 'director-core-v1',
+  },
   templates: {
     primaryOutput: 'director-analysis',
     artifacts: ['story_bible'],
@@ -37,8 +42,12 @@ const videoPack: SkillPack = {
   stageKind: 'video_prompt_generate',
   source: 'seedance/storyboard',
   executionRole: 'storyboard-artist',
+  schemaId: 'video-pack-default',
   description: 'Video prompt pack',
   promptMethodology: 'Keep cinematic intent stable.',
+  capabilitySchemaIds: {
+    video_prompt_generate: 'video-prompt-core-v1',
+  },
   templates: {
     primaryOutput: 'video-prompt',
     artifacts: ['prompt'],
@@ -118,6 +127,12 @@ describe('stageConfigHelpers', () => {
     };
 
     expect(selectStageSkillPack([directorPack, videoPack], 'script_decompose', stage)?.id).toBe('director-pack');
+  });
+
+  it('resolves capability-scoped schema ids from the selected skill pack', () => {
+    expect(selectSkillPackCapabilitySchemaId(videoPack, 'video_prompt_generate')).toBe('video-prompt-core-v1');
+    expect(selectSkillPackCapabilitySchemaId(directorPack, 'episode_expand')).toBe('director-core-v1');
+    expect(selectSkillPackCapabilitySchemaId(null, 'video_prompt_generate')).toBeNull();
   });
 
   it('applies skill pack review defaults and seeds the first video prompt recipe', () => {

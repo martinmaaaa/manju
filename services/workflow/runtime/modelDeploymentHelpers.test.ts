@@ -26,8 +26,8 @@ const models: ModelDefinition[] = [
     modality: 'video',
     capabilities: ['video_generate'],
     inputSchema: {
-      text: { type: 'text', label: '文本提示', maxItems: 1 },
-      images: { type: 'image', label: '参考图片', multiple: true, maxItems: 2 },
+      promptText: { accepts: ['text'], label: '文本提示', maxItems: 1, showInNode: false },
+      referenceImages: { accepts: ['image'], label: '参考图片', multiple: true, maxItems: 2, showInNode: true },
     },
     configSchema: {
       ratio: { type: 'string', label: '比例', enum: ['9:16'] },

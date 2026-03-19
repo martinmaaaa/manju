@@ -7,7 +7,11 @@ import type {
   ModelDefinition,
   StageConfigMap,
 } from '../../../types/workflowApp';
-import { buildCanvasConnectionId, createCanvasNode } from './canvasGraphHelpers';
+import {
+  buildCanvasConnectionId,
+  createCanvasNode,
+  getCompatibleNodeInputDefinitions,
+} from './canvasGraphHelpers';
 
 type EpisodeWorkbenchNodeKind = 'script' | 'storyboard' | 'prompt' | 'visual' | 'video';
 
@@ -97,6 +101,17 @@ function currentAssetVersion(asset: CanonicalAsset) {
   }
 
   return asset.versions.find((item) => item.id === asset.currentVersionId) || asset.versions[0];
+}
+
+function assetVersionSourceLabel(asset: CanonicalAsset) {
+  const version = currentAssetVersion(asset);
+  return String(
+    version?.sourcePayload?.source
+    || version?.metadata?.source
+    || 'manual',
+  )
+    .replace(/[_-]+/g, ' ')
+    .trim();
 }
 
 function mergeNodeFrame(
@@ -191,24 +206,37 @@ function buildLockedAssetNode(asset: CanonicalAsset, index: number): CanvasNode 
     lastRunAt: null,
     metadata: {
       lockedAssetId: asset.id,
+      lockedAssetName: asset.name,
       assetType: asset.type,
-      sourceVersionId: asset.currentVersionId || null,
+      sourceVersionId: version?.id || asset.currentVersionId || null,
+      sourceVersionNumber: version?.versionNumber || null,
+      sourceVersionCreatedAt: version?.createdAt || null,
+      sourceVersionLabel: assetVersionSourceLabel(asset),
     },
   };
 }
 
-function buildPrimaryConnections(episodeId: string): CanvasConnection[] {
+function resolveVideoReferenceInputKey(videoNode: CanvasNode, models: ModelDefinition[]) {
+  return getCompatibleNodeInputDefinitions(videoNode, 'image', models)[0]?.[0] || 'referenceImages';
+}
+
+function buildPrimaryConnections(
+  episodeId: string,
+  videoNode: CanvasNode,
+  models: ModelDefinition[],
+): CanvasConnection[] {
   const scriptId = getEpisodePrimaryNodeId('script', episodeId);
   const storyboardId = getEpisodePrimaryNodeId('storyboard', episodeId);
   const promptId = getEpisodePrimaryNodeId('prompt', episodeId);
   const visualId = getEpisodePrimaryNodeId('visual', episodeId);
   const videoId = getEpisodePrimaryNodeId('video', episodeId);
+  const videoReferenceInputKey = resolveVideoReferenceInputKey(videoNode, models);
 
   return [
-    { id: buildCanvasConnectionId(scriptId, storyboardId), from: scriptId, to: storyboardId, inputType: 'text' },
-    { id: buildCanvasConnectionId(storyboardId, promptId), from: storyboardId, to: promptId, inputType: 'text' },
-    { id: buildCanvasConnectionId(promptId, videoId), from: promptId, to: videoId, inputType: 'text' },
-    { id: buildCanvasConnectionId(visualId, videoId), from: visualId, to: videoId, inputType: 'image' },
+    { id: buildCanvasConnectionId(scriptId, storyboardId, 'contextTexts'), from: scriptId, to: storyboardId, inputKey: 'contextTexts', inputType: 'text' },
+    { id: buildCanvasConnectionId(storyboardId, promptId, 'contextTexts'), from: storyboardId, to: promptId, inputKey: 'contextTexts', inputType: 'text' },
+    { id: buildCanvasConnectionId(promptId, videoId, 'promptText'), from: promptId, to: videoId, inputKey: 'promptText', inputType: 'text' },
+    { id: buildCanvasConnectionId(visualId, videoId, videoReferenceInputKey), from: visualId, to: videoId, inputKey: videoReferenceInputKey, inputType: 'image' },
   ];
 }
 
@@ -326,13 +354,18 @@ export function harmonizeEpisodeWorkbenchContent({
   const customNodes = existingNodes.filter((node) => !isEpisodeWorkbenchManagedNode(node, episode.id));
   const nextNodes = [...primaryNodes, ...customNodes, ...syncedAssetNodes];
   const validNodeIds = new Set(nextNodes.map((node) => node.id));
-  const requiredConnections = buildPrimaryConnections(episode.id);
+  const videoPrimaryNode = primaryNodes.find((node) => node.id === getEpisodePrimaryNodeId('video', episode.id));
+  const requiredConnections = buildPrimaryConnections(
+    episode.id,
+    videoPrimaryNode || buildPrimaryNode('video', episode, lockedAssets, models, stageConfig, promptRecipeId),
+    models,
+  );
   const seenPairs = new Set<string>();
   const nextConnections = [
     ...cleanConnections(content.connections)
       .filter((connection) => validNodeIds.has(connection.from) && validNodeIds.has(connection.to))
       .filter((connection) => {
-        const pairKey = `${connection.from}=>${connection.to}`;
+        const pairKey = `${connection.from}=>${connection.to}=>${connection.inputKey}`;
         if (seenPairs.has(pairKey)) {
           return false;
         }
@@ -340,7 +373,7 @@ export function harmonizeEpisodeWorkbenchContent({
         return true;
       }),
     ...requiredConnections.filter((connection) => {
-      const pairKey = `${connection.from}=>${connection.to}`;
+      const pairKey = `${connection.from}=>${connection.to}=>${connection.inputKey}`;
       if (seenPairs.has(pairKey)) {
         return false;
       }

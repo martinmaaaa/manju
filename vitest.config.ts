@@ -10,7 +10,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
-      include: ['utils/**', 'hooks/**', 'stores/**', 'services/**'],
+      include: ['App.tsx', 'components/workflow2/**', 'server/**', 'services/**', 'types/workflowApp.ts', 'utils/**'],
     },
   },
   resolve: {

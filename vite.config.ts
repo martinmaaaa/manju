@@ -40,18 +40,6 @@ export default defineConfig(({ mode }) => {
                 if (id.includes('zustand') || id.includes('swr') || id.includes('jszip')) return 'vendor-utils';
                 return; // let vite handle other node_modules
               }
-
-              // Services
-              if (id.includes('/services/storage/') || id.includes('/services/ossService')) return 'services-storage';
-              if (id.includes('/services/characterGenerationManager')) return 'services-character';
-              if (id.includes('/services/apiInterceptor/')) return 'services-interceptor';
-
-              // Editor components (lazy-loaded)
-              if (id.includes('/components/VideoEditor') || id.includes('/components/StoryboardVideoNode') || id.includes('/components/StoryboardEditor') || id.includes('/components/StoryboardTimeline')) return 'editor-video';
-              if (id.includes('/components/CharacterLibrary') || id.includes('/components/CharacterDetailModal')) return 'editor-character';
-
-              // Panel components
-              if (id.includes('/components/SmartSequenceDock') || id.includes('/components/ChatWindow') || id.includes('/components/Galaxy')) return 'panels-ui';
             },
           },
         },

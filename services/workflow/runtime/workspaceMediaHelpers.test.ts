@@ -30,6 +30,14 @@ const workspace: EpisodeWorkspace = {
         width: 300,
         height: 240,
         content: 'https://cdn.example.com/scene-a.png',
+        metadata: {
+          lockedAssetId: 'asset-scene-1',
+          lockedAssetName: '皇宫广场',
+          assetType: 'scene',
+          sourceVersionId: 'scene-ver-3',
+          sourceVersionNumber: 3,
+          sourceVersionLabel: 'image prompt generate',
+        },
       },
       {
         id: 'audio-1',
@@ -51,6 +59,33 @@ const workspace: EpisodeWorkspace = {
         height: 240,
         content: 'data:audio/mp3;base64,ZmFrZS1hdWRpbw==',
       },
+      {
+        id: 'video-ref-1',
+        type: 'video',
+        title: '视频参考',
+        x: 1280,
+        y: 0,
+        width: 300,
+        height: 240,
+        content: 'https://cdn.example.com/reference-video.mp4',
+      },
+      {
+        id: 'video-1',
+        type: 'video',
+        title: '视频生成',
+        x: 1600,
+        y: 0,
+        width: 300,
+        height: 240,
+        content: '',
+        modelId: 'seedance-2.0@bendi',
+      },
+    ],
+    connections: [
+      { id: 'conn-prompt-video', from: 'prompt-1', to: 'video-1', inputKey: 'promptText' },
+      { id: 'conn-visual-video', from: 'visual-1', to: 'video-1', inputKey: 'referenceAssets' },
+      { id: 'conn-video-video', from: 'video-ref-1', to: 'video-1', inputKey: 'referenceAssets' },
+      { id: 'conn-audio-video', from: 'audio-1', to: 'video-1', inputKey: 'referenceAssets' },
     ],
   },
 };
@@ -66,7 +101,20 @@ describe('workspaceMediaHelpers', () => {
     expect(collectEpisodeWorkspaceVideoInputs(workspace)).toEqual({
       prompt: '镜头沿着宫殿长廊推进，人物停步回望。',
       imageUrls: ['https://cdn.example.com/scene-a.png'],
+      videoReferenceUrls: ['https://cdn.example.com/reference-video.mp4'],
       audioReferenceUrls: ['https://cdn.example.com/audio-reference.mp3'],
+      assetReferences: [
+        {
+          assetId: 'asset-scene-1',
+          assetName: '皇宫广场',
+          assetType: 'scene',
+          versionId: 'scene-ver-3',
+          versionNumber: 3,
+          versionLabel: 'image prompt generate',
+          inputKey: 'referenceAssets',
+          inputType: 'image',
+        },
+      ],
     });
   });
 
@@ -74,7 +122,9 @@ describe('workspaceMediaHelpers', () => {
     expect(collectEpisodeWorkspaceVideoInputs(null)).toEqual({
       prompt: '',
       imageUrls: [],
+      videoReferenceUrls: [],
       audioReferenceUrls: [],
+      assetReferences: [],
     });
   });
 });

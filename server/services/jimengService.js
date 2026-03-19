@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { looksLikeReusableJimengVideoUrl } from '../jimengVideoUrlFilters.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,30 +10,70 @@ const USER_DATA_DIR = path.resolve(__dirname, '../../playwright-user-data');
 const LOGIN_TIMEOUT_MS = 300000;
 const GENERATION_TIMEOUT_MS = 900000;
 const GENERATION_POLL_INTERVAL_MS = 5000;
-const SUPPORTED_REFERENCE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp']);
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp']);
+const SUPPORTED_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov']);
+const SUPPORTED_AUDIO_EXTENSIONS = new Set(['.mp3', '.wav']);
+const JIMENG_MODE_CONFIG = {
+    start_end_frames: {
+        id: 'start_end_frames',
+        label: '首尾帧',
+        acceptedKinds: new Set(['image']),
+        maxItems: 2,
+    },
+    all_references: {
+        id: 'all_references',
+        label: '全能参考',
+        acceptedKinds: new Set(['image', 'video', 'audio']),
+        maxItems: 12,
+    },
+};
 
-function isSupportedImageFile(file) {
-    const mimeType = String(file?.mimetype || '').toLowerCase();
-    if (mimeType.startsWith('image/')) {
-        return true;
-    }
-
-    const extension = path.extname(file?.originalname || file?.path || '').toLowerCase();
-    return SUPPORTED_REFERENCE_EXTENSIONS.has(extension);
+function getReferenceFileExtension(file) {
+    return path.extname(file?.originalname || file?.path || '').toLowerCase();
 }
 
-function looksLikeVideoUrl(value) {
-    if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) {
-        return false;
+function detectReferenceFileKind(file) {
+    const mimeType = String(file?.mimetype || '').toLowerCase();
+    const extension = getReferenceFileExtension(file);
+
+    if (mimeType.startsWith('image/') || SUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
+        return 'image';
     }
 
-    const normalized = value.toLowerCase();
-    return normalized.includes('.mp4') ||
-        normalized.includes('.m3u8') ||
-        normalized.includes('video/mp4') ||
-        normalized.includes('/video/') ||
-        normalized.includes('/media/') ||
-        normalized.includes('play_addr');
+    if (mimeType.startsWith('video/') || SUPPORTED_VIDEO_EXTENSIONS.has(extension)) {
+        return 'video';
+    }
+
+    if (mimeType.startsWith('audio/') || SUPPORTED_AUDIO_EXTENSIONS.has(extension)) {
+        return 'audio';
+    }
+
+    return '';
+}
+
+function describeReferenceKind(kind) {
+    if (kind === 'image') return '图片';
+    if (kind === 'video') return '视频';
+    if (kind === 'audio') return '音频';
+    return '文件';
+}
+
+function resolveJimengMode(modeId) {
+    if (modeId === 'references' || modeId === 'all_references') {
+        return JIMENG_MODE_CONFIG.all_references;
+    }
+
+    if (modeId === 'start_end_frames') {
+        return JIMENG_MODE_CONFIG.start_end_frames;
+    }
+
+    return JIMENG_MODE_CONFIG.start_end_frames;
+}
+
+const REFERENCE_TOKEN_PATTERN = /@(图片\d+|视频\d+|音频\d+)/g;
+
+function looksLikeVideoUrl(value) {
+    return looksLikeReusableJimengVideoUrl(value);
 }
 
 function extractVideoUrls(payload, matches = new Set()) {
@@ -296,6 +337,133 @@ class JimengService {
         return page.locator('textarea:visible').first();
     }
 
+    async getActivePromptInput(page) {
+        const richEditors = page.locator('[contenteditable="true"][role="textbox"]');
+        const richCount = await richEditors.count();
+        for (let index = 0; index < richCount; index += 1) {
+            const locator = richEditors.nth(index);
+            const box = await locator.boundingBox().catch(() => null);
+            if (box && box.y < 420 && box.width > 240) {
+                return { kind: 'rich', locator };
+            }
+        }
+
+        const promptTextarea = this.getPromptTextarea(page);
+        const isTextareaVisible = await promptTextarea.isVisible().catch(() => false);
+        if (isTextareaVisible) {
+            return { kind: 'textarea', locator: promptTextarea };
+        }
+
+        return null;
+    }
+
+    async fillPromptInput(page, prompt) {
+        const promptInput = await this.getActivePromptInput(page);
+        if (!promptInput) {
+            throw new Error('Prompt input not found on Jimeng page.');
+        }
+
+        if (promptInput.kind === 'textarea') {
+            await promptInput.locator.fill(prompt);
+            return;
+        }
+
+        await promptInput.locator.click({ timeout: 5000 });
+        await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A').catch(() => { });
+        await page.keyboard.press('Backspace').catch(() => { });
+        const supportsReferenceMentions = REFERENCE_TOKEN_PATTERN.test(prompt);
+        REFERENCE_TOKEN_PATTERN.lastIndex = 0;
+
+        if (!supportsReferenceMentions) {
+            await promptInput.locator.fill(prompt).catch(async () => {
+                await promptInput.locator.type(prompt, { delay: 12 });
+            });
+            return;
+        }
+
+        let cursor = 0;
+        for (const match of prompt.matchAll(REFERENCE_TOKEN_PATTERN)) {
+            const plainText = prompt.slice(cursor, match.index);
+            if (plainText) {
+                await promptInput.locator.type(plainText, { delay: 12 });
+            }
+
+            const referenceLabel = match[1];
+            await promptInput.locator.type('@', { delay: 12 });
+            await page.waitForTimeout(400);
+
+            const suggestion = page.locator(`text=${referenceLabel}`).first();
+            const suggestionVisible = await suggestion.isVisible().catch(() => false);
+            if (suggestionVisible) {
+                await suggestion.click({ timeout: 5000 }).catch(() => { });
+            } else {
+                await promptInput.locator.type(referenceLabel, { delay: 12 });
+            }
+
+            cursor = (match.index || 0) + match[0].length;
+        }
+
+        const trailingText = prompt.slice(cursor);
+        if (trailingText) {
+            await promptInput.locator.type(trailingText, { delay: 12 });
+        }
+    }
+
+    async getActiveReferenceInput(page) {
+        const fileInputs = page.locator('input[type="file"]');
+        const inputCount = await fileInputs.count();
+        let bestIndex = -1;
+        let bestY = Number.POSITIVE_INFINITY;
+        let bestX = Number.POSITIVE_INFINITY;
+
+        for (let index = 0; index < inputCount; index += 1) {
+            const locator = fileInputs.nth(index);
+            const box = await locator.evaluate((element) => {
+                const host = element.parentElement || element;
+                const rect = host.getBoundingClientRect();
+                return {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                };
+            }).catch(() => null);
+
+            if (!box || box.width <= 0 || box.height <= 0 || box.y >= 420) {
+                continue;
+            }
+
+            if (box.y < bestY || box.y === bestY && box.x < bestX) {
+                bestIndex = index;
+                bestY = box.y;
+                bestX = box.x;
+            }
+        }
+
+        if (bestIndex === -1) {
+            return null;
+        }
+
+        return fileInputs.nth(bestIndex);
+    }
+
+    async selectGenerationMode(page, modeId) {
+        const mode = resolveJimengMode(modeId);
+        const modeSelector = page.locator('div.feature-select-VcsuXi').first();
+        await modeSelector.waitFor({ state: 'visible', timeout: 15000 });
+
+        const currentLabel = String(await modeSelector.textContent().catch(() => '') || '').trim();
+        if (currentLabel === mode.label) {
+            return mode;
+        }
+
+        await modeSelector.click({ timeout: 5000 });
+        await page.waitForTimeout(500);
+        await page.locator(`text=${mode.label}`).first().click({ timeout: 5000 });
+        await page.waitForTimeout(1200);
+        return mode;
+    }
+
     async notifyProgress(onProgress, update) {
         if (typeof onProgress !== 'function') {
             return;
@@ -315,40 +483,46 @@ class JimengService {
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => { });
         await this.closeBlockingModal(page);
 
-        const promptTextarea = this.getPromptTextarea(page);
-        await promptTextarea.waitFor({ state: 'visible', timeout: 30000 });
-
+        const modeSelector = page.locator('div.feature-select-VcsuXi').first();
+        await modeSelector.waitFor({ state: 'visible', timeout: 30000 });
         const submitButton = page.locator('button[class*="submit-button"]:visible').first();
+        await submitButton.waitFor({ state: 'visible', timeout: 30000 });
         const fileInputs = page.locator('input[type="file"]');
 
         return {
-            promptTextarea,
             submitButton,
             fileInputs,
         };
     }
 
-    normalizeReferenceFiles(files = []) {
+    normalizeReferenceFiles(files = [], options = {}) {
+        const mode = resolveJimengMode(options.modeId);
         const supportedFiles = [];
         const unsupportedFiles = [];
 
         files.forEach((file) => {
-            if (isSupportedImageFile(file)) {
-                supportedFiles.push(file);
-            } else {
+            const kind = detectReferenceFileKind(file);
+            if (!kind || !mode.acceptedKinds.has(kind)) {
                 unsupportedFiles.push(file);
+                return;
             }
+
+            supportedFiles.push({
+                ...file,
+                kind,
+            });
         });
 
         if (unsupportedFiles.length > 0) {
             const names = unsupportedFiles
                 .map((file) => file.originalname || path.basename(file.path || ''))
                 .filter(Boolean);
-            throw new Error(`Jimeng currently supports image reference files only: ${names.join(', ')}`);
+            const acceptedKinds = Array.from(mode.acceptedKinds).map((kind) => describeReferenceKind(kind)).join(' / ');
+            throw new Error(`Jimeng ${mode.label} 当前只接受 ${acceptedKinds} 参考文件：${names.join(', ')}`);
         }
 
-        if (supportedFiles.length > 2) {
-            throw new Error('Jimeng currently supports at most 2 reference images per request.');
+        if (supportedFiles.length > mode.maxItems) {
+            throw new Error(`Jimeng ${mode.label} 当前最多支持 ${mode.maxItems} 个参考素材。`);
         }
 
         return supportedFiles;
@@ -620,8 +794,9 @@ class JimengService {
                 message: 'Validating Jimeng prompt and reference files.',
             });
 
-            const referenceFiles = this.normalizeReferenceFiles(uploadedFiles);
-            console.log(`Starting Jimeng Seedance 2.0 generation with ${referenceFiles.length} reference image(s)`);
+            const activeMode = resolveJimengMode(options.modeId);
+            const referenceFiles = this.normalizeReferenceFiles(uploadedFiles, { modeId: activeMode.id });
+            console.log(`Starting Jimeng Seedance 2.0 generation in ${activeMode.label} mode with ${referenceFiles.length} reference file(s)`);
 
             await this.notifyProgress(options.onProgress, {
                 phase: 'OPENING_BROWSER',
@@ -654,7 +829,16 @@ class JimengService {
                 message: 'Opening Jimeng generation workspace.',
             });
 
-            const { promptTextarea, submitButton, fileInputs } = await this.openGenerationWorkspace(page);
+            const { submitButton } = await this.openGenerationWorkspace(page);
+            throwIfAborted(options.signal);
+
+            await this.notifyProgress(options.onProgress, {
+                phase: 'CONFIGURING_MODE',
+                progress: 42,
+                message: `Switching Jimeng to ${activeMode.label} mode.`,
+            });
+
+            await this.selectGenerationMode(page, activeMode.id);
             throwIfAborted(options.signal);
 
             const knownVideoUrls = new Set(await this.collectCurrentVideoUrls(page));
@@ -694,18 +878,18 @@ class JimengService {
                 await this.notifyProgress(options.onProgress, {
                     phase: 'UPLOADING_REFERENCES',
                     progress: 50,
-                    message: 'Uploading reference images to Jimeng.',
+                    message: `Uploading ${referenceFiles.length} reference file(s) to Jimeng.`,
                 });
 
-                const availableInputs = await fileInputs.count();
-                if (availableInputs < referenceFiles.length) {
-                    throw new Error('Not enough Jimeng reference upload inputs were found on the page.');
-                }
-
-                for (let index = 0; index < referenceFiles.length; index += 1) {
+                for (const referenceFile of referenceFiles) {
                     throwIfAborted(options.signal);
-                    await fileInputs.nth(index).setInputFiles(referenceFiles[index].path);
-                    await waitWithSignal(600, options.signal);
+                    const activeInput = await this.getActiveReferenceInput(page);
+                    if (!activeInput) {
+                        throw new Error('No visible Jimeng reference upload input was found for the next reference item.');
+                    }
+
+                    await activeInput.setInputFiles(referenceFile.path);
+                    await waitWithSignal(1200, options.signal);
                 }
             }
 
@@ -715,7 +899,7 @@ class JimengService {
                 message: 'Submitting prompt to Jimeng.',
             });
 
-            await promptTextarea.fill(trimmedPrompt);
+            await this.fillPromptInput(page, trimmedPrompt);
             await this.waitForEnabledSubmitButton(page, submitButton);
             throwIfAborted(options.signal);
 

@@ -391,9 +391,9 @@ export function buildEpisodeWorkspaceSeed({ episode, lockedAssets, storyBible, p
       ...assetNodes,
     ],
     connections: [
-      { id: `conn-script-storyboard-${episode.id}`, from: `script-${episode.id}`, to: `storyboard-${episode.id}`, inputType: 'text' },
-      { id: `conn-storyboard-prompt-${episode.id}`, from: `storyboard-${episode.id}`, to: `prompt-${episode.id}`, inputType: 'text' },
-      { id: `conn-prompt-video-${episode.id}`, from: `prompt-${episode.id}`, to: `video-${episode.id}`, inputType: 'text' },
+      { id: `conn-script-storyboard-${episode.id}`, from: `script-${episode.id}`, to: `storyboard-${episode.id}`, inputKey: 'contextTexts', inputType: 'text' },
+      { id: `conn-storyboard-prompt-${episode.id}`, from: `storyboard-${episode.id}`, to: `prompt-${episode.id}`, inputKey: 'contextTexts', inputType: 'text' },
+      { id: `conn-prompt-video-${episode.id}`, from: `prompt-${episode.id}`, to: `video-${episode.id}`, inputKey: 'promptText', inputType: 'text' },
     ],
   };
 }

@@ -24,7 +24,10 @@ const models: ModelDefinition[] = [
     vendor: 'vendor',
     modality: 'text',
     capabilities: ['canvas_text_generate'],
-    inputSchema: {},
+    inputSchema: {
+      contextTexts: { accepts: ['text'], maxItems: 4, showInNode: false },
+      referenceImages: { accepts: ['image'], multiple: true, maxItems: 2, showInNode: false },
+    },
     configSchema: {
       temperature: { type: 'number', default: 0.4 },
     },
@@ -40,8 +43,8 @@ const models: ModelDefinition[] = [
     modality: 'image',
     capabilities: ['canvas_image_generate'],
     inputSchema: {
-      text: { type: 'text', maxItems: 1 },
-      images: { type: 'image', multiple: true, maxItems: 2 },
+      promptText: { accepts: ['text'], maxItems: 1, showInNode: false },
+      referenceImages: { accepts: ['image'], multiple: true, maxItems: 2, showInNode: true },
     },
     configSchema: {
       aspectRatio: { type: 'string', enum: ['1:1', '9:16'], default: '1:1' },
@@ -58,12 +61,18 @@ const models: ModelDefinition[] = [
     modality: 'video',
     capabilities: ['canvas_video_generate'],
     inputSchema: {
-      text: { type: 'text', maxItems: 1 },
-      images: { type: 'image', multiple: true, maxItems: 2 },
+      promptText: { accepts: ['text'], maxItems: 1, showInNode: false },
+      startFrame: { accepts: ['image'], maxItems: 1, showInNode: true },
+      referenceAssets: { accepts: ['image', 'video', 'audio'], multiple: true, maxItems: 12, showInNode: true },
     },
     configSchema: {
       durationSeconds: { type: 'number', default: 5 },
     },
+    generationModes: [
+      { id: 'start_end_frames', label: '首尾帧', summaryLabel: '首尾帧', enabledInputKeys: ['promptText', 'startFrame'] },
+      { id: 'all_references', label: '全能参考', summaryLabel: '多参', enabledInputKeys: ['promptText', 'referenceAssets'] },
+    ],
+    defaultGenerationModeId: 'all_references',
     adapter: 'video-adapter',
   },
   {
@@ -76,8 +85,8 @@ const models: ModelDefinition[] = [
     modality: 'video',
     capabilities: ['canvas_video_generate'],
     inputSchema: {
-      text: { type: 'text', maxItems: 1 },
-      images: { type: 'image', multiple: true, maxItems: 2 },
+      promptText: { accepts: ['text'], maxItems: 1, showInNode: false },
+      referenceImages: { accepts: ['image'], multiple: true, maxItems: 2, showInNode: true },
     },
     configSchema: {
       durationSeconds: { type: 'number', default: 5 },
@@ -131,6 +140,7 @@ describe('canvasGraphHelpers', () => {
   it('creates new nodes with schema-backed params', () => {
     const node = createCanvasNode('video', 0, models, stageConfig);
     expect(node.modelId).toBe('video-model@vendor');
+    expect(node.modeId).toBe('all_references');
     expect(node.params).toEqual({ durationSeconds: 10 });
   });
 
@@ -179,15 +189,28 @@ describe('canvasGraphHelpers', () => {
       height: 200,
       content: '',
       modelId: 'video-model',
+      modeId: 'all_references',
     };
 
-    expect(validateCanvasConnection(sourceNode, targetNode, models, []).valid).toBe(true);
+    expect(validateCanvasConnection(sourceNode, targetNode, models, [])).toMatchObject({
+      valid: true,
+      resolvedInputKey: 'promptText',
+    });
     expect(validateCanvasConnection(
       { ...sourceNode, type: 'audio' },
       targetNode,
       models,
       [],
-    )).toEqual({ valid: false, error: '视频节点 当前模型不接受 audio 输入。' });
+    )).toMatchObject({
+      valid: true,
+      resolvedInputKey: 'referenceAssets',
+    });
+    expect(validateCanvasConnection(
+      { ...sourceNode, type: 'video' },
+      { ...targetNode, modeId: 'start_end_frames' },
+      models,
+      [],
+    )).toEqual({ valid: false, error: '视频节点 当前模型不接受 video 输入。' });
   });
 
   it('collects connected upstream inputs by type', () => {
@@ -221,17 +244,18 @@ describe('canvasGraphHelpers', () => {
         width: 300,
         height: 200,
         content: '',
-      modelId: 'video-model',
+        modelId: 'video-model',
+        modeId: 'all_references',
       },
     ];
     const connections: CanvasConnection[] = [
-      { id: buildCanvasConnectionId('text-1', 'video-1'), from: 'text-1', to: 'video-1' },
-      { id: buildCanvasConnectionId('image-1', 'video-1'), from: 'image-1', to: 'video-1' },
+      { id: buildCanvasConnectionId('text-1', 'video-1', 'promptText'), from: 'text-1', to: 'video-1', inputKey: 'promptText' },
+      { id: buildCanvasConnectionId('image-1', 'video-1', 'referenceAssets'), from: 'image-1', to: 'video-1', inputKey: 'referenceAssets' },
     ];
 
     const result = collectCanvasNodeInputs(nodes[2], nodes, connections, models);
-    expect(result.text.map((item) => item.value)).toEqual(['骑马飞驰']);
-    expect(result.image.map((item) => item.value)).toEqual(['https://cdn.example.com/ref.png']);
+    expect(result.promptText.items.map((item) => item.value)).toEqual(['骑马飞驰']);
+    expect(result.referenceAssets.items.map((item) => item.value)).toEqual(['https://cdn.example.com/ref.png']);
   });
 
   it('carries compatible params across deployments in the same family and restores snapshots', () => {
@@ -253,6 +277,7 @@ describe('canvasGraphHelpers', () => {
 
     const switchedToAlt = buildCanvasNodeModelChangePatch(baseNode, 'video-model-alt@vendor', models);
     expect(switchedToAlt.modelId).toBe('video-model-alt@vendor');
+    expect(switchedToAlt.modeId).toBeUndefined();
     expect(switchedToAlt.params).toEqual({
       durationSeconds: 10,
       ratio: '9:16',
@@ -269,6 +294,7 @@ describe('canvasGraphHelpers', () => {
     };
 
     const switchedBack = buildCanvasNodeModelChangePatch(updatedAltNode, 'video-model@vendor', models);
+    expect(switchedBack.modeId).toBe('all_references');
     expect(switchedBack.params).toEqual({
       durationSeconds: 10,
     });

@@ -1,4 +1,8 @@
-import type { ModelDefinition } from '../../../types/workflowApp';
+import type {
+  CanvasGenerationModeDefinition,
+  CanvasInputValueType,
+  ModelDefinition,
+} from '../../../types/workflowApp';
 
 function normalizeIdentifier(value: string | null | undefined) {
   return String(value || '').trim();
@@ -88,14 +92,49 @@ function fallbackInputTypeLabel(type: string): string {
   return type;
 }
 
+export function getModelGenerationModes(model: ModelDefinition | null | undefined): CanvasGenerationModeDefinition[] {
+  return Array.isArray(model?.generationModes)
+    ? model.generationModes.filter((mode): mode is CanvasGenerationModeDefinition => Boolean(mode?.id))
+    : [];
+}
+
+export function resolveModelGenerationMode(
+  model: ModelDefinition | null | undefined,
+  modeId: string | null | undefined,
+): CanvasGenerationModeDefinition | null {
+  const generationModes = getModelGenerationModes(model);
+  if (generationModes.length === 0) {
+    return null;
+  }
+
+  const normalizedModeId = normalizeIdentifier(modeId);
+  return generationModes.find((mode) => mode.id === normalizedModeId)
+    || generationModes.find((mode) => mode.id === model?.defaultGenerationModeId)
+    || generationModes[0]
+    || null;
+}
+
+export function getModelDefaultGenerationModeId(model: ModelDefinition | null | undefined): string | undefined {
+  return resolveModelGenerationMode(model, model?.defaultGenerationModeId)?.id;
+}
+
+function fallbackInputDefinitionLabel(inputKey: string, accepts: CanvasInputValueType[]) {
+  if (accepts.length === 1) {
+    return fallbackInputTypeLabel(accepts[0]);
+  }
+
+  return inputKey;
+}
+
 export function summarizeModelInputSupport(model: ModelDefinition): string[] {
-  const definitions = Object.values(model.inputSchema || {});
+  const definitions = Object.entries(model.inputSchema || {});
   if (definitions.length === 0) {
     return ['无需上游输入'];
   }
 
-  return definitions.map((definition) => {
-    const label = String(definition.label || fallbackInputTypeLabel(definition.type)).trim();
+  return definitions.map(([inputKey, definition]) => {
+    const accepts = Array.isArray(definition.accepts) ? definition.accepts : [];
+    const label = String(definition.label || fallbackInputDefinitionLabel(inputKey, accepts)).trim();
     const maxItems = Number(definition.maxItems);
 
     if (definition.multiple || Number.isFinite(maxItems) && maxItems > 1) {

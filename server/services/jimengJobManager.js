@@ -64,6 +64,7 @@ async function processJimengJob(job) {
 
   try {
     const result = await jimengService.generateVideo(job.prompt, job.referenceFiles ?? [], {
+      modeId: job.metadata?.modeId,
       onProgress: async (update) => {
         await syncJobProgress(job.id, update);
       },

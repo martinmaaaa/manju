@@ -92,6 +92,15 @@ export async function generateTextWithModel({
                 };
               }
 
+              if (part?.type === 'imageUrl' && part?.url) {
+                return {
+                  type: 'image_url',
+                  image_url: {
+                    url: String(part.url),
+                  },
+                };
+              }
+
               return {
                 type: 'text',
                 text: String(part?.text || ''),

@@ -22,7 +22,9 @@ const models: ModelDefinition[] = [
     vendor: 'vendor',
     modality: 'text',
     capabilities: ['video_prompt_generate'],
-    inputSchema: {},
+    inputSchema: {
+      contextTexts: { accepts: ['text'], maxItems: 4, showInNode: false },
+    },
     configSchema: {
       temperature: { type: 'number', default: 0.4 },
     },
@@ -38,12 +40,16 @@ const models: ModelDefinition[] = [
     modality: 'video',
     capabilities: ['video_generate'],
     inputSchema: {
-      text: { type: 'text', maxItems: 1 },
-      image: { type: 'image', maxItems: 1 },
+      promptText: { accepts: ['text'], maxItems: 1, showInNode: false },
+      referenceAssets: { accepts: ['image', 'video', 'audio'], multiple: true, maxItems: 12, showInNode: true },
     },
     configSchema: {
       durationSeconds: { type: 'number', default: 5 },
     },
+    generationModes: [
+      { id: 'all_references', label: '全能参考', summaryLabel: '多参', enabledInputKeys: ['promptText', 'referenceAssets'] },
+    ],
+    defaultGenerationModeId: 'all_references',
     adapter: 'video-adapter',
   },
 ];
@@ -177,12 +183,20 @@ describe('episodeWorkbenchHelpers', () => {
     ]);
     expect(content.nodes.find((node) => node.id === getEpisodePrimaryNodeId('prompt', episode.id))?.content).toContain('必须使用的锁定资产：太子');
     expect(content.nodes.find((node) => node.id === getEpisodeAssetNodeId('asset-1'))?.content).toBe('https://cdn.example.com/assets/taizi.png');
+    expect(content.nodes.find((node) => node.id === getEpisodeAssetNodeId('asset-1'))?.metadata).toMatchObject({
+      lockedAssetId: 'asset-1',
+      lockedAssetName: expect.any(String),
+      assetType: 'character',
+      sourceVersionId: 'ver-1',
+      sourceVersionNumber: 1,
+    });
     expect(content.connections.map((connection) => `${connection.from}->${connection.to}`)).toEqual([
       `${getEpisodePrimaryNodeId('script', episode.id)}->${getEpisodePrimaryNodeId('storyboard', episode.id)}`,
       `${getEpisodePrimaryNodeId('storyboard', episode.id)}->${getEpisodePrimaryNodeId('prompt', episode.id)}`,
       `${getEpisodePrimaryNodeId('prompt', episode.id)}->${getEpisodePrimaryNodeId('video', episode.id)}`,
       `${getEpisodePrimaryNodeId('visual', episode.id)}->${getEpisodePrimaryNodeId('video', episode.id)}`,
     ]);
+    expect(content.connections.find((connection) => connection.from === getEpisodePrimaryNodeId('visual', episode.id))?.inputKey).toBe('referenceAssets');
   });
 
   it('can force a stable workbench layout for managed and custom nodes', () => {

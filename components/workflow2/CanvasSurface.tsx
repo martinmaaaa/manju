@@ -11,6 +11,10 @@ import {
   buildCanvasNodeParamPatch,
   buildCanvasConnectionId,
   collectCanvasNodeInputs,
+  getCompatibleNodeInputDefinitions,
+  getNodeGenerationMode,
+  getNodeEnabledInputDefinitions,
+  getVisibleNodeInputDefinitions,
   selectCanvasModels,
   summarizeNodeParams,
   validateCanvasConnection,
@@ -19,6 +23,7 @@ import {
   describeModelRuntime,
   findModelByIdentifier,
   formatModelDisplayName,
+  getModelGenerationModes,
   groupModelsByFamily,
   getModelOptionValue,
   summarizeModelConfigFields,
@@ -38,6 +43,8 @@ interface CanvasSurfaceProps {
   onChangeConnections: (connections: CanvasConnection[]) => void;
   onRunNode?: (nodeId: string) => void;
   onUploadAudio?: (file: File) => Promise<{ url: string; title?: string }>;
+  canStoreVideoToShot?: boolean;
+  onStoreVideoToShot?: (nodeId: string) => void;
   onError?: (message: string) => void;
 }
 
@@ -62,6 +69,56 @@ function getNodeValue(node: CanvasNode) {
   return outputText || outputPreview || String(node.content || '').trim();
 }
 
+const CORE_VIDEO_FIELD_ORDER = ['ratio', 'resolution', 'durationSeconds', 'duration', 'generateAudio'];
+
+function isCoreVideoField(fieldKey: string) {
+  return CORE_VIDEO_FIELD_ORDER.includes(fieldKey);
+}
+
+function formatInputTypeLabel(type: string) {
+  if (type === 'text') return '文本';
+  if (type === 'image') return '图片';
+  if (type === 'video') return '视频';
+  if (type === 'audio') return '音频';
+  return type;
+}
+
+function summarizeAcceptedInputTypes(accepts: string[] | undefined) {
+  return Array.isArray(accepts)
+    ? accepts.map((type) => formatInputTypeLabel(type)).join(' / ')
+    : '';
+}
+
+function summarizeVideoNodeSettings(node: CanvasNode, model: ModelDefinition | null | undefined) {
+  if (!model) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  const activeMode = getNodeGenerationMode(node, model);
+  if (activeMode?.summaryLabel) {
+    parts.push(activeMode.summaryLabel);
+  }
+
+  CORE_VIDEO_FIELD_ORDER.forEach((fieldKey) => {
+    const value = node.params?.[fieldKey];
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+    if (fieldKey === 'generateAudio') {
+      parts.push(Boolean(value) ? '音频' : '静音');
+      return;
+    }
+    if (fieldKey === 'durationSeconds' || fieldKey === 'duration') {
+      parts.push(`${value}s`);
+      return;
+    }
+    parts.push(String(value));
+  });
+
+  return parts;
+}
+
 function calculatePath(startX: number, startY: number, endX: number, endY: number) {
   const dx = endX - startX;
   const controlPointOffset = Math.min(Math.abs(dx) * 0.5, 200);
@@ -78,12 +135,21 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
   onChangeConnections,
   onRunNode,
   onUploadAudio,
+  canStoreVideoToShot,
+  onStoreVideoToShot,
   onError,
 }) => {
   const surfaceRef = React.useRef<HTMLDivElement | null>(null);
   const [uploadingNodeId, setUploadingNodeId] = React.useState<string | null>(null);
   const [connectionStartId, setConnectionStartId] = React.useState<string | null>(null);
+  const [pendingConnectionSelection, setPendingConnectionSelection] = React.useState<{
+    sourceNodeId: string;
+    targetNodeId: string;
+    inputKeys: string[];
+  } | null>(null);
   const [draggingNodeId, setDraggingNodeId] = React.useState<string | null>(null);
+  const [settingsNodeId, setSettingsNodeId] = React.useState<string | null>(null);
+  const [videoContextMenu, setVideoContextMenu] = React.useState<{ nodeId: string; x: number; y: number } | null>(null);
   const dragOffsetRef = React.useRef({ x: 0, y: 0 });
 
   const updateNode = React.useCallback((nodeId: string, patch: Partial<CanvasNode>) => {
@@ -142,12 +208,94 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
     }
   };
 
+  const sanitizeConnectionsForTarget = React.useCallback((targetNode: CanvasNode, candidateConnections = connections) => {
+    const model = findModelByIdentifier(models, targetNode.modelId);
+    const visibleDefinitions = new Map(getVisibleNodeInputDefinitions(targetNode, model));
+    const acceptedDefinitions = new Map(getNodeEnabledInputDefinitions(targetNode, model));
+    const sourceNodeMap = new Map(nodes.map((item) => [item.id, item]));
+    const usage = new Map<string, number>();
+
+    return candidateConnections.filter((connection) => {
+      if (connection.to !== targetNode.id) {
+        return true;
+      }
+
+      const sourceNode = sourceNodeMap.get(connection.from);
+      const definition = acceptedDefinitions.get(connection.inputKey) || visibleDefinitions.get(connection.inputKey);
+      if (!sourceNode || !definition) {
+        return false;
+      }
+
+      if (!definition.accepts.includes(sourceNode.type)) {
+        return false;
+      }
+
+      const currentCount = usage.get(connection.inputKey) || 0;
+      const maxItems = definition.maxItems ?? (definition.multiple ? Number.POSITIVE_INFINITY : 1);
+      if (Number.isFinite(maxItems) && currentCount >= maxItems) {
+        return false;
+      }
+
+      usage.set(connection.inputKey, currentCount + 1);
+      return true;
+    });
+  }, [connections, models, nodes]);
+
   const handleModelChange = (node: CanvasNode, nextModelId: string) => {
-    updateNode(node.id, buildCanvasNodeModelChangePatch(node, nextModelId, models));
+    const patch = buildCanvasNodeModelChangePatch(node, nextModelId, models);
+    const nextNode = {
+      ...node,
+      ...patch,
+    };
+    updateNode(node.id, patch);
+    onChangeConnections(sanitizeConnectionsForTarget(nextNode));
+    setPendingConnectionSelection(null);
+    setVideoContextMenu(null);
   };
 
   const handleParamChange = (node: CanvasNode, fieldKey: string, nextValue: string | number | boolean) => {
     updateNode(node.id, buildCanvasNodeParamPatch(node, fieldKey, nextValue, models));
+  };
+
+  const handleModeChange = (node: CanvasNode, nextModeId: string) => {
+    const nextNode = {
+      ...node,
+      modeId: nextModeId,
+      runStatus: 'idle' as const,
+      error: null,
+    };
+    updateNode(node.id, {
+      modeId: nextModeId,
+      runStatus: 'idle',
+      error: null,
+    });
+    onChangeConnections(sanitizeConnectionsForTarget(nextNode));
+    setPendingConnectionSelection(null);
+    setVideoContextMenu(null);
+  };
+
+  const commitConnectionToInputKey = (sourceNode: CanvasNode, targetNode: CanvasNode, inputKey: string) => {
+    const validation = validateCanvasConnection(sourceNode, targetNode, models, connections, inputKey);
+    if (!validation.valid) {
+      onError?.(validation.error || '无法创建连接。');
+      setPendingConnectionSelection(null);
+      setConnectionStartId(null);
+      return;
+    }
+
+    onChangeConnections([
+      ...connections,
+      {
+        id: buildCanvasConnectionId(sourceNode.id, targetNode.id, validation.resolvedInputKey || inputKey),
+        from: sourceNode.id,
+        to: targetNode.id,
+        inputKey: validation.resolvedInputKey || inputKey,
+        inputType: sourceNode.type,
+      },
+    ]);
+    setPendingConnectionSelection(null);
+    setConnectionStartId(null);
+    setVideoContextMenu(null);
   };
 
   const handleConnectToNode = (targetNode: CanvasNode) => {
@@ -173,16 +321,17 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
       return;
     }
 
-    onChangeConnections([
-      ...connections,
-      {
-        id: buildCanvasConnectionId(sourceNode.id, targetNode.id),
-        from: sourceNode.id,
-        to: targetNode.id,
-        inputType: sourceNode.type,
-      },
-    ]);
-    setConnectionStartId(null);
+    const candidateInputKeys = validation.candidateInputKeys || [];
+    if (candidateInputKeys.length > 1) {
+      setPendingConnectionSelection({
+        sourceNodeId: sourceNode.id,
+        targetNodeId: targetNode.id,
+        inputKeys: candidateInputKeys,
+      });
+      return;
+    }
+
+    commitConnectionToInputKey(sourceNode, targetNode, validation.resolvedInputKey || candidateInputKeys[0]);
   };
 
   const removeConnection = (connectionId: string) => {
@@ -243,6 +392,22 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
       window.removeEventListener('pointerup', handlePointerUp);
     };
   }, [canvasSize.height, canvasSize.width, draggingNodeId, nodeById, updateNode]);
+
+  React.useEffect(() => {
+    if (!videoContextMenu) {
+      return;
+    }
+
+    const closeMenu = () => setVideoContextMenu(null);
+    window.addEventListener('pointerdown', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('resize', closeMenu);
+    return () => {
+      window.removeEventListener('pointerdown', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('resize', closeMenu);
+    };
+  }, [videoContextMenu]);
 
   return (
     <div className="relative min-h-[760px] overflow-auto rounded-[32px] border border-white/10 bg-[#07090d] shadow-[0_30px_80px_rgba(0,0,0,0.45)]">
@@ -335,12 +500,26 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
           const nodeModels = selectCanvasModels(models, node.type);
           const groupedNodeModels = groupModelsByFamily(nodeModels);
           const selectedModel = findModelByIdentifier(models, node.modelId);
+          const generationModes = getModelGenerationModes(selectedModel);
+          const activeGenerationMode = getNodeGenerationMode(node, selectedModel);
+          const visibleInputDefinitions = getVisibleNodeInputDefinitions(node, selectedModel);
           const nodeValue = getNodeValue(node);
           const connectedInputs = collectCanvasNodeInputs(node, nodes, connections, models);
           const inputBadges = Object.entries(connectedInputs)
-            .flatMap(([kind, items]) => items.map((item) => `${kind} · ${item.node.title}`))
+            .flatMap(([inputKey, bucket]) => bucket.items.map((item) => `${bucket.definition.label || inputKey} · ${item.node.title}`))
             .slice(0, 6);
           const paramSummaries = summarizeNodeParams(node, selectedModel);
+          const videoSummary = node.type === 'video' ? summarizeVideoNodeSettings(node, selectedModel) : [];
+          const commonVideoConfigEntries = selectedModel
+            ? Object.entries(selectedModel.configSchema || {}).filter(([fieldKey]) => isCoreVideoField(fieldKey))
+            : [];
+          const advancedVideoConfigEntries = selectedModel
+            ? Object.entries(selectedModel.configSchema || {}).filter(([fieldKey]) => !isCoreVideoField(fieldKey))
+            : [];
+          const isSettingsOpen = settingsNodeId === node.id;
+          const pendingSelectionForNode = pendingConnectionSelection?.targetNodeId === node.id
+            ? pendingConnectionSelection
+            : null;
 
           return (
             <div
@@ -355,6 +534,26 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
                 height: node.height,
               }}
               onClick={() => onSelectNode(node.id)}
+              onContextMenu={(event) => {
+                if (!(node.type === 'video' && isVideoSource(nodeValue) && onStoreVideoToShot)) {
+                  return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                onSelectNode(node.id);
+
+                if (!canStoreVideoToShot) {
+                  onError?.('请先在下方视频条选中当前分镜槽，再把视频存储为分镜。');
+                  return;
+                }
+
+                setVideoContextMenu({
+                  nodeId: node.id,
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }}
             >
               <button
                 type="button"
@@ -376,6 +575,7 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
                 onClick={(event) => {
                   event.stopPropagation();
                   setConnectionStartId((current) => current === node.id ? null : node.id);
+                  setPendingConnectionSelection(null);
                 }}
                 className={`absolute -right-4 top-1/2 z-10 h-8 w-8 -translate-y-1/2 rounded-full border text-xs ${
                   connectionStartId === node.id
@@ -386,6 +586,48 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
               >
                 +
               </button>
+
+              {pendingSelectionForNode ? (
+                <div className="absolute left-6 top-6 z-30 min-w-[180px] rounded-2xl border border-white/10 bg-[#111318] p-3 shadow-[0_20px_40px_rgba(0,0,0,0.4)]">
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">选择输入槽位</div>
+                  <div className="mt-3 grid gap-2">
+                    {pendingSelectionForNode.inputKeys.map((inputKey) => {
+                      const sourceNode = nodeById.get(pendingSelectionForNode.sourceNodeId);
+                      const definition = visibleInputDefinitions.find(([key]) => key === inputKey)?.[1]
+                        || getNodeEnabledInputDefinitions(node, selectedModel).find(([key]) => key === inputKey)?.[1];
+                      return (
+                        <button
+                          key={inputKey}
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!sourceNode) {
+                              setPendingConnectionSelection(null);
+                              setConnectionStartId(null);
+                              return;
+                            }
+                            commitConnectionToInputKey(sourceNode, node, inputKey);
+                          }}
+                          className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm text-white transition hover:border-cyan-300/30 hover:bg-cyan-300/[0.08]"
+                        >
+                          {definition?.label || inputKey}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setPendingConnectionSelection(null);
+                        setConnectionStartId(null);
+                      }}
+                      className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-left text-xs text-white/60"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="flex h-full flex-col rounded-[27px] bg-black/45 p-4 backdrop-blur-sm">
                 <div className="flex items-start justify-between gap-3">
@@ -493,30 +735,12 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
                               <div className="text-[11px] uppercase tracking-[0.24em] text-cyan-200/65">Deployment</div>
                               <div className="mt-2 text-sm font-semibold text-white">{formatModelDisplayName(selectedModel)}</div>
                               <div className="mt-1 text-xs text-cyan-100/70">{describeModelRuntime(selectedModel)}</div>
-                              <div className="mt-3 grid gap-3">
-                                <div>
-                                  <div className="text-[10px] uppercase tracking-[0.22em] text-white/35">支持输入</div>
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {summarizeModelInputSupport(selectedModel).map((item) => (
-                                      <span key={item} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-100">
-                                        {item}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                                <div>
-                                  <div className="text-[10px] uppercase tracking-[0.22em] text-white/35">可调参数</div>
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {summarizeModelConfigFields(selectedModel).map((item) => (
-                                      <span key={item} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-100">
-                                        {item}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="text-[10px] text-white/45">
-                                  {selectedModel.deploymentId}
-                                </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {summarizeModelInputSupport(selectedModel).map((item) => (
+                                  <span key={item} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-100">
+                                    {item}
+                                  </span>
+                                ))}
                               </div>
                             </div>
                           ) : null}
@@ -529,33 +753,142 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
                               placeholder="输入节点自己的生成提示，也可以通过连线接收上游文本。"
                             />
                           </label>
-                          {inputBadges.length > 0 ? (
-                            <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
-                              {inputBadges.map((badge) => (
-                                <span key={badge} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-200">
-                                  {badge}
+
+                          {node.type === 'video' ? (
+                            <div className="relative grid gap-3">
+                              {visibleInputDefinitions.length > 0 ? (
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  {visibleInputDefinitions.map(([inputKey, definition]) => {
+                                    const slotItems = connectedInputs[inputKey]?.items || [];
+                                    const acceptedTypes = summarizeAcceptedInputTypes(definition.accepts);
+                                    return (
+                                      <div
+                                        key={inputKey}
+                                        className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3"
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">{definition.label || inputKey}</div>
+                                        {acceptedTypes ? (
+                                          <div className="mt-1 text-[10px] text-white/35">{acceptedTypes}</div>
+                                        ) : null}
+                                        <div className="mt-2 text-xs text-slate-200">
+                                          {slotItems.length > 0
+                                            ? slotItems.map((item) => item.node.title).join(' / ')
+                                            : acceptedTypes ? `等待${acceptedTypes}连线` : '等待连线'}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+
+                              {isSettingsOpen ? (
+                                <div className="absolute bottom-16 right-0 z-30 w-[320px] rounded-[28px] border border-white/10 bg-[#15171c] p-4 shadow-[0_24px_60px_rgba(0,0,0,0.45)]" onClick={(event) => event.stopPropagation()}>
+                                  <div className="text-xs uppercase tracking-[0.28em] text-white/40">设置</div>
+                                  {generationModes.length > 1 ? (
+                                    <div className="mt-4 grid gap-2">
+                                      <div className="text-[11px] uppercase tracking-[0.22em] text-white/35">生成方式</div>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        {generationModes.map((mode) => (
+                                          <button
+                                            key={mode.id}
+                                            type="button"
+                                            onClick={() => handleModeChange(node, mode.id)}
+                                            className={`rounded-2xl px-3 py-3 text-sm ${
+                                              activeGenerationMode?.id === mode.id
+                                                ? 'bg-white text-black'
+                                                : 'border border-white/10 bg-white/[0.04] text-slate-100'
+                                            }`}
+                                          >
+                                            {mode.label}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+
+                                  {commonVideoConfigEntries.length > 0 ? (
+                                    <div className="mt-4 grid gap-3">
+                                      <div className="text-[11px] uppercase tracking-[0.22em] text-white/35">常用设置</div>
+                                      {commonVideoConfigEntries.map(([fieldKey, definition]) => (
+                                        <SchemaFieldControl
+                                          key={fieldKey}
+                                          fieldKey={fieldKey}
+                                          definition={definition}
+                                          value={node.params?.[fieldKey]}
+                                          onChange={(nextValue) => handleParamChange(node, fieldKey, nextValue)}
+                                        />
+                                      ))}
+                                    </div>
+                                  ) : null}
+
+                                  {advancedVideoConfigEntries.length > 0 ? (
+                                    <details className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+                                      <summary className="cursor-pointer text-sm text-slate-100">高级设置</summary>
+                                      <div className="mt-3 grid gap-3">
+                                        {advancedVideoConfigEntries.map(([fieldKey, definition]) => (
+                                          <SchemaFieldControl
+                                            key={fieldKey}
+                                            fieldKey={fieldKey}
+                                            definition={definition}
+                                            value={node.params?.[fieldKey]}
+                                            onChange={(nextValue) => handleParamChange(node, fieldKey, nextValue)}
+                                          />
+                                        ))}
+                                      </div>
+                                    </details>
+                                  ) : null}
+                                </div>
+                              ) : null}
+
+                              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm font-semibold text-white">
+                                  {selectedModel ? formatModelDisplayName(selectedModel) : '未选择模型'}
                                 </span>
-                              ))}
+                                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm text-slate-200">
+                                  {videoSummary.join(' · ') || activeGenerationMode?.summaryLabel || '未设置'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setSettingsNodeId((current) => current === node.id ? null : node.id)}
+                                  className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm text-slate-100"
+                                >
+                                  设置
+                                </button>
+                              </div>
                             </div>
-                          ) : selectedModel && Object.keys(selectedModel.inputSchema || {}).length > 0 ? (
-                            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-3 text-xs text-slate-400" onClick={(event) => event.stopPropagation()}>
-                              这个模型支持的输入，需要通过连线从其他节点接入。
-                            </div>
-                          ) : null}
-                          {selectedModel && Object.keys(selectedModel.configSchema || {}).length > 0 ? (
-                            <div className="grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-3" onClick={(event) => event.stopPropagation()}>
-                              {Object.entries(selectedModel.configSchema).map(([fieldKey, definition]) => (
-                                <SchemaFieldControl
-                                  key={fieldKey}
-                                  fieldKey={fieldKey}
-                                  definition={definition}
-                                  value={node.params?.[fieldKey]}
-                                  onChange={(nextValue) => handleParamChange(node, fieldKey, nextValue)}
-                                />
-                              ))}
-                            </div>
-                          ) : null}
-                          {paramSummaries.length > 0 ? (
+                          ) : (
+                            <>
+                              {inputBadges.length > 0 ? (
+                                <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
+                                  {inputBadges.map((badge) => (
+                                    <span key={badge} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-200">
+                                      {badge}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : selectedModel && Object.keys(selectedModel.inputSchema || {}).length > 0 ? (
+                                <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-3 text-xs text-slate-400" onClick={(event) => event.stopPropagation()}>
+                                  这个模型支持的输入，需要通过连线从其他节点接入。
+                                </div>
+                              ) : null}
+                              {selectedModel && Object.keys(selectedModel.configSchema || {}).length > 0 ? (
+                                <div className="grid gap-3 rounded-2xl border border-white/10 bg-black/20 p-3" onClick={(event) => event.stopPropagation()}>
+                                  {Object.entries(selectedModel.configSchema).map(([fieldKey, definition]) => (
+                                    <SchemaFieldControl
+                                      key={fieldKey}
+                                      fieldKey={fieldKey}
+                                      definition={definition}
+                                      value={node.params?.[fieldKey]}
+                                      onChange={(nextValue) => handleParamChange(node, fieldKey, nextValue)}
+                                    />
+                                  ))}
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+
+                          {node.type !== 'video' && paramSummaries.length > 0 ? (
                             <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
                               {paramSummaries.map((item) => (
                                 <span key={item} className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] text-slate-200">
@@ -612,6 +945,25 @@ export const CanvasSurface: React.FC<CanvasSurfaceProps> = ({
           </div>
         ) : null}
         </div>
+
+        {videoContextMenu ? (
+          <div
+            className="fixed z-40 min-w-[180px] rounded-2xl border border-white/10 bg-[#13161c] p-2 shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
+            style={{ left: videoContextMenu.x, top: videoContextMenu.y }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                onStoreVideoToShot?.(videoContextMenu.nodeId);
+                setVideoContextMenu(null);
+              }}
+              className="w-full rounded-xl px-3 py-2 text-left text-sm text-white transition hover:bg-cyan-300/[0.1]"
+            >
+              存储为分镜
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

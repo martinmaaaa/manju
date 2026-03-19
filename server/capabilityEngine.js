@@ -9,7 +9,22 @@ import {
   hasLiveVideoModelSupport,
   pollVideoTask,
 } from './modelRuntime.js';
-import { buildDefaultStageConfig, getCapability, getModel, getSkillPack } from './registries.js';
+import {
+  buildDefaultStageConfig,
+  getCapability,
+  getModel,
+  getSkillPack,
+  resolveSkillPackCapabilitySchema,
+} from './registries.js';
+import { evaluateReviewPoliciesWithRegistry } from './reviewRegistry.js';
+import {
+  applySkillArtifactBindings,
+  describeSkillOutputContract,
+  evaluateSkillReviewPolicies,
+  getSkillSchema,
+  normalizeSkillOutputWithContract,
+  renderSkillPromptBlocks,
+} from './skillSchemas.js';
 import {
   createCapabilityRun,
   createOrUpdateAsset,
@@ -31,8 +46,6 @@ import {
   upsertEpisodeWorkspace,
   upsertStoryBible,
 } from './workflowStore.js';
-
-const COMPLIANCE_BLOCKLIST = ['血腥酷刑', '成人视频', '仇恨暴力', '未成年人性内容'];
 
 function cleanArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
@@ -76,7 +89,7 @@ function summarizeStyle(project) {
     project.setup?.targetMedium ? `目标媒介：${project.setup.targetMedium}` : '',
     project.setup?.aspectRatio ? `画面比例：${project.setup.aspectRatio}` : '',
     Array.isArray(project.setup?.globalPrompts) && project.setup.globalPrompts.length
-      ? `全局提示词：${project.setup.globalPrompts.join('；')}`
+      ? `全局提示：${project.setup.globalPrompts.join('、')}`
       : '',
   ]
     .filter(Boolean)
@@ -85,10 +98,10 @@ function summarizeStyle(project) {
 
 function inferAssetPrompt({ asset, project, skillPack }) {
   return [
-    `${asset.name}`,
+    asset.name || '',
     asset.description || '',
     project.setup?.styleSummary ? `项目风格：${project.setup.styleSummary}` : '',
-    skillPack?.promptMethodology ? `方法论：${skillPack.promptMethodology}` : '',
+    skillPack?.promptMethodology ? `技能方法：${skillPack.promptMethodology}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -106,82 +119,163 @@ function buildMockVideoUrl(episodeId) {
   return `mock://video/${episodeId}/${Date.now()}`;
 }
 
-function normalizeStoryBibleFromModel(raw, fallback) {
-  const data = asObject(raw);
-  const mergeList = (fieldName) => {
-    const values = cleanArray(data[fieldName]).map((item) => String(item || '').trim()).filter(Boolean);
-    return values.length > 0 ? values : fallback[fieldName];
-  };
-  const mergeEntityList = (fieldName) => {
-    const values = cleanArray(data[fieldName])
-      .map((item) => ({
-        name: String(item?.name || '').trim(),
-        description: String(item?.description || '').trim(),
-      }))
-      .filter((item) => item.name);
-    return values.length > 0 ? values : fallback[fieldName];
-  };
+function summarizeLockedAssets(lockedAssets) {
+  return cleanArray(lockedAssets)
+    .map((item) => `${item.type}:${item.name}`)
+    .filter(Boolean)
+    .join('、');
+}
 
-  const episodes = cleanArray(data.episodes)
-    .map((item, index) => ({
-      episodeNumber: Number(item?.episodeNumber ?? index + 1) || index + 1,
-      title: String(item?.title || '').trim(),
-      synopsis: String(item?.synopsis || '').trim(),
-      sourceText: String(item?.sourceText || '').trim(),
-    }))
-    .filter((item) => item.title);
+function summarizeContinuityState(continuityState) {
+  return Object.entries(asObject(continuityState))
+    .map(([key, value]) => `${key}:${typeof value === 'string' ? value : JSON.stringify(value)}`)
+    .filter(Boolean)
+    .join('、');
+}
+
+function selectStoryboardReferenceAssetNames(summary, prompt, lockedAssets) {
+  const haystack = `${summary || ''}\n${prompt || ''}`.toLowerCase();
+  const matched = cleanArray(lockedAssets)
+    .filter((asset) => haystack.includes(String(asset?.name || '').toLowerCase()))
+    .map((asset) => String(asset.name || '').trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(matched)).slice(0, 4);
+}
+
+function enrichStoryboardShots(shots, options = {}) {
+  const videoModel = options.videoModel || null;
+  const lockedAssets = cleanArray(options.lockedAssets);
+
+  return cleanArray(shots).map((item, index) => {
+    const summary = String(item?.summary || '').trim();
+    const promptText = String(item?.promptText || '').trim();
+    const referenceAssetNames = Array.isArray(item?.referenceAssetNames) && item.referenceAssetNames.length > 0
+      ? item.referenceAssetNames.map((name) => String(name || '').trim()).filter(Boolean)
+      : selectStoryboardReferenceAssetNames(summary, promptText, lockedAssets);
+
+    return {
+      title: String(item?.title || '').trim() || `镜头${index + 1}`,
+      summary,
+      promptText,
+      durationLabel: String(item?.durationLabel || '').trim() || `00:${String(Math.min(10, Math.max(4, 4 + (index % 3)))).padStart(2, '0')}`,
+      recommendedModelId: String(item?.recommendedModelId || '').trim() || videoModel?.deploymentId || '',
+      recommendedModeId: String(item?.recommendedModeId || '').trim()
+        || videoModel?.defaultGenerationModeId
+        || cleanArray(videoModel?.generationModes)[0]?.id
+        || '',
+      referenceAssetNames,
+    };
+  });
+}
+
+function buildStoryboardShots(beatSheet, episodeTitle, prompt, recipe, options = {}) {
+  const beats = cleanArray(beatSheet).map((item) => String(item || '').trim()).filter(Boolean);
+  return enrichStoryboardShots(beats.map((summary, index) => ({
+    title: `镜头${index + 1}`,
+    summary,
+    promptText: [
+      `${episodeTitle} 分镜 ${index + 1}`,
+      summary,
+      recipe?.name ? `配方：${recipe.name}` : '',
+      prompt || '',
+    ].filter(Boolean).join('\n'),
+    durationLabel: `00:${String(Math.min(10, Math.max(4, 4 + (index % 3)))).padStart(2, '0')}`,
+  })), options);
+}
+
+function buildStoryboardFallbackBundle({ project, episode, context, recipe, lockedAssets }) {
+  const beatSheet = cleanArray(context?.content?.storyboardBeats).map((item) => String(item || '').trim()).filter(Boolean);
+  const resolvedBeatSheet = beatSheet.length > 0
+    ? beatSheet
+    : [
+        '镜头 1：建立主场景与人物关系。',
+        '镜头 2：推进本集主要冲突，强化情绪变化。',
+        '镜头 3：用收束镜头为下一段承接留钩子。',
+      ];
+  const prompt = [
+    `${episode.title} 的单集视频提示词。`,
+    context?.contextSummary || episode.synopsis,
+    recipe ? `配方：${recipe.name}。${recipe.description}` : '',
+    project.setup?.styleSummary ? `项目风格：${project.setup.styleSummary}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const videoModel = getModel(project.setup?.stageConfig?.video_generate?.modelId);
 
   return {
-    ...fallback,
-    title: String(data.title || '').trim() || fallback.title,
-    logline: String(data.logline || '').trim() || fallback.logline,
-    summary: String(data.summary || '').trim() || fallback.summary,
-    worldRules: mergeList('worldRules'),
-    continuityRules: mergeList('continuityRules'),
-    characters: mergeEntityList('characters'),
-    scenes: mergeEntityList('scenes'),
-    props: mergeEntityList('props'),
-    episodes: episodes.length > 0 ? episodes : fallback.episodes,
+    prompt,
+    beatSheet: resolvedBeatSheet,
+    voicePrompt: `${episode.title} 的配音文稿应与剧情情绪一致，突出当前集的核心冲突与人物变化。`,
+    shots: buildStoryboardShots(resolvedBeatSheet, episode.title, prompt, recipe, {
+      videoModel,
+      lockedAssets,
+    }),
   };
 }
 
-function normalizeAssetPack(raw, fallbackAssets) {
-  const data = asObject(raw);
-  const assets = cleanArray(data.assets)
-    .map((item) => ({
-      type: String(item?.type || '').trim(),
-      name: String(item?.name || '').trim(),
-      description: String(item?.description || '').trim(),
-      promptText: String(item?.promptText || '').trim(),
-      previewHint: String(item?.previewHint || '').trim(),
-    }))
-    .filter((item) => item.type && item.name);
+function buildEpisodeExpansionFallbackBundle({ project, episode, heuristicContext }) {
+  const storyboardBeats = [
+    `${episode.title} 的开场镜头需要先建立人物、场景与当前局势。`,
+    '中段镜头推进当前集的核心冲突，并明确人物关系变化。',
+    '结尾镜头为下一段分镜和后续生成留出承接点。',
+  ];
+  const promptSeed = [
+    heuristicContext.contextSummary,
+    episode.synopsis,
+    project.setup?.styleSummary || '',
+  ].filter(Boolean).join('\n');
+  const videoModel = getModel(project.setup?.stageConfig?.video_generate?.modelId);
 
   return {
-    assets: assets.length > 0 ? assets : fallbackAssets,
+    contextSummary: heuristicContext.contextSummary,
+    precedingSummary: heuristicContext.precedingSummary,
+    storyboardBeats,
+    worldState: heuristicContext.worldState,
+    continuityState: heuristicContext.continuityState,
+    shots: buildStoryboardShots(storyboardBeats, episode.title, promptSeed, null, {
+      videoModel,
+      lockedAssets: [],
+    }),
   };
 }
 
-function normalizeEpisodeExpansion(raw, fallback) {
-  const data = asObject(raw);
-  const beats = cleanArray(data.storyboardBeats).map((item) => String(item || '').trim()).filter(Boolean);
+function buildImagePromptFallback({ project, asset, skillPack }) {
+  if (asset) {
+    return [
+      `${asset.type}：${asset.name}`,
+      asset.description || '',
+      project.storyBible?.summary ? `故事摘要：${project.storyBible.summary}` : '',
+      summarizeStyle(project),
+      skillPack?.promptMethodology ? `技能方法：${skillPack.promptMethodology}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
 
-  return {
-    contextSummary: String(data.contextSummary || '').trim() || fallback.contextSummary,
-    precedingSummary: String(data.precedingSummary || '').trim() || fallback.precedingSummary,
-    storyboardBeats: beats.length > 0 ? beats : fallback.storyboardBeats,
-    continuityState: Object.keys(asObject(data.continuityState)).length > 0 ? asObject(data.continuityState) : fallback.continuityState,
-  };
+  return [
+    `项目：${project.title}`,
+    project.storyBible?.summary || '',
+    summarizeStyle(project),
+    skillPack?.promptMethodology ? `技能方法：${skillPack.promptMethodology}` : '',
+    '请输出一条适合角色、场景或道具出图的高密度图片提示词。',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
-function normalizePromptPayload(raw, fallback) {
-  const data = asObject(raw);
-  const beatSheet = cleanArray(data.beatSheet).map((item) => String(item || '').trim()).filter(Boolean);
+function buildSkillPromptPackage({ schema, values }) {
+  const promptBlocks = renderSkillPromptBlocks(schema, values);
+  const outputInstruction = describeSkillOutputContract(schema);
 
   return {
-    prompt: String(data.prompt || '').trim() || fallback.prompt,
-    beatSheet: beatSheet.length > 0 ? beatSheet : fallback.beatSheet,
-    voicePrompt: String(data.voicePrompt || '').trim() || fallback.voicePrompt,
+    systemInstruction: schema?.systemInstruction || '请输出结构化 JSON。',
+    prompt: [
+      ...promptBlocks,
+      outputInstruction ? `请输出 JSON，字段要求如下：\n${outputInstruction}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
   };
 }
 
@@ -242,116 +336,110 @@ async function createAssetsFromStoryBible({ projectId, storyBible, userId }) {
   return created;
 }
 
-function evaluateReviewPolicies({ reviewPolicyIds, stageKind, outputPayload }) {
-  const serialized = JSON.stringify(outputPayload);
-  const reviews = [];
-
-  for (const policyId of reviewPolicyIds) {
-    if (policyId === 'business-review') {
-      let passed = true;
-      let notes = '输出满足当前阶段的基本交付要求。';
-
-      if (stageKind === 'script_decompose') {
-        passed = Boolean(outputPayload.storyBible?.title) && Number(outputPayload.createdEpisodeCount || 0) > 0;
-        notes = passed
-          ? '剧本拆解已生成故事总纲与剧集壳子。'
-          : '剧本拆解没有生成有效的故事总纲或剧集列表。';
-      } else if (stageKind === 'asset_design') {
-        passed = Array.isArray(outputPayload.assets) ? outputPayload.assets.length > 0 : Boolean(outputPayload.previewUrl);
-        notes = passed
-          ? '资产设计输出有效，可进入资产锁定或继续出图。'
-          : '资产阶段没有产出可用资产或预览结果。';
-      } else if (stageKind === 'video_prompt_generate') {
-        const promptText = typeof outputPayload.prompt === 'string' ? outputPayload.prompt : '';
-        const voicePrompt = typeof outputPayload.voicePrompt === 'string' ? outputPayload.voicePrompt : '';
-        const beatSheet = cleanArray(outputPayload.beatSheet || outputPayload.beats);
-        passed = promptText.length >= 80 || voicePrompt.length >= 30 || beatSheet.length > 0;
-        notes = passed
-          ? '视频提示词阶段已有可用输出，可继续进入后续生成。'
-          : '视频提示词阶段没有产出足够完整的提示词、配音稿或分镜节拍。';
-      } else if (stageKind === 'video_generate') {
-        passed = typeof outputPayload.previewUrl === 'string' && outputPayload.previewUrl.length > 0;
-        notes = passed
-          ? '视频阶段已经生成可用输出。'
-          : '视频阶段没有返回可用输出地址。';
-      }
-
-      reviews.push({ policyId, passed, notes });
-      continue;
-    }
-
-    if (policyId === 'compliance-review') {
-      const matched = COMPLIANCE_BLOCKLIST.find((item) => serialized.includes(item));
-      reviews.push({
-        policyId,
-        passed: !matched,
-        notes: matched ? `命中合规风险词：${matched}` : '未命中当前的合规风险词规则。',
-      });
-    }
+function evaluateReviewPolicies({ reviewPolicyIds, stageKind, outputPayload, schema }) {
+  if (schema?.reviewConfig) {
+    return evaluateSkillReviewPolicies({
+      reviewPolicyIds,
+      outputPayload,
+      schema,
+    });
   }
 
-  return reviews;
+  return evaluateReviewPoliciesWithRegistry({
+    reviewPolicyIds,
+    stageKind,
+    outputPayload,
+  });
+}
+
+function resolveSkillPack(skillPack, defaultSkillPackId) {
+  return skillPack || getSkillPack(defaultSkillPackId) || null;
+}
+
+function resolveSkillSchemaBundle({ skillPack, defaultSkillPackId, capabilityId, defaultSchemaId }) {
+  const resolvedSkillPack = resolveSkillPack(skillPack, defaultSkillPackId);
+  const fromPack = resolveSkillPackCapabilitySchema(resolvedSkillPack, capabilityId);
+  const schemaId = fromPack.schemaId || defaultSchemaId || null;
+  const schema = fromPack.schema || (schemaId ? getSkillSchema(schemaId) : null);
+
+  return {
+    skillPack: resolvedSkillPack,
+    schema,
+    schemaId,
+  };
 }
 
 async function runScriptDecompose({ project, latestScriptSource, model, skillPack, user }) {
   const setup = project.setup || {
     aspectRatio: '9:16',
     styleSummary: '',
-    targetMedium: '漫剧',
+    targetMedium: '短剧',
     globalPrompts: [],
   };
-
+  const { skillPack: resolvedSkillPack, schema } = resolveSkillSchemaBundle({
+    skillPack,
+    defaultSkillPackId: 'seedance-director-v1',
+    capabilityId: 'script_decompose',
+    defaultSchemaId: 'seedance-director-core-v1',
+  });
   const heuristicBible = buildStoryBible({
     projectTitle: project.title,
     scriptText: latestScriptSource.contentText,
     setup,
   });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    values: {
+      projectTitle: project.title,
+      targetMedium: setup.targetMedium,
+      aspectRatio: setup.aspectRatio,
+      styleSummary: setup.styleSummary,
+      globalPrompts: Array.isArray(setup.globalPrompts) ? setup.globalPrompts : [],
+      skillMethodology: resolvedSkillPack?.promptMethodology || '',
+      scriptText: latestScriptSource.contentText,
+    },
+  });
 
   const storyBible = await maybeGenerateStructuredOutput({
     model,
-    systemInstruction:
-      '你是漫剧项目的总导演分析师。请把剧本拆解成项目总纲、人物、场景、道具和剧集列表。输出必须是 JSON。',
-    prompt: [
-      `项目名：${project.title}`,
-      `目标媒介：${setup.targetMedium}`,
-      `画面比例：${setup.aspectRatio}`,
-      setup.styleSummary ? `风格要求：${setup.styleSummary}` : '',
-      Array.isArray(setup.globalPrompts) && setup.globalPrompts.length > 0
-        ? `全局提示词：${setup.globalPrompts.join('；')}`
-        : '',
-      skillPack?.promptMethodology ? `拆解方法论：${skillPack.promptMethodology}` : '',
-      '请输出字段：title, logline, summary, worldRules[], continuityRules[], characters[{name,description}], scenes[{name,description}], props[{name,description}], episodes[{episodeNumber,title,synopsis,sourceText}]。',
-      '原始剧本如下：',
-      latestScriptSource.contentText,
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    normalizer: normalizeStoryBibleFromModel,
+    systemInstruction: promptPackage.systemInstruction,
+    prompt: promptPackage.prompt,
+    normalizer: (raw) => normalizeSkillOutputWithContract({
+      schema,
+      raw,
+      fallback: heuristicBible,
+    }),
     fallbackFactory: () => heuristicBible,
   });
+  const directorArtifacts = applySkillArtifactBindings(schema?.artifactBindings, storyBible);
+  const normalizedStoryBible = {
+    ...heuristicBible,
+    ...(directorArtifacts.storyBibleValues || {}),
+  };
 
   const createdAssets = await createAssetsFromStoryBible({
     projectId: project.id,
-    storyBible,
+    storyBible: normalizedStoryBible,
     userId: user.id,
   });
 
-  const episodes = await replaceEpisodes(project.id, storyBible.episodes || []);
-  await upsertStoryBible(project.id, storyBible);
+  const episodes = await replaceEpisodes(project.id, normalizedStoryBible.episodes || []);
+  await upsertStoryBible(project.id, normalizedStoryBible);
   await updateProjectSetup(project.id, {
     stageConfig: project.setup?.stageConfig || buildDefaultStageConfig(),
     metadata: {
       ...(project.setup?.metadata || {}),
       lastDecomposedAt: new Date().toISOString(),
-      decompositionSkillPackId: skillPack?.id ?? null,
+      decompositionSkillPackId: resolvedSkillPack?.id ?? null,
       usedLiveModel: hasLiveTextModelSupport(model),
     },
   });
 
   return {
-    storyBible,
+    storyBible: normalizedStoryBible,
     createdAssetCount: createdAssets.length,
     createdEpisodeCount: episodes.length,
+    skillSchemaId: schema?.id || null,
   };
 }
 
@@ -365,40 +453,52 @@ async function runEpisodeExpand({ project, episode, model, skillPack }) {
     previousEpisodes,
     lockedAssets,
   });
-
+  const { skillPack: resolvedSkillPack, schema } = skillPack?.stageKind === 'episode_expand'
+    ? resolveSkillSchemaBundle({
+        skillPack,
+        defaultSkillPackId: 'seedance-episode-director-v1',
+        capabilityId: 'episode_expand',
+        defaultSchemaId: 'seedance-episode-expand-core-v1',
+      })
+    : resolveSkillSchemaBundle({
+        skillPack: null,
+        defaultSkillPackId: 'seedance-episode-director-v1',
+        capabilityId: 'episode_expand',
+        defaultSchemaId: 'seedance-episode-expand-core-v1',
+      });
+  const fallback = buildEpisodeExpansionFallbackBundle({
+    project,
+    episode,
+    heuristicContext,
+  });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    values: {
+      projectTitle: project.title,
+      storySummary: project.storyBible?.summary || '',
+      episodeTitle: episode.title,
+      episodeSynopsis: episode.synopsis,
+      previousEpisodeSummary: previousEpisodes.length > 0
+        ? previousEpisodes.map((item) => `${item.title}: ${item.synopsis}`).join('\n')
+        : '无前情',
+      lockedAssetSummary: lockedAssets.length > 0
+        ? lockedAssets.map((item) => `${item.type}:${item.name}`).join('、')
+        : '无锁定资产',
+      skillMethodology: resolvedSkillPack?.promptMethodology || '',
+    },
+  });
   const expanded = await maybeGenerateStructuredOutput({
     model,
-    systemInstruction:
-      '你是单集分析助手。请结合项目设定、前文摘要和锁定资产，为当前集生成上下文摘要、前情摘要、分镜节拍和连续性状态。输出必须是 JSON。',
-    prompt: [
-      `项目名：${project.title}`,
-      project.storyBible?.summary ? `故事总纲：${project.storyBible.summary}` : '',
-      `当前剧集：${episode.title}`,
-      `当前剧集概述：${episode.synopsis}`,
-      previousEpisodes.length > 0
-        ? `前序剧集：${previousEpisodes.map((item) => `${item.title}：${item.synopsis}`).join('\n')}`
-        : '前序剧集：无',
-      lockedAssets.length > 0
-        ? `锁定资产：${lockedAssets.map((item) => `${item.type}:${item.name}`).join('；')}`
-        : '锁定资产：无',
-      skillPack?.promptMethodology ? `分析方法论：${skillPack.promptMethodology}` : '',
-      '请输出字段：contextSummary, precedingSummary, storyboardBeats[], continuityState{}。',
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    normalizer: normalizeEpisodeExpansion,
-    fallbackFactory: () => ({
-      contextSummary: heuristicContext.contextSummary,
-      precedingSummary: heuristicContext.precedingSummary,
-      storyboardBeats: [
-        `开场快速建立 ${episode.title} 的核心场景和人物关系。`,
-        '围绕当集冲突推进情绪变化，保持锁定资产的一致性。',
-        '结尾留出下一集承接信息，补全当前集的连续性状态。',
-      ],
-      continuityState: heuristicContext.continuityState,
+    systemInstruction: promptPackage.systemInstruction,
+    prompt: promptPackage.prompt,
+    normalizer: (raw) => normalizeSkillOutputWithContract({
+      schema,
+      raw,
+      fallback,
     }),
+    fallbackFactory: () => fallback,
   });
-
+  const episodeArtifacts = applySkillArtifactBindings(schema?.artifactBindings, expanded);
   const promptRecipeId = project.setup?.stageConfig?.video_prompt_generate?.promptRecipeId || 'seedance-cinematic-v1';
   const workspaceSeed = buildEpisodeWorkspaceSeed({
     episode,
@@ -406,27 +506,40 @@ async function runEpisodeExpand({ project, episode, model, skillPack }) {
     storyBible: project.storyBible,
     promptRecipeId,
   });
-
+  const storyboardText = typeof episodeArtifacts.workspaceNodeValues.storyboard === 'string'
+    ? episodeArtifacts.workspaceNodeValues.storyboard
+    : cleanArray(expanded.storyboardBeats).join('\n');
   workspaceSeed.nodes = cleanArray(workspaceSeed.nodes).map((node) => {
-    if (String(node.id).startsWith('storyboard-') && expanded.storyboardBeats.length > 0) {
+    if (String(node.id).startsWith('storyboard-') && storyboardText) {
       return {
         ...node,
-        content: expanded.storyboardBeats.join('\n'),
+        content: storyboardText,
       };
     }
     return node;
   });
 
+  const nextEpisodeContext = {
+    ...heuristicContext,
+    ...(episodeArtifacts.episodeContextValues || {}),
+  };
+  const contextSummary = String(
+    episodeArtifacts.episodeContextRecordValues?.contextSummary
+    || expanded.contextSummary
+    || heuristicContext.contextSummary,
+  ).trim();
+  const precedingSummary = String(
+    episodeArtifacts.episodeContextRecordValues?.precedingSummary
+    || expanded.precedingSummary
+    || heuristicContext.precedingSummary,
+  ).trim();
+
   await upsertEpisodeContext({
     episodeId: episode.id,
     projectId: project.id,
-    contextSummary: expanded.contextSummary,
-    precedingSummary: expanded.precedingSummary,
-    content: {
-      ...heuristicContext,
-      continuityState: expanded.continuityState,
-      storyboardBeats: expanded.storyboardBeats,
-    },
+    contextSummary,
+    precedingSummary,
+    content: nextEpisodeContext,
   });
 
   await upsertEpisodeWorkspace({
@@ -442,60 +555,73 @@ async function runEpisodeExpand({ project, episode, model, skillPack }) {
 
   return {
     episodeContext: {
-      ...heuristicContext,
-      contextSummary: expanded.contextSummary,
-      precedingSummary: expanded.precedingSummary,
-      continuityState: expanded.continuityState,
-      storyboardBeats: expanded.storyboardBeats,
+      ...nextEpisodeContext,
+      contextSummary,
+      precedingSummary,
     },
     workspaceSeed,
+    skillSchemaId: schema?.id || null,
   };
 }
 
 async function runAssetExtract({ project, model, skillPack, user }) {
   const storyBible = project.storyBible || {};
+  const { skillPack: resolvedSkillPack, schema } = resolveSkillSchemaBundle({
+    skillPack,
+    defaultSkillPackId: 'seedance-art-design-v1',
+    capabilityId: 'asset_extract',
+    defaultSchemaId: 'seedance-asset-design-core-v1',
+  });
   const fallbackAssets = []
     .concat((storyBible.characters || []).map((item) => ({
       type: 'character',
       name: item.name,
       description: item.description,
-      promptText: inferAssetPrompt({ asset: item, project, skillPack }),
+      promptText: inferAssetPrompt({ asset: item, project, skillPack: resolvedSkillPack }),
       previewHint: 'character',
     })))
     .concat((storyBible.scenes || []).map((item) => ({
       type: 'scene',
       name: item.name,
       description: item.description,
-      promptText: inferAssetPrompt({ asset: item, project, skillPack }),
+      promptText: inferAssetPrompt({ asset: item, project, skillPack: resolvedSkillPack }),
       previewHint: 'scene',
     })))
     .concat((storyBible.props || []).map((item) => ({
       type: 'prop',
       name: item.name,
       description: item.description,
-      promptText: inferAssetPrompt({ asset: item, project, skillPack }),
+      promptText: inferAssetPrompt({ asset: item, project, skillPack: resolvedSkillPack }),
       previewHint: 'prop',
     })));
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    values: {
+      projectTitle: project.title,
+      storySummary: project.storyBible?.summary || '',
+      styleSummary: summarizeStyle(project),
+      skillMethodology: resolvedSkillPack?.promptMethodology || '',
+    },
+  });
 
   const assetPack = await maybeGenerateStructuredOutput({
     model,
-    systemInstruction:
-      '你是漫剧项目的资产设计师。请将角色、场景、道具整理成可锁定的资产清单，并补全适合图片/视频生成的提示词。输出必须是 JSON。',
-    prompt: [
-      `项目名：${project.title}`,
-      project.storyBible?.summary ? `故事总纲：${project.storyBible.summary}` : '',
-      summarizeStyle(project),
-      skillPack?.promptMethodology ? `资产方法论：${skillPack.promptMethodology}` : '',
-      '请输出字段：assets[{type,name,description,promptText,previewHint}]。',
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    normalizer: (raw) => normalizeAssetPack(raw, fallbackAssets),
+    systemInstruction: promptPackage.systemInstruction,
+    prompt: promptPackage.prompt,
+    normalizer: (raw) => normalizeSkillOutputWithContract({
+      schema,
+      raw,
+      fallback: { assets: fallbackAssets },
+    }),
     fallbackFactory: () => ({ assets: fallbackAssets }),
   });
+  const assetArtifacts = applySkillArtifactBindings(schema?.artifactBindings, assetPack);
+  const normalizedAssetPack = {
+    assets: cleanArray(assetArtifacts.assetRecordValues?.assets || assetPack.assets),
+  };
 
   const created = [];
-  for (const asset of assetPack.assets) {
+  for (const asset of normalizedAssetPack.assets) {
     created.push(await createOrUpdateAsset({
       projectId: project.id,
       type: asset.type,
@@ -505,13 +631,66 @@ async function runAssetExtract({ project, model, skillPack, user }) {
         source: 'asset_extract',
         previewHint: asset.previewHint,
       },
-      promptText: asset.promptText || inferAssetPrompt({ asset, project, skillPack }),
+      promptText: asset.promptText || inferAssetPrompt({ asset, project, skillPack: resolvedSkillPack }),
       createdBy: user.id,
     }));
   }
 
   return {
     assets: created.map((entry) => entry.asset),
+    skillSchemaId: schema?.id || null,
+  };
+}
+
+async function runImagePromptGenerate({ project, model, skillPack, inputPayload }) {
+  const { skillPack: resolvedSkillPack, schema } = resolveSkillSchemaBundle({
+    skillPack,
+    defaultSkillPackId: 'seedance-art-design-v1',
+    capabilityId: 'image_prompt_generate',
+    defaultSchemaId: 'seedance-image-prompt-core-v1',
+  });
+  const assetId = String(inputPayload.assetId || '').trim();
+  const assets = assetId ? await listAssetsByProjectId(project.id) : [];
+  const storedAsset = assetId ? assets.find((item) => item.id === assetId) || null : null;
+  const draftAsset = storedAsset || {
+    type: String(inputPayload.assetType || 'style').trim() || 'style',
+    name: String(inputPayload.assetName || project.title).trim() || project.title,
+    description: String(inputPayload.assetDescription || project.storyBible?.summary || '').trim(),
+  };
+  const fallbackPrompt = buildImagePromptFallback({
+    project,
+    asset: draftAsset,
+    skillPack: resolvedSkillPack,
+  });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    values: {
+      projectTitle: project.title,
+      storySummary: project.storyBible?.summary || '',
+      styleSummary: summarizeStyle(project),
+      assetType: draftAsset.type || 'style',
+      assetName: draftAsset.name || project.title,
+      assetDescription: draftAsset.description || project.storyBible?.summary || '为项目生成统一风格图片提示词。',
+      skillMethodology: resolvedSkillPack?.promptMethodology || '',
+    },
+  });
+
+  const output = await maybeGenerateStructuredOutput({
+    model,
+    systemInstruction: promptPackage.systemInstruction,
+    prompt: promptPackage.prompt,
+    normalizer: (raw) => normalizeSkillOutputWithContract({
+      schema,
+      raw,
+      fallback: { prompt: fallbackPrompt },
+    }),
+    fallbackFactory: () => ({ prompt: fallbackPrompt }),
+  });
+
+  return {
+    prompt: output.prompt,
+    assetId: storedAsset?.id || null,
+    skillSchemaId: schema?.id || null,
   };
 }
 
@@ -574,57 +753,70 @@ async function runAssetImageGeneration({ capabilityId, project, model, user, inp
 async function runVideoPromptGenerate({ project, episode, model, skillPack, inputPayload }) {
   const context = await getEpisodeContext(episode.id);
   const workspace = await getEpisodeWorkspace(episode.id);
+  const lockedAssets = (await listAssetsByProjectId(project.id)).filter((asset) => asset.isLocked);
+  const { skillPack: resolvedSkillPack, schema } = resolveSkillSchemaBundle({
+    skillPack,
+    defaultSkillPackId: 'seedance-storyboard-v1',
+    capabilityId: 'video_prompt_generate',
+    defaultSchemaId: 'seedance-storyboard-core-v1',
+  });
   const recipeId =
     String(inputPayload.promptRecipeId || '').trim()
     || project.setup?.stageConfig?.video_prompt_generate?.promptRecipeId
     || 'seedance-cinematic-v1';
-  const recipe = skillPack?.promptRecipes?.find((item) => item.id === recipeId)
+  const recipe = resolvedSkillPack?.promptRecipes?.find((item) => item.id === recipeId)
     || getSkillPack('seedance-storyboard-v1')?.promptRecipes?.find((item) => item.id === recipeId);
-
-  const fallback = {
-    prompt: [
-      `${episode.title} 的单集视频提示词。`,
-      context?.contextSummary || episode.synopsis,
-      recipe ? `风格配方：${recipe.name}。${recipe.description}` : '',
-      project.setup?.styleSummary ? `项目风格：${project.setup.styleSummary}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    beatSheet: [
-      '镜头 1：建立主场景和人物关系。',
-      '镜头 2：推动主要冲突，强化情绪变化。',
-      '镜头 3：用结尾镜头留出下一集承接点。',
-    ],
-    voicePrompt: `${episode.title} 的配音文稿应与剧情情绪一致，强调关键冲突和人物内心变化。`,
-  };
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    values: {
+      projectTitle: project.title,
+      episodeTitle: episode.title,
+      episodeContextSummary: context?.contextSummary || episode.synopsis,
+      precedingSummary: context?.precedingSummary || '',
+      styleSummary: project.setup?.styleSummary || '',
+      lockedAssetSummary: summarizeLockedAssets(lockedAssets),
+      continuitySummary: summarizeContinuityState(context?.content?.continuityState),
+      promptRecipeName: recipe?.name || '',
+      promptRecipeDescription: recipe?.description || '',
+      skillMethodology: resolvedSkillPack?.promptMethodology || '',
+    },
+  });
+  const fallback = buildStoryboardFallbackBundle({
+    project,
+    episode,
+    context,
+    recipe,
+    lockedAssets,
+  });
 
   const promptPayload = await maybeGenerateStructuredOutput({
     model,
-    systemInstruction:
-      '你是漫剧视频提示词设计师。请结合单集上下文、镜头语言和配方，生成视频提示词、beat sheet 和配音提示词。输出必须是 JSON。',
-    prompt: [
-      `项目名：${project.title}`,
-      `当前剧集：${episode.title}`,
-      context?.contextSummary ? `单集上下文：${context.contextSummary}` : '',
-      context?.precedingSummary ? `前情摘要：${context.precedingSummary}` : '',
-      project.setup?.styleSummary ? `项目风格：${project.setup.styleSummary}` : '',
-      recipe ? `视频提示词配方：${recipe.name}。${recipe.description}` : '',
-      skillPack?.promptMethodology ? `分镜方法论：${skillPack.promptMethodology}` : '',
-      '请输出字段：prompt, beatSheet[], voicePrompt。',
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    normalizer: normalizePromptPayload,
+    systemInstruction: promptPackage.systemInstruction,
+    prompt: promptPackage.prompt,
+    normalizer: (raw) => normalizeSkillOutputWithContract({
+      schema,
+      raw,
+      fallback,
+    }),
     fallbackFactory: () => fallback,
+  });
+  const videoModel = getModel(project.setup?.stageConfig?.video_generate?.modelId);
+  promptPayload.shots = enrichStoryboardShots(promptPayload.shots, {
+    videoModel,
+    lockedAssets,
+  });
+  const artifactBindings = applySkillArtifactBindings(schema?.artifactBindings, {
+    ...promptPayload,
+    promptRecipeId: recipeId,
   });
 
   if (workspace) {
     const nodes = cleanArray(workspace.content?.nodes).map((node) => {
-      if (String(node.id).startsWith('prompt-')) {
-        return { ...node, content: promptPayload.prompt };
+      if (String(node.id).startsWith('prompt-') && typeof artifactBindings.workspaceNodeValues.prompt === 'string') {
+        return { ...node, content: artifactBindings.workspaceNodeValues.prompt };
       }
-      if (String(node.id).startsWith('storyboard-') && promptPayload.beatSheet.length > 0) {
-        return { ...node, content: promptPayload.beatSheet.join('\n') };
+      if (String(node.id).startsWith('storyboard-') && typeof artifactBindings.workspaceNodeValues.storyboard === 'string') {
+        return { ...node, content: artifactBindings.workspaceNodeValues.storyboard };
       }
       return node;
     });
@@ -639,11 +831,27 @@ async function runVideoPromptGenerate({ project, episode, model, skillPack, inpu
     });
   }
 
+  if (context) {
+    await upsertEpisodeContext({
+      episodeId: episode.id,
+      projectId: project.id,
+      contextSummary: context.contextSummary,
+      precedingSummary: context.precedingSummary,
+      content: {
+        ...(context.content || {}),
+        ...artifactBindings.episodeContextValues,
+        promptRecipeId: recipeId,
+      },
+    });
+  }
+
   return {
     prompt: promptPayload.prompt,
     promptRecipeId: recipeId,
     beatSheet: promptPayload.beatSheet,
     voicePrompt: promptPayload.voicePrompt,
+    shots: promptPayload.shots,
+    skillSchemaId: schema?.id || null,
   };
 }
 
@@ -661,6 +869,8 @@ async function runVoicePromptGenerate({ project, episode, model, skillPack, inpu
     voicePrompt: promptBundle.voicePrompt,
     promptRecipeId: promptBundle.promptRecipeId,
     videoPrompt: promptBundle.prompt,
+    shots: promptBundle.shots,
+    skillSchemaId: promptBundle.skillSchemaId,
   };
 }
 
@@ -678,6 +888,8 @@ async function runStoryboardGenerate({ project, episode, model, skillPack, input
     beatSheet: promptBundle.beatSheet,
     promptRecipeId: promptBundle.promptRecipeId,
     prompt: promptBundle.prompt,
+    shots: promptBundle.shots,
+    skillSchemaId: promptBundle.skillSchemaId,
   };
 }
 
@@ -842,6 +1054,16 @@ export async function runCapability({
         skillPack,
         user,
       });
+    } else if (capabilityId === 'image_prompt_generate') {
+      project = await getProjectById(inputPayload.projectId);
+      if (!project) throw new Error('Project not found.');
+
+      outputPayload = await runImagePromptGenerate({
+        project,
+        model,
+        skillPack,
+        inputPayload,
+      });
     } else if (['character_generate', 'scene_generate', 'prop_generate'].includes(capabilityId)) {
       project = await getProjectById(inputPayload.projectId);
       if (!project) throw new Error('Project not found.');
@@ -918,6 +1140,10 @@ export async function runCapability({
       reviewPolicyIds,
       stageKind: capability.stageKind,
       outputPayload,
+      schema:
+        getSkillSchema(outputPayload.skillSchemaId)
+        || resolveSkillPackCapabilitySchema(skillPack, capabilityId).schema
+        || null,
     });
 
     if (reviews.some((review) => !review.passed)) {

@@ -19,9 +19,10 @@ import { runCapability } from './capabilityEngine.js';
 import { CAPABILITIES, MODELS, REVIEW_POLICIES, SKILL_PACKS, buildDefaultStageConfig, getCapability, getModel, getSkillPack } from './registries.js';
 import { extractScriptContent, extractTitle } from './scriptExtraction.js';
 import { createVideoTaskWithModel, generateImageWithModel, generateTextWithModel, pollVideoTask } from './modelRuntime.js';
-import { getJimengJobStatus, initializeJimengJobWorker, enqueueJimengJob } from './services/jimengJobManager.js';
+import { cancelJimengJob, getJimengJobStatus, initializeJimengJobWorker, enqueueJimengJob } from './services/jimengJobManager.js';
 import jimengService from './services/jimengService.js';
 import {
+  createAssetPromptVersion,
   createOrUpdateAsset,
   createProject,
   createStudioWorkspace,
@@ -43,6 +44,7 @@ import {
   listStudioWorkspaces,
   listWorkflowRunsByProjectId,
   setAssetLockState,
+  setAssetCurrentVersion,
   touchProject,
   updateEpisodeStatus,
   updateProjectSetup,
@@ -310,6 +312,31 @@ app.get('/api/jimeng/jobs/:id', authRequired, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Jimeng job not found.' });
     }
     res.json({ success: true, data: job });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+});
+
+app.post('/api/jimeng/jobs/:id/cancel', authRequired, async (req, res) => {
+  try {
+    const job = await getJimengJobStatus(req.params.id);
+    if (!job) {
+      return res.status(404).json({ success: false, error: 'Jimeng job not found.' });
+    }
+
+    const phase = String(job.phase || '').trim();
+    const status = String(job.status || '').trim().toUpperCase();
+    const canCancel = ['QUEUED', 'PENDING', 'CLAIMED'].includes(status) || phase.includes('排队');
+    if (!canCancel) {
+      return res.status(400).json({ success: false, error: 'Only queued Jimeng jobs can be cancelled.' });
+    }
+
+    const cancelled = await cancelJimengJob(req.params.id);
+    if (!cancelled) {
+      return res.status(404).json({ success: false, error: 'Jimeng job not found.' });
+    }
+
+    res.json({ success: true, data: cancelled });
   } catch (error) {
     sendError(res, error, 500);
   }
@@ -690,6 +717,66 @@ app.post('/api/projects/:id/assets', authRequired, requireProjectAccess, async (
   }
 });
 
+app.post('/api/assets/:id/prompt-version', authRequired, async (req, res) => {
+  try {
+    const asset = await getAssetById(req.params.id);
+    if (!asset) {
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+
+    const member = await getProjectMember(asset.projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to edit this asset.' });
+    }
+
+    const promptText = String(req.body?.promptText || '').trim();
+    if (!promptText) {
+      return res.status(400).json({ success: false, error: 'promptText is required.' });
+    }
+
+    const created = await createAssetPromptVersion({
+      assetId: asset.id,
+      promptText,
+      description: typeof req.body?.description === 'string' ? req.body.description : undefined,
+      metadata: req.body?.metadata || undefined,
+      previewUrl: typeof req.body?.previewUrl === 'string' ? req.body.previewUrl : undefined,
+      sourcePayload: {
+        source: String(req.body?.source || 'image_prompt_generate'),
+        capabilityRunId: String(req.body?.capabilityRunId || '').trim() || null,
+      },
+      createdBy: req.user.id,
+    });
+
+    res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
+app.post('/api/assets/:id/current-version', authRequired, async (req, res) => {
+  try {
+    const asset = await getAssetById(req.params.id);
+    if (!asset) {
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+
+    const member = await getProjectMember(asset.projectId, req.user.id);
+    if (!member) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to edit this asset.' });
+    }
+
+    const versionId = String(req.body?.versionId || '').trim();
+    if (!versionId) {
+      return res.status(400).json({ success: false, error: 'versionId is required.' });
+    }
+
+    const updatedAsset = await setAssetCurrentVersion(asset.id, versionId);
+    res.json({ success: true, data: updatedAsset });
+  } catch (error) {
+    sendError(res, error, 400);
+  }
+});
+
 app.post('/api/assets/:id/lock', authRequired, async (req, res) => {
   try {
     const asset = await getAssetById(req.params.id);
@@ -744,7 +831,7 @@ app.post('/api/projects/:projectId/episodes/:episodeId/analyze', authRequired, a
     const project = await getProjectById(req.params.projectId);
     const skillPackId = req.body?.skillPackId
       || project?.setup?.stageConfig?.episode_expand?.skillPackId
-      || 'seedance-director-v1';
+      || 'seedance-episode-director-v1';
     const modelId = req.body?.modelId
       || project?.setup?.stageConfig?.episode_expand?.modelId
       || 'gemini-3.1-pro@bltcy';

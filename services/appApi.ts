@@ -135,10 +135,24 @@ export const appApi = {
 
   getJimengJob: (jobId: string) =>
     apiRequest<JimengJob>(`/jimeng/jobs/${jobId}`),
+  cancelJimengJob: (jobId: string) =>
+    apiRequest<JimengJob>(`/jimeng/jobs/${jobId}/cancel`, {
+      method: 'POST',
+    }),
 
   listAssets: (projectId: string) => apiRequest<CanonicalAsset[]>(`/projects/${projectId}/assets`),
   createAsset: (projectId: string, payload: Record<string, unknown>) =>
     apiRequest<{ asset: CanonicalAsset }>(`/projects/${projectId}/assets`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  saveAssetPromptVersion: (assetId: string, payload: Record<string, unknown>) =>
+    apiRequest<{ asset: CanonicalAsset }>(`/assets/${assetId}/prompt-version`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  setAssetCurrentVersion: (assetId: string, payload: Record<string, unknown>) =>
+    apiRequest<CanonicalAsset>(`/assets/${assetId}/current-version`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

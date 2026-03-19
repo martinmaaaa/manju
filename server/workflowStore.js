@@ -629,6 +629,144 @@ export async function createOrUpdateAsset({
   }
 }
 
+export async function createAssetPromptVersion({
+  assetId,
+  promptText,
+  description,
+  metadata,
+  previewUrl,
+  sourcePayload,
+  createdBy,
+}) {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    const assetResult = await client.query(
+      `SELECT * FROM workflow_assets WHERE id = $1 LIMIT 1`,
+      [assetId],
+    );
+    const asset = assetResult.rows[0];
+    if (!asset) {
+      throw new Error('Asset not found.');
+    }
+
+    const currentVersionResult = asset.current_version_id
+      ? await client.query(
+          `SELECT * FROM workflow_asset_versions WHERE id = $1 LIMIT 1`,
+          [asset.current_version_id],
+        )
+      : { rows: [] };
+    const currentVersion = currentVersionResult.rows[0] || null;
+    const resolvedDescription = description ?? asset.description ?? '';
+    const resolvedMetadata = metadata ?? asset.metadata ?? {};
+    const resolvedPreviewUrl = previewUrl ?? currentVersion?.preview_url ?? null;
+
+    const updatedAssetResult = await client.query(
+      `UPDATE workflow_assets
+       SET description = $2,
+           metadata = $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [asset.id, resolvedDescription, JSON.stringify(resolvedMetadata)],
+    );
+
+    const versionResult = await client.query(
+      `SELECT COALESCE(MAX(version_number), 0) AS max_version
+       FROM workflow_asset_versions WHERE asset_id = $1`,
+      [asset.id],
+    );
+    const versionNumber = Number(versionResult.rows[0]?.max_version ?? 0) + 1;
+    const versionId = createId('assetver');
+    const assetVersionResult = await client.query(
+      `INSERT INTO workflow_asset_versions
+        (id, asset_id, project_id, version_number, prompt_text, preview_url, source_payload, metadata, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
+       RETURNING *`,
+      [
+        versionId,
+        asset.id,
+        asset.project_id,
+        versionNumber,
+        promptText || '',
+        resolvedPreviewUrl,
+        JSON.stringify(sourcePayload || { source: 'prompt-version' }),
+        JSON.stringify(resolvedMetadata),
+        createdBy ?? null,
+      ],
+    );
+
+    await client.query(
+      `UPDATE workflow_assets
+       SET current_version_id = $2,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [asset.id, versionId],
+    );
+
+    await client.query('COMMIT');
+    await touchProject(asset.project_id);
+
+    return {
+      asset: {
+        ...mapAsset(updatedAssetResult.rows[0]),
+        currentVersionId: versionId,
+      },
+      version: mapAssetVersion(assetVersionResult.rows[0]),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function setAssetCurrentVersion(assetId, versionId) {
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    const assetResult = await client.query(
+      `SELECT * FROM workflow_assets WHERE id = $1 LIMIT 1`,
+      [assetId],
+    );
+    const asset = assetResult.rows[0];
+    if (!asset) {
+      throw new Error('Asset not found.');
+    }
+
+    const versionResult = await client.query(
+      `SELECT * FROM workflow_asset_versions WHERE id = $1 AND asset_id = $2 LIMIT 1`,
+      [versionId, assetId],
+    );
+    if (!versionResult.rows[0]) {
+      throw new Error('Asset version not found.');
+    }
+
+    const updatedAssetResult = await client.query(
+      `UPDATE workflow_assets
+       SET current_version_id = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [assetId, versionId],
+    );
+
+    await client.query('COMMIT');
+    await touchProject(asset.project_id);
+    return mapAsset(updatedAssetResult.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function listAssetsByProjectId(projectId) {
   const pool = getPool();
   const [assetsResult, versionsResult] = await Promise.all([
