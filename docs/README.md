@@ -1,12 +1,16 @@
-# 文档索引
+# Docs Index
 
-- `V2.0-规划蓝图.md`：当前版本的总规划蓝图，后续一段时间默认以此为主线推进
-- `workflow-architecture.md`：较早期的工作流架构讨论记录
-- `新手入门指南.md`：使用入门文档
+## Current
+- [workflow-architecture.md](C:/Users/marti/Desktop/Code/aiyou/docs/workflow-architecture.md)
+  - 当前系统结构和代码映射。
+- [V2.0-规划蓝图.md](C:/Users/marti/Desktop/Code/aiyou/docs/V2.0-规划蓝图.md)
+  - 当前 V2.0 产品蓝图和完成度说明。
+- [新手入门指南.md](C:/Users/marti/Desktop/Code/aiyou/docs/新手入门指南.md)
+  - 当前本地开发、启动和排查指南。
 
-建议阅读顺序：
-
-1. `V2.0-规划蓝图.md`
-2. `workflow-architecture.md`
-3. `新手入门指南.md`
-
+## Reference
+- 产品和重构基线以 [plans/PLAN.md](C:/Users/marti/Desktop/Code/aiyou/plans/PLAN.md) 为准。
+- 模型底座和视频模型输入能力分别以：
+  - [plans/model-foundation-registry.md](C:/Users/marti/Desktop/Code/aiyou/plans/model-foundation-registry.md)
+  - [plans/video-model-input-matrix.md](C:/Users/marti/Desktop/Code/aiyou/plans/video-model-input-matrix.md)
+  为准。

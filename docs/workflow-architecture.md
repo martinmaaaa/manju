@@ -1,165 +1,84 @@
-# 添梯系统架构（工作流版）
+# 工作流架构（现状）
 
 ## 目标
 
-把整个系统看成「若干工作流」组成，而不是「大量分散节点」的集合。
+当前系统已经不再沿用旧的“通用画布 + 多套历史 workflow/UI/API”的结构，而是收敛成一条新的工作流主链：
 
-当前推荐的产品结构：
+1. `Project Workflow`
+2. `Episode Scenes`
+3. `Episode Workspace`
+4. `Canvas Node Runtime`
+5. `Shot Strip / 资产栏 / Review Gate`
 
-1. **项目层**
-   - 负责项目创建、进入、删除
-   - 默认进入工作流模块，而不是空白画布
+`Canvas Studio` 仍然保留，但它是独立沙盒，不再代表产品主入口。
 
-2. **工作流层**
-   - 这是产品主入口
-   - 核心是「漫剧工作流」
-   - 负责固定阶段、阶段状态、模板切换、流程初始化
+## 当前代码入口
 
-3. **高级画布层**
-   - 这是工作流的高级模式
-   - 只保留通用创作能力，不再承载漫剧专用入口
-   - 用于自由拼接、临时试验、素材补充、局部调试
+### 前端入口
+- [index.tsx](C:/Users/marti/Desktop/Code/aiyou/index.tsx)
+- [App.tsx](C:/Users/marti/Desktop/Code/aiyou/App.tsx)
 
-4. **执行服务层**
-   - 节点执行
-   - 模型调用
-   - 即梦任务提交与轮询
-   - 文件与素材处理
+### 当前前端主组件
+- [AppShell.tsx](C:/Users/marti/Desktop/Code/aiyou/components/workflow2/AppShell.tsx)
+- [CanvasSurface.tsx](C:/Users/marti/Desktop/Code/aiyou/components/workflow2/CanvasSurface.tsx)
+- [EpisodeShotStrip.tsx](C:/Users/marti/Desktop/Code/aiyou/components/workflow2/EpisodeShotStrip.tsx)
+- [SchemaFieldControl.tsx](C:/Users/marti/Desktop/Code/aiyou/components/workflow2/SchemaFieldControl.tsx)
 
-5. **存储与同步层**
-   - PostgreSQL 项目数据
-   - IndexedDB 本地资产 / workflow 草稿
-   - 本地文件存储
-   - 远端同步
+### 当前前端运行时
+- [appApi.ts](C:/Users/marti/Desktop/Code/aiyou/services/appApi.ts)
+- [services/workflow/runtime](C:/Users/marti/Desktop/Code/aiyou/services/workflow/runtime)
+- [workflowApp.ts](C:/Users/marti/Desktop/Code/aiyou/types/workflowApp.ts)
 
----
+### 当前后端主链
+- [server/index.js](C:/Users/marti/Desktop/Code/aiyou/server/index.js)
+- [server/capabilityEngine.js](C:/Users/marti/Desktop/Code/aiyou/server/capabilityEngine.js)
+- [server/canvasNodeRuntime.js](C:/Users/marti/Desktop/Code/aiyou/server/canvasNodeRuntime.js)
+- [server/modelRuntime.js](C:/Users/marti/Desktop/Code/aiyou/server/modelRuntime.js)
+- [server/skillSchemas.js](C:/Users/marti/Desktop/Code/aiyou/server/skillSchemas.js)
+- [server/reviewRegistry.js](C:/Users/marti/Desktop/Code/aiyou/server/reviewRegistry.js)
+- [server/registries.js](C:/Users/marti/Desktop/Code/aiyou/server/registries.js)
+- [server/workflowStore.js](C:/Users/marti/Desktop/Code/aiyou/server/workflowStore.js)
 
-## 当前代码映射
+## 当前产品结构
 
-### 1. 项目层
+### 1. 项目主链
+- 项目创建和成员管理
+- 剧本上传与项目设定
+- 阶段配置
+- 资产中心
+- 剧集列表
 
-- `App.tsx`
-- `components/ProjectsDashboard.tsx`
-- `services/api/projectApi.ts`
-- `server/index.js`
-- `server/persistence.js`
+### 2. 单集主链
+- 分切页
+- 工作台页
+- 底部分镜视频条
+- 右侧资产栏与检查器
 
-职责：
+### 3. 工作台语义
+- 画布负责生产和试跑
+- 分镜条只负责承接最终采用结果
+- 右侧资产栏负责展示和聚焦本集锁定资产
+- Review Gate 在工作台内显式提示阻塞原因
 
-- 项目切换
-- 项目 settings 持久化
-- 决定进入 `projects | pipeline | canvas`
+### 4. 模型底座
+- 模型已经按 `family / deployment / providerModelId` 分离
+- 画布节点是节点级模型选择，不再依赖全局 provider
+- 参数和输入能力由 schema 驱动
 
-### 2. 工作流层
+### 5. skills 驱动
+- `director -> episode -> storyboard -> asset/image_prompt` 已开始走 schema 驱动
+- `capabilityEngine` 现在是调度器，而不是所有阶段知识的硬编码中心
 
-- `services/workflowTemplates.ts`
-- `components/PipelineView.tsx`
+## 已删除的旧体系
 
-职责：
+以下体系已经从当前主链中清理，不再作为现状结构的一部分：
+- 旧 `components/workflow/*`
+- 旧 `components/sidebar/*`
+- 旧视频编辑器和旧画布工具链
+- 旧 `services/api/*`
+- 旧 `services/storage/*`
+- 旧 `workflowTemplates`
+- 旧根类型 [types.ts](C:/Users/marti/Desktop/Code/aiyou/types.ts)
+- 旧 `hooks / handlers / stores`
 
-- 定义固定流程模板
-- 定义阶段：剧本 → 人物资产 → 分镜 → 提示词 → 视频
-- 生成漫剧工作流对应的节点图
-- 汇总阶段状态
-
-### 3. 高级画布层
-
-- `App.tsx`
-- `components/SidebarDock.tsx`
-- `components/sidebar/AddNodePanel.tsx`
-- `components/CanvasContextMenu.tsx`
-- `components/WelcomeScreen.tsx`
-
-职责：
-
-- 只暴露通用工作流入口
-- 只保留：
-  - 文本
-  - 图片
-  - 视频
-  - 音频
-  - 图片编辑器
-  - 上传素材
-
-### 4. 执行服务层
-
-- `handlers/useNodeActions.ts`
-- `server/services/jimengService.js`
-- `server/services/jimengJobManager.js`
-- `services/jimengApi.ts`
-- `services/geminiService.ts`
-
-职责：
-
-- 节点动作执行
-- 即梦页面逆向对接
-- 结果轮询
-- 模型请求与回写
-
-### 5. 存储与同步层
-
-- `services/storage/*`
-- `services/syncMiddleware.ts`
-- `server/db.js`
-
-职责：
-
-- 画布数据保存
-- 资产保存
-- 远端同步
-- 本地恢复
-
----
-
-## 现在的产品规则
-
-### 默认规则
-
-- 项目默认进入 **工作流模块**
-- 漫剧专用能力只在 **工作流模块** 聚合展示
-- 画布不是主入口，而是 **高级模式**
-
-### 画布规则
-
-- 画布左侧加号菜单只显示通用工作流
-- 画布右键创建菜单只显示通用工作流
-- 欢迎页只显示通用工作流快捷入口
-- 漫剧专用节点不再从画布入口直接暴露
-
-### 漫剧工作流规则
-
-- 固定五段式：
-  - 剧本
-  - 人物资产
-  - 分镜
-  - 提示词
-  - 视频
-- 模板负责生成内部节点图
-- 用户优先操作阶段，不优先操作底层节点
-
----
-
-## 后续建议
-
-下一轮最值得继续推进的改造：
-
-1. **阶段表单化**
-   - 每个阶段做独立表单，不直接暴露节点细节
-
-2. **工作流执行编排**
-   - 阶段完成后自动给下一阶段预填输入
-
-3. **工作流面板升级**
-   - 左侧 `workflow` 面板从“保存的分组”升级为“工作流中心”
-
-4. **即梦能力收口**
-   - 即梦提交、排队、结果获取，全部只挂在视频阶段
-
-5. **高级模式隔离**
-   - 把画布明确标记为“高级模式 / 调试模式”
-
----
-
-## 一句话总结
-
-**添梯现在的正确产品方向是：工作流是主产品，画布是高级能力；漫剧工作流是核心主线，通用工作流只留在画布加号菜单里。**
+如果文档或笔记里还提到这些路径，请把它们视为历史信息，不要再按这些结构继续开发。
