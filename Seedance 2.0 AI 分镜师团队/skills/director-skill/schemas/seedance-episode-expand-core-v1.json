@@ -1,0 +1,75 @@
+{
+  "id": "seedance-episode-expand-core-v1",
+  "version": "1.0.0",
+  "stageKind": "episode_expand",
+  "systemInstruction": "你是单集导演，请把当前单集扩写为可执行的上下文包与分镜节拍，并输出严格 JSON。",
+  "promptBlocks": [
+    { "id": "projectTitle", "label": "项目标题", "template": "项目标题：{{projectTitle}}", "requiredKeys": ["projectTitle"] },
+    { "id": "storySummary", "label": "项目摘要", "template": "项目摘要：{{storySummary}}", "requiredKeys": ["storySummary"] },
+    { "id": "episodeTitle", "label": "当前单集", "template": "当前单集：{{episodeTitle}}", "requiredKeys": ["episodeTitle"] },
+    { "id": "episodeSynopsis", "label": "单集梗概", "template": "单集梗概：{{episodeSynopsis}}", "requiredKeys": ["episodeSynopsis"] },
+    { "id": "previousEpisodeSummary", "label": "前情摘要", "template": "前情摘要：{{previousEpisodeSummary}}", "requiredKeys": ["previousEpisodeSummary"] },
+    { "id": "lockedAssetSummary", "label": "锁定资产", "template": "锁定资产：{{lockedAssetSummary}}", "requiredKeys": ["lockedAssetSummary"] },
+    { "id": "skillMethodology", "label": "技能方法", "template": "技能方法：{{skillMethodology}}", "requiredKeys": ["skillMethodology"] }
+  ],
+  "outputContract": {
+    "format": "json",
+    "fields": [
+      { "key": "contextSummary", "type": "string", "description": "单集上下文摘要" },
+      { "key": "precedingSummary", "type": "string", "description": "前情摘要" },
+      { "key": "storyboardBeats", "type": "string[]", "description": "单集分镜节拍" },
+      {
+        "key": "worldState",
+        "type": "object",
+        "description": "单集世界状态",
+        "itemFields": [
+          { "key": "storyBibleTitle", "type": "string", "description": "故事圣经标题" },
+          { "key": "styleSummary", "type": "string", "description": "风格摘要" },
+          { "key": "targetMedium", "type": "string", "description": "目标媒介" }
+        ]
+      },
+      {
+        "key": "continuityState",
+        "type": "object",
+        "description": "连续性状态",
+        "itemFields": [
+          { "key": "lockedAssetIds", "type": "string[]", "description": "锁定资产 ID 列表" },
+          { "key": "previousEpisodeCount", "type": "number", "description": "前置剧集数量" }
+        ]
+      },
+      {
+        "key": "shots",
+        "type": "object[]",
+        "description": "结构化分镜",
+        "itemFields": [
+          { "key": "title", "type": "string", "description": "分镜标题" },
+          { "key": "summary", "type": "string", "description": "分镜摘要" },
+          { "key": "promptText", "type": "string", "description": "分镜视频提示词" },
+          { "key": "durationLabel", "type": "string", "description": "建议时长标签" },
+          { "key": "recommendedModelId", "type": "string", "description": "推荐视频模型 deploymentId" },
+          { "key": "recommendedModeId", "type": "string", "description": "推荐视频生成模式" },
+          { "key": "referenceAssetNames", "type": "string[]", "description": "推荐参考资产名列表" }
+        ]
+      }
+    ]
+  },
+  "artifactBindings": {
+    "workspaceNodes": [
+      { "target": "storyboard", "sourceField": "storyboardBeats", "transform": "joinLines" }
+    ],
+    "episodeContextRecord": [
+      { "target": "contextSummary", "sourceField": "contextSummary" },
+      { "target": "precedingSummary", "sourceField": "precedingSummary" }
+    ],
+    "episodeContext": [
+      { "target": "worldState", "sourceField": "worldState" },
+      { "target": "continuityState", "sourceField": "continuityState" },
+      { "target": "storyboardBeats", "sourceField": "storyboardBeats" },
+      { "target": "storyboardShots", "sourceField": "shots" }
+    ]
+  },
+  "reviewConfig": {
+    "business-review": { "profileId": "business-episode-expand-v1" },
+    "compliance-review": { "profileId": "compliance-default-v1" }
+  }
+}

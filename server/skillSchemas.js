@@ -1,4 +1,22 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { evaluateReviewProfileConfig, getReviewProfile } from './reviewRegistry.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.join(__dirname, '..');
+const SEEDANCE_SKILLS_ROOT = path.join(REPO_ROOT, 'Seedance 2.0 AI 分镜师团队', 'skills');
+const SUPPORTED_OUTPUT_FIELD_TYPES = new Set(['string', 'number', 'boolean', 'string[]', 'object', 'object[]']);
+const SUPPORTED_ARTIFACT_BINDING_GROUPS = new Set([
+  'workspaceNodes',
+  'episodeContextRecord',
+  'episodeContext',
+  'storyBible',
+  'assetRecords',
+  'setupMetadata',
+]);
+const SUPPORTED_ARTIFACT_TRANSFORMS = new Set(['identity', 'joinLines']);
 
 function asString(value) {
   return String(value || '').trim();
@@ -47,19 +65,19 @@ function describeField(field, depth = 0) {
   return [line, ...nested];
 }
 
-function getValueAtPath(source, path) {
-  if (!path || path === '$output') {
+function getValueAtPath(source, pathValue) {
+  if (!pathValue || pathValue === '$output') {
     return source;
   }
 
-  return String(path)
+  return String(pathValue)
     .split('.')
     .filter(Boolean)
     .reduce((current, key) => (current && typeof current === 'object' ? current[key] : undefined), source);
 }
 
-function setValueAtPath(target, path, value) {
-  const keys = String(path || '')
+function setValueAtPath(target, pathValue, value) {
+  const keys = String(pathValue || '')
     .split('.')
     .filter(Boolean);
   if (keys.length === 0) {
@@ -151,292 +169,149 @@ function normalizeFieldValue(field, rawValue, fallbackValue) {
   return rawValue ?? fallbackValue;
 }
 
-export const SKILL_SCHEMAS = [
-  {
-    id: 'seedance-director-core-v1',
-    version: '1.0.0',
-    stageKind: 'script_decompose',
-    systemInstruction:
-      '你是项目导演，请把长剧本拆解为稳定的项目圣经，并输出严格 JSON。',
-    promptBlocks: [
-      { id: 'projectTitle', label: '项目标题', template: '项目标题：{{projectTitle}}', requiredKeys: ['projectTitle'] },
-      { id: 'targetMedium', label: '目标媒介', template: '目标媒介：{{targetMedium}}', requiredKeys: ['targetMedium'] },
-      { id: 'aspectRatio', label: '画幅比例', template: '画幅比例：{{aspectRatio}}', requiredKeys: ['aspectRatio'] },
-      { id: 'styleSummary', label: '整体风格', template: '整体风格：{{styleSummary}}', requiredKeys: ['styleSummary'] },
-      { id: 'globalPrompts', label: '全局提示', template: '全局提示：{{globalPrompts}}', requiredKeys: ['globalPrompts'] },
-      { id: 'skillMethodology', label: '技能方法', template: '技能方法：{{skillMethodology}}', requiredKeys: ['skillMethodology'] },
-      { id: 'scriptText', label: '原始剧本', template: '原始剧本：\n{{scriptText}}', requiredKeys: ['scriptText'] },
-    ],
-    outputContract: {
-      format: 'json',
-      fields: [
-        { key: 'title', type: 'string', description: '项目标题' },
-        { key: 'logline', type: 'string', description: '项目一句话概述' },
-        { key: 'summary', type: 'string', description: '项目整体摘要' },
-        { key: 'worldRules', type: 'string[]', description: '世界规则' },
-        { key: 'continuityRules', type: 'string[]', description: '连续性规则' },
-        {
-          key: 'characters',
-          type: 'object[]',
-          description: '角色清单',
-          itemFields: [
-            { key: 'name', type: 'string', description: '角色名' },
-            { key: 'description', type: 'string', description: '角色描述' },
-          ],
-        },
-        {
-          key: 'scenes',
-          type: 'object[]',
-          description: '场景清单',
-          itemFields: [
-            { key: 'name', type: 'string', description: '场景名' },
-            { key: 'description', type: 'string', description: '场景描述' },
-          ],
-        },
-        {
-          key: 'props',
-          type: 'object[]',
-          description: '道具清单',
-          itemFields: [
-            { key: 'name', type: 'string', description: '道具名' },
-            { key: 'description', type: 'string', description: '道具描述' },
-          ],
-        },
-        {
-          key: 'episodes',
-          type: 'object[]',
-          description: '剧集壳子',
-          itemFields: [
-            { key: 'episodeNumber', type: 'number', description: '集数' },
-            { key: 'title', type: 'string', description: '集标题' },
-            { key: 'synopsis', type: 'string', description: '集概述' },
-            { key: 'sourceText', type: 'string', description: '对应原始文本' },
-          ],
-        },
-      ],
-    },
-    artifactBindings: {
-      storyBible: [
-        { target: 'title', sourceField: 'title' },
-        { target: 'logline', sourceField: 'logline' },
-        { target: 'summary', sourceField: 'summary' },
-        { target: 'worldRules', sourceField: 'worldRules' },
-        { target: 'continuityRules', sourceField: 'continuityRules' },
-        { target: 'characters', sourceField: 'characters' },
-        { target: 'scenes', sourceField: 'scenes' },
-        { target: 'props', sourceField: 'props' },
-        { target: 'episodes', sourceField: 'episodes' },
-      ],
-    },
-    reviewConfig: {
-      'business-review': { profileId: 'business-script-decompose-v1' },
-      'compliance-review': { profileId: 'compliance-default-v1' },
-    },
-  },
-  {
-    id: 'seedance-episode-expand-core-v1',
-    version: '1.0.0',
-    stageKind: 'episode_expand',
-    systemInstruction:
-      '你是单集导演，请把当前单集扩写为可执行的上下文包与分镜节拍，并输出严格 JSON。',
-    promptBlocks: [
-      { id: 'projectTitle', label: '项目标题', template: '项目标题：{{projectTitle}}', requiredKeys: ['projectTitle'] },
-      { id: 'storySummary', label: '项目摘要', template: '项目摘要：{{storySummary}}', requiredKeys: ['storySummary'] },
-      { id: 'episodeTitle', label: '当前单集', template: '当前单集：{{episodeTitle}}', requiredKeys: ['episodeTitle'] },
-      { id: 'episodeSynopsis', label: '单集梗概', template: '单集梗概：{{episodeSynopsis}}', requiredKeys: ['episodeSynopsis'] },
-      { id: 'previousEpisodeSummary', label: '前情摘要', template: '前情摘要：{{previousEpisodeSummary}}', requiredKeys: ['previousEpisodeSummary'] },
-      { id: 'lockedAssetSummary', label: '锁定资产', template: '锁定资产：{{lockedAssetSummary}}', requiredKeys: ['lockedAssetSummary'] },
-      { id: 'skillMethodology', label: '技能方法', template: '技能方法：{{skillMethodology}}', requiredKeys: ['skillMethodology'] },
-    ],
-    outputContract: {
-      format: 'json',
-      fields: [
-        { key: 'contextSummary', type: 'string', description: '单集上下文摘要' },
-        { key: 'precedingSummary', type: 'string', description: '前情摘要' },
-        { key: 'storyboardBeats', type: 'string[]', description: '单集分镜节拍' },
-        {
-          key: 'worldState',
-          type: 'object',
-          description: '单集世界状态',
-          itemFields: [
-            { key: 'storyBibleTitle', type: 'string', description: '故事圣经标题' },
-            { key: 'styleSummary', type: 'string', description: '风格摘要' },
-            { key: 'targetMedium', type: 'string', description: '目标媒介' },
-          ],
-        },
-        {
-          key: 'continuityState',
-          type: 'object',
-          description: '连续性状态',
-          itemFields: [
-            { key: 'lockedAssetIds', type: 'string[]', description: '锁定资产 ID 列表' },
-            { key: 'previousEpisodeCount', type: 'number', description: '前置剧集数量' },
-          ],
-        },
-        {
-          key: 'shots',
-          type: 'object[]',
-          description: '结构化分镜',
-          itemFields: [
-            { key: 'title', type: 'string', description: '分镜标题' },
-            { key: 'summary', type: 'string', description: '分镜摘要' },
-            { key: 'promptText', type: 'string', description: '分镜视频提示词' },
-            { key: 'durationLabel', type: 'string', description: '建议时长标签' },
-            { key: 'recommendedModelId', type: 'string', description: '推荐视频模型 deploymentId' },
-            { key: 'recommendedModeId', type: 'string', description: '推荐视频生成模式' },
-            { key: 'referenceAssetNames', type: 'string[]', description: '推荐参考资产名列表' },
-          ],
-        },
-      ],
-    },
-    artifactBindings: {
-      workspaceNodes: [
-        { target: 'storyboard', sourceField: 'storyboardBeats', transform: 'joinLines' },
-      ],
-      episodeContextRecord: [
-        { target: 'contextSummary', sourceField: 'contextSummary' },
-        { target: 'precedingSummary', sourceField: 'precedingSummary' },
-      ],
-      episodeContext: [
-        { target: 'worldState', sourceField: 'worldState' },
-        { target: 'continuityState', sourceField: 'continuityState' },
-        { target: 'storyboardBeats', sourceField: 'storyboardBeats' },
-        { target: 'storyboardShots', sourceField: 'shots' },
-      ],
-    },
-    reviewConfig: {
-      'business-review': { profileId: 'business-episode-expand-v1' },
-      'compliance-review': { profileId: 'compliance-default-v1' },
-    },
-  },
-  {
-    id: 'seedance-asset-design-core-v1',
-    version: '1.0.0',
-    stageKind: 'asset_design',
-    systemInstruction:
-      '你是资产设计师，请把项目圣经整理为稳定的 canonical assets，并输出严格 JSON。',
-    promptBlocks: [
-      { id: 'projectTitle', label: '项目标题', template: '项目标题：{{projectTitle}}', requiredKeys: ['projectTitle'] },
-      { id: 'storySummary', label: '项目摘要', template: '项目摘要：{{storySummary}}', requiredKeys: ['storySummary'] },
-      { id: 'styleSummary', label: '整体风格', template: '整体风格：{{styleSummary}}', requiredKeys: ['styleSummary'] },
-      { id: 'skillMethodology', label: '技能方法', template: '技能方法：{{skillMethodology}}', requiredKeys: ['skillMethodology'] },
-    ],
-    outputContract: {
-      format: 'json',
-      fields: [
-        {
-          key: 'assets',
-          type: 'object[]',
-          description: '结构化资产列表',
-          itemFields: [
-            { key: 'type', type: 'string', description: '资产类型' },
-            { key: 'name', type: 'string', description: '资产名称' },
-            { key: 'description', type: 'string', description: '资产描述' },
-            { key: 'promptText', type: 'string', description: '主提示词' },
-            { key: 'previewHint', type: 'string', description: '预览提示' },
-          ],
-        },
-      ],
-    },
-    artifactBindings: {
-      assetRecords: [
-        { target: 'assets', sourceField: 'assets' },
-      ],
-    },
-    reviewConfig: {
-      'business-review': { profileId: 'business-asset-design-v1' },
-      'compliance-review': { profileId: 'compliance-default-v1' },
-    },
-  },
-  {
-    id: 'seedance-image-prompt-core-v1',
-    version: '1.0.0',
-    stageKind: 'asset_design',
-    systemInstruction:
-      '你是资产提示词设计师，请为指定资产生成可直接用于图片模型的主提示词，并输出严格 JSON。',
-    promptBlocks: [
-      { id: 'projectTitle', label: '项目标题', template: '项目标题：{{projectTitle}}', requiredKeys: ['projectTitle'] },
-      { id: 'storySummary', label: '项目摘要', template: '项目摘要：{{storySummary}}', requiredKeys: ['storySummary'] },
-      { id: 'styleSummary', label: '整体风格', template: '整体风格：{{styleSummary}}', requiredKeys: ['styleSummary'] },
-      { id: 'assetType', label: '资产类型', template: '资产类型：{{assetType}}', requiredKeys: ['assetType'] },
-      { id: 'assetName', label: '资产名称', template: '资产名称：{{assetName}}', requiredKeys: ['assetName'] },
-      { id: 'assetDescription', label: '资产描述', template: '资产描述：{{assetDescription}}', requiredKeys: ['assetDescription'] },
-      { id: 'skillMethodology', label: '技能方法', template: '技能方法：{{skillMethodology}}', requiredKeys: ['skillMethodology'] },
-    ],
-    outputContract: {
-      format: 'json',
-      fields: [
-        { key: 'prompt', type: 'string', description: '图片生成主提示词' },
-      ],
-    },
-    reviewConfig: {
-      'business-review': { profileId: 'business-image-prompt-v1' },
-      'compliance-review': { profileId: 'compliance-default-v1' },
-    },
-  },
-  {
-    id: 'seedance-storyboard-core-v1',
-    version: '1.0.0',
-    stageKind: 'video_prompt_generate',
-    systemInstruction:
-      '你是分镜导演，请把单集上下文整理为视频提示词、分镜节拍与配音提示词，并输出严格 JSON。',
-    promptBlocks: [
-      { id: 'projectTitle', label: '项目标题', template: '项目标题：{{projectTitle}}', requiredKeys: ['projectTitle'] },
-      { id: 'episodeTitle', label: '当前单集', template: '当前单集：{{episodeTitle}}', requiredKeys: ['episodeTitle'] },
-      { id: 'episodeContextSummary', label: '单集上下文', template: '单集上下文：{{episodeContextSummary}}', requiredKeys: ['episodeContextSummary'] },
-      { id: 'precedingSummary', label: '前情摘要', template: '前情摘要：{{precedingSummary}}', requiredKeys: ['precedingSummary'] },
-      { id: 'styleSummary', label: '整体风格', template: '整体风格：{{styleSummary}}', requiredKeys: ['styleSummary'] },
-      { id: 'lockedAssetSummary', label: '锁定资产', template: '锁定资产：{{lockedAssetSummary}}', requiredKeys: ['lockedAssetSummary'] },
-      { id: 'continuitySummary', label: '连续性状态', template: '连续性状态：{{continuitySummary}}', requiredKeys: ['continuitySummary'] },
-      {
-        id: 'promptRecipe',
-        label: '提示词配方',
-        template: '提示词配方：{{promptRecipeName}}；说明：{{promptRecipeDescription}}',
-        requiredKeys: ['promptRecipeName'],
-      },
-      { id: 'skillMethodology', label: '技能方法', template: '技能方法：{{skillMethodology}}', requiredKeys: ['skillMethodology'] },
-    ],
-    outputContract: {
-      format: 'json',
-      fields: [
-        { key: 'prompt', type: 'string', description: '主视频提示词' },
-        { key: 'beatSheet', type: 'string[]', description: '分镜节拍列表' },
-        { key: 'voicePrompt', type: 'string', description: '配音提示词' },
-        {
-          key: 'shots',
-          type: 'object[]',
-          description: '结构化分镜',
-          itemFields: [
-            { key: 'title', type: 'string', description: '分镜标题' },
-            { key: 'summary', type: 'string', description: '分镜摘要' },
-            { key: 'promptText', type: 'string', description: '分镜视频提示词' },
-            { key: 'durationLabel', type: 'string', description: '建议时长标签' },
-            { key: 'recommendedModelId', type: 'string', description: '推荐视频模型 deploymentId' },
-            { key: 'recommendedModeId', type: 'string', description: '推荐视频生成模式' },
-            { key: 'referenceAssetNames', type: 'string[]', description: '推荐参考资产名列表' },
-          ],
-        },
-      ],
-    },
-    artifactBindings: {
-      workspaceNodes: [
-        { target: 'prompt', sourceField: 'prompt' },
-        { target: 'storyboard', sourceField: 'beatSheet', transform: 'joinLines' },
-      ],
-      episodeContext: [
-        { target: 'storyboardBeats', sourceField: 'beatSheet' },
-        { target: 'storyboardShots', sourceField: 'shots' },
-      ],
-    },
-    reviewConfig: {
-      'business-review': { profileId: 'business-video-prompt-v1' },
-      'compliance-review': { profileId: 'compliance-default-v1' },
-    },
-  },
-];
+function walkSchemaFiles(rootDir) {
+  if (!fs.existsSync(rootDir)) {
+    return [];
+  }
+
+  const results = [];
+  const queue = [rootDir];
+
+  while (queue.length > 0) {
+    const currentDir = queue.shift();
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    entries.forEach((entry) => {
+      if (entry.name.startsWith('.')) {
+        return;
+      }
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(absolutePath);
+        return;
+      }
+      if (path.extname(entry.name).toLowerCase() === '.json' && absolutePath.includes(`${path.sep}schemas${path.sep}`)) {
+        results.push(absolutePath);
+      }
+    });
+  }
+
+  return results.sort((left, right) => left.localeCompare(right));
+}
+
+function validateSchema(schemaPath, schema) {
+  const requiredStringFields = ['id', 'version', 'stageKind', 'systemInstruction'];
+  requiredStringFields.forEach((field) => {
+    if (!asString(schema?.[field])) {
+      throw new Error(`Skill schema ${schemaPath} 缺少必填字段 ${field}。`);
+    }
+  });
+
+  if (!Array.isArray(schema?.promptBlocks)) {
+    throw new Error(`Skill schema ${schemaPath} 缺少 promptBlocks 数组。`);
+  }
+
+  if (!schema?.outputContract || schema.outputContract.format !== 'json' || !Array.isArray(schema.outputContract.fields)) {
+    throw new Error(`Skill schema ${schemaPath} 缺少合法的 outputContract。`);
+  }
+
+  if (!/^\d+\.\d+\.\d+$/.test(asString(schema.version))) {
+    throw new Error(`Skill schema ${schemaPath} 的 version 必须是 semver 形式。`);
+  }
+
+  const promptBlockIds = new Set();
+  cleanArray(schema.promptBlocks).forEach((block) => {
+    if (!asString(block.id) || !asString(block.label) || !asString(block.template)) {
+      throw new Error(`Skill schema ${schemaPath} 存在不完整的 promptBlock。`);
+    }
+    if (promptBlockIds.has(block.id)) {
+      throw new Error(`Skill schema ${schemaPath} 存在重复的 promptBlock id: ${block.id}。`);
+    }
+    promptBlockIds.add(block.id);
+    if (block.requiredKeys && !Array.isArray(block.requiredKeys)) {
+      throw new Error(`Skill schema ${schemaPath} 的 promptBlock ${block.id} requiredKeys 必须是数组。`);
+    }
+  });
+
+  const validateField = (field, parentKey = '') => {
+    if (!asString(field?.key) || !asString(field?.description) || !SUPPORTED_OUTPUT_FIELD_TYPES.has(asString(field?.type))) {
+      throw new Error(`Skill schema ${schemaPath} 的输出字段 ${parentKey || '<root>'} 定义不合法。`);
+    }
+    if (['object', 'object[]'].includes(field.type)) {
+      if (!Array.isArray(field.itemFields) || field.itemFields.length === 0) {
+        throw new Error(`Skill schema ${schemaPath} 的字段 ${field.key} 必须声明 itemFields。`);
+      }
+      const nestedKeys = new Set();
+      cleanArray(field.itemFields).forEach((itemField) => {
+        if (nestedKeys.has(itemField.key)) {
+          throw new Error(`Skill schema ${schemaPath} 的字段 ${field.key} 存在重复子字段 ${itemField.key}。`);
+        }
+        nestedKeys.add(itemField.key);
+        validateField(itemField, `${field.key}.${itemField.key}`);
+      });
+    }
+  };
+
+  const topLevelFieldKeys = new Set();
+  cleanArray(schema.outputContract.fields).forEach((field) => {
+    if (topLevelFieldKeys.has(field.key)) {
+      throw new Error(`Skill schema ${schemaPath} 存在重复的输出字段 ${field.key}。`);
+    }
+    topLevelFieldKeys.add(field.key);
+    validateField(field, field.key);
+  });
+
+  Object.entries(asObject(schema.artifactBindings)).forEach(([groupKey, bindings]) => {
+    if (!SUPPORTED_ARTIFACT_BINDING_GROUPS.has(groupKey)) {
+      throw new Error(`Skill schema ${schemaPath} 使用了未支持的 artifactBindings 分组 ${groupKey}。`);
+    }
+    cleanArray(bindings).forEach((binding) => {
+      if (!asString(binding?.target) || !asString(binding?.sourceField)) {
+        throw new Error(`Skill schema ${schemaPath} 的 artifact binding 缺少 target 或 sourceField。`);
+      }
+      if (binding.transform && !SUPPORTED_ARTIFACT_TRANSFORMS.has(asString(binding.transform))) {
+        throw new Error(`Skill schema ${schemaPath} 的 artifact binding 使用了未支持的 transform: ${binding.transform}。`);
+      }
+    });
+  });
+
+  Object.entries(asObject(schema.reviewConfig)).forEach(([policyId, config]) => {
+    if (!asString(policyId) || !asString(config?.profileId)) {
+      throw new Error(`Skill schema ${schemaPath} 的 reviewConfig 存在空策略或空 profileId。`);
+    }
+    if (!getReviewProfile(config.profileId)) {
+      throw new Error(`Skill schema ${schemaPath} 引用了不存在的 review profile: ${config.profileId}。`);
+    }
+  });
+}
+
+function hydrateSchema(schemaPath) {
+  const raw = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  validateSchema(schemaPath, raw);
+  return {
+    ...raw,
+    sourcePath: path.relative(REPO_ROOT, schemaPath).split(path.sep).join('/'),
+  };
+}
+
+export function loadSkillSchemas() {
+  const schemas = walkSchemaFiles(SEEDANCE_SKILLS_ROOT).map(hydrateSchema);
+  const seen = new Set();
+
+  schemas.forEach((schema) => {
+    if (seen.has(schema.id)) {
+      throw new Error(`发现重复的 skill schema id: ${schema.id}`);
+    }
+    seen.add(schema.id);
+  });
+
+  return schemas;
+}
+
+export const SKILL_SCHEMAS = loadSkillSchemas();
+const SKILL_SCHEMA_MAP = new Map(SKILL_SCHEMAS.map((item) => [item.id, item]));
 
 export function getSkillSchema(schemaId) {
-  return SKILL_SCHEMAS.find((item) => item.id === schemaId) || null;
+  return SKILL_SCHEMA_MAP.get(schemaId) || null;
 }
 
 export function renderSkillPromptBlocks(schema, values) {

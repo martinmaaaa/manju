@@ -22,6 +22,8 @@
 - `SkillPack`
   - `schemaId`
   - `schema`
+  - `assets`
+  - `references`
   - `promptRecipes`
 - `Review Registry`
   - `review rules`
@@ -41,9 +43,11 @@
 - `seedance-episode-director-v1` 已新增，`episode_expand` 已纳入 schema 驱动。
 - `image_prompt_generate` 已纳入 schema 驱动，补齐了资产链里的提示词阶段。
 - `SkillPack` 已升级为 capability 级 schema map，同一个 pack 可以挂多条 capability schema。
+- Seedance 官方技能目录已切到 `assets / references` 语义，并通过 manifest loader 进入注册表。
+- 官方 schema 已迁入各技能目录的 `schemas/`，不再继续手写在 `server/skillSchemas.js`。
 - review gate 已升级为 `review rule -> review profile -> review policy` 三层注册结构。
 - 单集工作台的 `shotStrip` 已优先消费结构化 `storyboardShots`。
 
 ## Next
 - 继续把 `capabilityEngine` 里各 capability 的通用上下文准备抽成更薄的一层调度器。
-- 基于 `Seedance 2.0 AI 分镜师团队` 源材料，继续把更多输出契约和审查标准内化进 schema。
+- 为 schema loader 增加更严格的字段 lint、版本校验和脚本入口约束。

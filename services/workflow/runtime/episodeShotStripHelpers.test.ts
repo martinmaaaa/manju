@@ -7,6 +7,8 @@ import {
   deleteEpisodeShotSlot,
   findSelectedEpisodeShot,
   formatShotDurationLabel,
+  getEpisodeShotStripTotalSeconds,
+  normalizeEpisodeShotStrip,
   renameEpisodeShotSlot,
   reorderEpisodeShotSlot,
   saveClipToEpisodeShotStrip,
@@ -58,6 +60,10 @@ describe('episodeShotStripHelpers', () => {
       durationLabel: formatShotDurationLabel(4),
       clip: null,
     });
+    expect(strip.slots.map((slot) => [slot.id, slot.startSeconds, slot.endSeconds])).toEqual([
+      ['ep-1-shot-1', 0, 4],
+      ['ep-1-shot-2', 4, 9],
+    ]);
   });
 
   it('preserves existing clips and manual slots while refreshing storyboard slots', () => {
@@ -226,5 +232,39 @@ describe('episodeShotStripHelpers', () => {
       recommendedModeId: 'all_references',
       referenceAssetNames: ['tai-zi', 'gong-lang'],
     });
+  });
+
+  it('normalizes strip timeline metadata and reports total seconds', () => {
+    const strip = normalizeEpisodeShotStrip({
+      selectedShotId: 'shot-2',
+      slots: [
+        {
+          id: 'shot-1',
+          source: 'storyboard',
+          title: '镜头1',
+          summary: '镜头1',
+          promptText: '镜头1',
+          order: 0,
+          durationLabel: '00:03',
+          clip: null,
+        },
+        {
+          id: 'shot-2',
+          source: 'storyboard',
+          title: '镜头2',
+          summary: '镜头2',
+          promptText: '镜头2',
+          order: 1,
+          durationLabel: '00:05',
+          clip: null,
+        },
+      ],
+    });
+
+    expect(strip.slots.map((slot) => [slot.id, slot.startSeconds, slot.endSeconds])).toEqual([
+      ['shot-1', 0, 3],
+      ['shot-2', 3, 8],
+    ]);
+    expect(getEpisodeShotStripTotalSeconds(strip)).toBe(8);
   });
 });

@@ -398,4 +398,36 @@
     box-shadow: 0 0 0 4px rgba(73, 200, 255, 0.08);
     background: rgba(10, 15, 28, 0.86);
   }
+
+  .workflow-flow .react-flow__renderer,
+  .workflow-flow .react-flow__pane {
+    background:
+      radial-gradient(circle at top, rgba(73, 200, 255, 0.08), transparent 30%),
+      radial-gradient(circle at right bottom, rgba(244, 114, 182, 0.06), transparent 26%),
+      linear-gradient(180deg, rgba(4, 6, 12, 1) 0%, rgba(7, 10, 18, 1) 100%);
+  }
+
+  .workflow-flow .react-flow__node {
+    background: transparent;
+    border: none;
+  }
+
+  .workflow-flow .react-flow__edge-path {
+    stroke-linecap: round;
+  }
+
+  .workflow-flow .react-flow__controls-button {
+    border-color: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.72);
+  }
+
+  .workflow-flow .react-flow__controls-button:hover {
+    background: rgba(115, 224, 255, 0.12);
+    color: #ffffff;
+  }
+
+  .workflow-flow .react-flow__attribution {
+    display: none;
+  }
 }

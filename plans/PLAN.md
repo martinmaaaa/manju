@@ -20,7 +20,7 @@
 - 新增核心注册模型：
   - `ModelDefinition { id, vendor, modality, capabilities, configSchema, adapter }`
   - `CapabilityDefinition { id, inputSchema, outputSchema, defaultModelId, allowedModelIds }`
-  - `SkillPack { id, stageKind, promptMethodology, templates, reviewPolicies }`
+  - `SkillPack { id, stageKind, promptMethodology, assets, references, reviewPolicies }`
 - 第一版能力固定包含：
   - `script_decompose`
   - `episode_expand`

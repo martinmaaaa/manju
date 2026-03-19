@@ -1,0 +1,25 @@
+{
+  "id": "seedance-image-prompt-core-v1",
+  "version": "1.0.0",
+  "stageKind": "asset_design",
+  "systemInstruction": "你是资产提示词设计师，请为指定资产生成可直接用于图片模型的主提示词，并输出严格 JSON。",
+  "promptBlocks": [
+    { "id": "projectTitle", "label": "项目标题", "template": "项目标题：{{projectTitle}}", "requiredKeys": ["projectTitle"] },
+    { "id": "storySummary", "label": "项目摘要", "template": "项目摘要：{{storySummary}}", "requiredKeys": ["storySummary"] },
+    { "id": "styleSummary", "label": "整体风格", "template": "整体风格：{{styleSummary}}", "requiredKeys": ["styleSummary"] },
+    { "id": "assetType", "label": "资产类型", "template": "资产类型：{{assetType}}", "requiredKeys": ["assetType"] },
+    { "id": "assetName", "label": "资产名称", "template": "资产名称：{{assetName}}", "requiredKeys": ["assetName"] },
+    { "id": "assetDescription", "label": "资产描述", "template": "资产描述：{{assetDescription}}", "requiredKeys": ["assetDescription"] },
+    { "id": "skillMethodology", "label": "技能方法", "template": "技能方法：{{skillMethodology}}", "requiredKeys": ["skillMethodology"] }
+  ],
+  "outputContract": {
+    "format": "json",
+    "fields": [
+      { "key": "prompt", "type": "string", "description": "图片生成主提示词" }
+    ]
+  },
+  "reviewConfig": {
+    "business-review": { "profileId": "business-image-prompt-v1" },
+    "compliance-review": { "profileId": "compliance-default-v1" }
+  }
+}

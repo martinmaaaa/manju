@@ -1,0 +1,38 @@
+{
+  "id": "seedance-asset-design-core-v1",
+  "version": "1.0.0",
+  "stageKind": "asset_design",
+  "systemInstruction": "你是资产设计师，请把项目圣经整理为稳定的 canonical assets，并输出严格 JSON。",
+  "promptBlocks": [
+    { "id": "projectTitle", "label": "项目标题", "template": "项目标题：{{projectTitle}}", "requiredKeys": ["projectTitle"] },
+    { "id": "storySummary", "label": "项目摘要", "template": "项目摘要：{{storySummary}}", "requiredKeys": ["storySummary"] },
+    { "id": "styleSummary", "label": "整体风格", "template": "整体风格：{{styleSummary}}", "requiredKeys": ["styleSummary"] },
+    { "id": "skillMethodology", "label": "技能方法", "template": "技能方法：{{skillMethodology}}", "requiredKeys": ["skillMethodology"] }
+  ],
+  "outputContract": {
+    "format": "json",
+    "fields": [
+      {
+        "key": "assets",
+        "type": "object[]",
+        "description": "结构化资产列表",
+        "itemFields": [
+          { "key": "type", "type": "string", "description": "资产类型" },
+          { "key": "name", "type": "string", "description": "资产名称" },
+          { "key": "description", "type": "string", "description": "资产描述" },
+          { "key": "promptText", "type": "string", "description": "主提示词" },
+          { "key": "previewHint", "type": "string", "description": "预览提示" }
+        ]
+      }
+    ]
+  },
+  "artifactBindings": {
+    "assetRecords": [
+      { "target": "assets", "sourceField": "assets" }
+    ]
+  },
+  "reviewConfig": {
+    "business-review": { "profileId": "business-asset-design-v1" },
+    "compliance-review": { "profileId": "compliance-default-v1" }
+  }
+}

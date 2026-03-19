@@ -1,0 +1,42 @@
+{
+  "id": "seedance-storyboard-v1",
+  "name": "Seedance Storyboard",
+  "stageKind": "video_prompt_generate",
+  "executionRole": "storyboard-artist",
+  "schemaId": "seedance-storyboard-core-v1",
+  "capabilitySchemaIds": {
+    "video_prompt_generate": "seedance-storyboard-core-v1",
+    "voice_prompt_generate": "seedance-storyboard-core-v1",
+    "storyboard_generate": "seedance-storyboard-core-v1"
+  },
+  "description": "把单集上下文整理成视频提示词、配音提示词和结构化分镜。",
+  "promptMethodology": "以单集上下文和锁定资产为基础，先出 beat，再出 shot，再收敛为视频提示词。",
+  "assets": {
+    "primaryOutput": "seedance-prompts",
+    "artifacts": ["storyboard_beats", "video_prompts", "voice_prompts"]
+  },
+  "references": {
+    "notes": ["references 目录包含多参提示词示例和方法论补充说明。"]
+  },
+  "scripts": {
+    "entries": []
+  },
+  "reviewPolicies": ["business-review", "compliance-review"],
+  "promptRecipes": [
+    {
+      "id": "seedance-cinematic-v1",
+      "name": "电影感",
+      "description": "强调镜头语言、构图和镜头推进。"
+    },
+    {
+      "id": "seedance-emotional-beat-v1",
+      "name": "情绪优先",
+      "description": "强调情绪节拍和人物关系变化。"
+    },
+    {
+      "id": "seedance-fast-cut-v1",
+      "name": "快切节奏",
+      "description": "强调镜头切换和短促节拍。"
+    }
+  ]
+}

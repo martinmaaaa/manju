@@ -25,6 +25,7 @@ import {
   normalizeSkillOutputWithContract,
   renderSkillPromptBlocks,
 } from './skillSchemas.js';
+import { runSkillPackScripts } from './skillpackScriptRuntime.js';
 import {
   createCapabilityRun,
   createOrUpdateAsset,
@@ -264,18 +265,78 @@ function buildImagePromptFallback({ project, asset, skillPack }) {
     .join('\n');
 }
 
-function buildSkillPromptPackage({ schema, values }) {
+function buildSkillResourceSections(skillPack) {
+  const assetSections = cleanArray(skillPack?.assets?.documents)
+    .slice(0, 3)
+    .map((document) => {
+      const title = String(document?.title || '').trim() || '未命名资源';
+      const content = String(document?.content || '').trim();
+      return content ? `技能资源：${title}\n${content}` : '';
+    })
+    .filter(Boolean);
+
+  const referenceSections = cleanArray(skillPack?.references?.documents)
+    .slice(0, 3)
+    .map((document) => {
+      const title = String(document?.title || '').trim() || '未命名参考';
+      const previewText = String(document?.previewText || document?.summary || '').trim();
+      return previewText ? `参考资料：${title}\n${previewText}` : '';
+    })
+    .filter(Boolean);
+
+  return [...assetSections, ...referenceSections];
+}
+
+function buildSkillPromptPackage({ schema, values, skillPack }) {
   const promptBlocks = renderSkillPromptBlocks(schema, values);
   const outputInstruction = describeSkillOutputContract(schema);
+  const resourceSections = buildSkillResourceSections(skillPack);
+  const extraPromptSections = cleanArray(values?.extraPromptSections);
 
   return {
     systemInstruction: schema?.systemInstruction || '请输出结构化 JSON。',
     prompt: [
       ...promptBlocks,
+      ...resourceSections,
+      ...extraPromptSections,
       outputInstruction ? `请输出 JSON，字段要求如下：\n${outputInstruction}` : '',
     ]
       .filter(Boolean)
       .join('\n\n'),
+  };
+}
+
+async function applySkillScriptPhase({ skillPack, phase, capabilityId, stageKind, payload, context }) {
+  const result = await runSkillPackScripts({
+    skillPack,
+    phase,
+    capabilityId,
+    stageKind,
+    payload,
+    context,
+  });
+
+  return {
+    payload: result.payload,
+    scriptExecutions: result.executions,
+    scriptMetadata: result.metadata,
+  };
+}
+
+function mergeSkillScriptDetails(basePayload, phaseResult) {
+  const payload = asObject(basePayload);
+  const nextPayload = asObject(phaseResult?.payload);
+  return {
+    ...payload,
+    ...nextPayload,
+    skillScriptExecutions: [
+      ...cleanArray(payload.skillScriptExecutions),
+      ...cleanArray(phaseResult?.scriptExecutions),
+    ],
+    skillScriptMetadata: {
+      ...asObject(payload.skillScriptMetadata),
+      ...asObject(phaseResult?.scriptMetadata),
+    },
   };
 }
 
@@ -387,9 +448,12 @@ async function runScriptDecompose({ project, latestScriptSource, model, skillPac
     scriptText: latestScriptSource.contentText,
     setup,
   });
-  const promptPackage = buildSkillPromptPackage({
-    schema,
-    values: {
+  const beforePromptScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'before_prompt',
+    capabilityId: 'script_decompose',
+    stageKind: 'script_decompose',
+    payload: {
       projectTitle: project.title,
       targetMedium: setup.targetMedium,
       aspectRatio: setup.aspectRatio,
@@ -398,6 +462,12 @@ async function runScriptDecompose({ project, latestScriptSource, model, skillPac
       skillMethodology: resolvedSkillPack?.promptMethodology || '',
       scriptText: latestScriptSource.contentText,
     },
+    context: { projectId: project.id, modelId: model.deploymentId },
+  });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    skillPack: resolvedSkillPack,
+    values: beforePromptScripts.payload,
   });
 
   const storyBible = await maybeGenerateStructuredOutput({
@@ -411,7 +481,15 @@ async function runScriptDecompose({ project, latestScriptSource, model, skillPac
     }),
     fallbackFactory: () => heuristicBible,
   });
-  const directorArtifacts = applySkillArtifactBindings(schema?.artifactBindings, storyBible);
+  const afterNormalizeScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'after_normalize',
+    capabilityId: 'script_decompose',
+    stageKind: 'script_decompose',
+    payload: storyBible,
+    context: { projectId: project.id, modelId: model.deploymentId },
+  });
+  const directorArtifacts = applySkillArtifactBindings(schema?.artifactBindings, afterNormalizeScripts.payload);
   const normalizedStoryBible = {
     ...heuristicBible,
     ...(directorArtifacts.storyBibleValues || {}),
@@ -439,7 +517,13 @@ async function runScriptDecompose({ project, latestScriptSource, model, skillPac
     storyBible: normalizedStoryBible,
     createdAssetCount: createdAssets.length,
     createdEpisodeCount: episodes.length,
+    skillPackId: resolvedSkillPack?.id || null,
     skillSchemaId: schema?.id || null,
+    skillScriptExecutions: [...beforePromptScripts.scriptExecutions, ...afterNormalizeScripts.scriptExecutions],
+    skillScriptMetadata: {
+      ...beforePromptScripts.scriptMetadata,
+      ...afterNormalizeScripts.scriptMetadata,
+    },
   };
 }
 
@@ -471,9 +555,12 @@ async function runEpisodeExpand({ project, episode, model, skillPack }) {
     episode,
     heuristicContext,
   });
-  const promptPackage = buildSkillPromptPackage({
-    schema,
-    values: {
+  const beforePromptScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'before_prompt',
+    capabilityId: 'episode_expand',
+    stageKind: 'episode_expand',
+    payload: {
       projectTitle: project.title,
       storySummary: project.storyBible?.summary || '',
       episodeTitle: episode.title,
@@ -486,6 +573,12 @@ async function runEpisodeExpand({ project, episode, model, skillPack }) {
         : '无锁定资产',
       skillMethodology: resolvedSkillPack?.promptMethodology || '',
     },
+    context: { projectId: project.id, episodeId: episode.id, modelId: model.deploymentId },
+  });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    skillPack: resolvedSkillPack,
+    values: beforePromptScripts.payload,
   });
   const expanded = await maybeGenerateStructuredOutput({
     model,
@@ -498,7 +591,15 @@ async function runEpisodeExpand({ project, episode, model, skillPack }) {
     }),
     fallbackFactory: () => fallback,
   });
-  const episodeArtifacts = applySkillArtifactBindings(schema?.artifactBindings, expanded);
+  const afterNormalizeScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'after_normalize',
+    capabilityId: 'episode_expand',
+    stageKind: 'episode_expand',
+    payload: expanded,
+    context: { projectId: project.id, episodeId: episode.id, modelId: model.deploymentId },
+  });
+  const episodeArtifacts = applySkillArtifactBindings(schema?.artifactBindings, afterNormalizeScripts.payload);
   const promptRecipeId = project.setup?.stageConfig?.video_prompt_generate?.promptRecipeId || 'seedance-cinematic-v1';
   const workspaceSeed = buildEpisodeWorkspaceSeed({
     episode,
@@ -560,7 +661,13 @@ async function runEpisodeExpand({ project, episode, model, skillPack }) {
       precedingSummary,
     },
     workspaceSeed,
+    skillPackId: resolvedSkillPack?.id || null,
     skillSchemaId: schema?.id || null,
+    skillScriptExecutions: [...beforePromptScripts.scriptExecutions, ...afterNormalizeScripts.scriptExecutions],
+    skillScriptMetadata: {
+      ...beforePromptScripts.scriptMetadata,
+      ...afterNormalizeScripts.scriptMetadata,
+    },
   };
 }
 
@@ -594,14 +701,23 @@ async function runAssetExtract({ project, model, skillPack, user }) {
       promptText: inferAssetPrompt({ asset: item, project, skillPack: resolvedSkillPack }),
       previewHint: 'prop',
     })));
-  const promptPackage = buildSkillPromptPackage({
-    schema,
-    values: {
+  const beforePromptScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'before_prompt',
+    capabilityId: 'asset_extract',
+    stageKind: 'asset_design',
+    payload: {
       projectTitle: project.title,
       storySummary: project.storyBible?.summary || '',
       styleSummary: summarizeStyle(project),
       skillMethodology: resolvedSkillPack?.promptMethodology || '',
     },
+    context: { projectId: project.id, modelId: model.deploymentId },
+  });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    skillPack: resolvedSkillPack,
+    values: beforePromptScripts.payload,
   });
 
   const assetPack = await maybeGenerateStructuredOutput({
@@ -615,7 +731,15 @@ async function runAssetExtract({ project, model, skillPack, user }) {
     }),
     fallbackFactory: () => ({ assets: fallbackAssets }),
   });
-  const assetArtifacts = applySkillArtifactBindings(schema?.artifactBindings, assetPack);
+  const afterNormalizeScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'after_normalize',
+    capabilityId: 'asset_extract',
+    stageKind: 'asset_design',
+    payload: assetPack,
+    context: { projectId: project.id, modelId: model.deploymentId },
+  });
+  const assetArtifacts = applySkillArtifactBindings(schema?.artifactBindings, afterNormalizeScripts.payload);
   const normalizedAssetPack = {
     assets: cleanArray(assetArtifacts.assetRecordValues?.assets || assetPack.assets),
   };
@@ -638,7 +762,13 @@ async function runAssetExtract({ project, model, skillPack, user }) {
 
   return {
     assets: created.map((entry) => entry.asset),
+    skillPackId: resolvedSkillPack?.id || null,
     skillSchemaId: schema?.id || null,
+    skillScriptExecutions: [...beforePromptScripts.scriptExecutions, ...afterNormalizeScripts.scriptExecutions],
+    skillScriptMetadata: {
+      ...beforePromptScripts.scriptMetadata,
+      ...afterNormalizeScripts.scriptMetadata,
+    },
   };
 }
 
@@ -662,9 +792,12 @@ async function runImagePromptGenerate({ project, model, skillPack, inputPayload 
     asset: draftAsset,
     skillPack: resolvedSkillPack,
   });
-  const promptPackage = buildSkillPromptPackage({
-    schema,
-    values: {
+  const beforePromptScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'before_prompt',
+    capabilityId: 'image_prompt_generate',
+    stageKind: 'asset_design',
+    payload: {
       projectTitle: project.title,
       storySummary: project.storyBible?.summary || '',
       styleSummary: summarizeStyle(project),
@@ -673,6 +806,12 @@ async function runImagePromptGenerate({ project, model, skillPack, inputPayload 
       assetDescription: draftAsset.description || project.storyBible?.summary || '为项目生成统一风格图片提示词。',
       skillMethodology: resolvedSkillPack?.promptMethodology || '',
     },
+    context: { projectId: project.id, assetId: storedAsset?.id || null, modelId: model.deploymentId },
+  });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    skillPack: resolvedSkillPack,
+    values: beforePromptScripts.payload,
   });
 
   const output = await maybeGenerateStructuredOutput({
@@ -686,11 +825,25 @@ async function runImagePromptGenerate({ project, model, skillPack, inputPayload 
     }),
     fallbackFactory: () => ({ prompt: fallbackPrompt }),
   });
+  const afterNormalizeScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'after_normalize',
+    capabilityId: 'image_prompt_generate',
+    stageKind: 'asset_design',
+    payload: output,
+    context: { projectId: project.id, assetId: storedAsset?.id || null, modelId: model.deploymentId },
+  });
 
   return {
-    prompt: output.prompt,
+    prompt: afterNormalizeScripts.payload.prompt,
     assetId: storedAsset?.id || null,
+    skillPackId: resolvedSkillPack?.id || null,
     skillSchemaId: schema?.id || null,
+    skillScriptExecutions: [...beforePromptScripts.scriptExecutions, ...afterNormalizeScripts.scriptExecutions],
+    skillScriptMetadata: {
+      ...beforePromptScripts.scriptMetadata,
+      ...afterNormalizeScripts.scriptMetadata,
+    },
   };
 }
 
@@ -766,9 +919,12 @@ async function runVideoPromptGenerate({ project, episode, model, skillPack, inpu
     || 'seedance-cinematic-v1';
   const recipe = resolvedSkillPack?.promptRecipes?.find((item) => item.id === recipeId)
     || getSkillPack('seedance-storyboard-v1')?.promptRecipes?.find((item) => item.id === recipeId);
-  const promptPackage = buildSkillPromptPackage({
-    schema,
-    values: {
+  const beforePromptScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'before_prompt',
+    capabilityId: 'video_prompt_generate',
+    stageKind: 'video_prompt_generate',
+    payload: {
       projectTitle: project.title,
       episodeTitle: episode.title,
       episodeContextSummary: context?.contextSummary || episode.synopsis,
@@ -780,6 +936,12 @@ async function runVideoPromptGenerate({ project, episode, model, skillPack, inpu
       promptRecipeDescription: recipe?.description || '',
       skillMethodology: resolvedSkillPack?.promptMethodology || '',
     },
+    context: { projectId: project.id, episodeId: episode.id, promptRecipeId: recipeId, modelId: model.deploymentId },
+  });
+  const promptPackage = buildSkillPromptPackage({
+    schema,
+    skillPack: resolvedSkillPack,
+    values: beforePromptScripts.payload,
   });
   const fallback = buildStoryboardFallbackBundle({
     project,
@@ -800,13 +962,21 @@ async function runVideoPromptGenerate({ project, episode, model, skillPack, inpu
     }),
     fallbackFactory: () => fallback,
   });
+  const afterNormalizeScripts = await applySkillScriptPhase({
+    skillPack: resolvedSkillPack,
+    phase: 'after_normalize',
+    capabilityId: 'video_prompt_generate',
+    stageKind: 'video_prompt_generate',
+    payload: promptPayload,
+    context: { projectId: project.id, episodeId: episode.id, promptRecipeId: recipeId, modelId: model.deploymentId },
+  });
   const videoModel = getModel(project.setup?.stageConfig?.video_generate?.modelId);
-  promptPayload.shots = enrichStoryboardShots(promptPayload.shots, {
+  afterNormalizeScripts.payload.shots = enrichStoryboardShots(afterNormalizeScripts.payload.shots, {
     videoModel,
     lockedAssets,
   });
   const artifactBindings = applySkillArtifactBindings(schema?.artifactBindings, {
-    ...promptPayload,
+    ...afterNormalizeScripts.payload,
     promptRecipeId: recipeId,
   });
 
@@ -846,12 +1016,18 @@ async function runVideoPromptGenerate({ project, episode, model, skillPack, inpu
   }
 
   return {
-    prompt: promptPayload.prompt,
+    prompt: afterNormalizeScripts.payload.prompt,
     promptRecipeId: recipeId,
-    beatSheet: promptPayload.beatSheet,
-    voicePrompt: promptPayload.voicePrompt,
-    shots: promptPayload.shots,
+    beatSheet: afterNormalizeScripts.payload.beatSheet,
+    voicePrompt: afterNormalizeScripts.payload.voicePrompt,
+    shots: afterNormalizeScripts.payload.shots,
+    skillPackId: resolvedSkillPack?.id || null,
     skillSchemaId: schema?.id || null,
+    skillScriptExecutions: [...beforePromptScripts.scriptExecutions, ...afterNormalizeScripts.scriptExecutions],
+    skillScriptMetadata: {
+      ...beforePromptScripts.scriptMetadata,
+      ...afterNormalizeScripts.scriptMetadata,
+    },
   };
 }
 
@@ -870,7 +1046,10 @@ async function runVoicePromptGenerate({ project, episode, model, skillPack, inpu
     promptRecipeId: promptBundle.promptRecipeId,
     videoPrompt: promptBundle.prompt,
     shots: promptBundle.shots,
+    skillPackId: promptBundle.skillPackId || null,
     skillSchemaId: promptBundle.skillSchemaId,
+    skillScriptExecutions: cleanArray(promptBundle.skillScriptExecutions),
+    skillScriptMetadata: asObject(promptBundle.skillScriptMetadata),
   };
 }
 
@@ -889,7 +1068,10 @@ async function runStoryboardGenerate({ project, episode, model, skillPack, input
     promptRecipeId: promptBundle.promptRecipeId,
     prompt: promptBundle.prompt,
     shots: promptBundle.shots,
+    skillPackId: promptBundle.skillPackId || null,
     skillSchemaId: promptBundle.skillSchemaId,
+    skillScriptExecutions: cleanArray(promptBundle.skillScriptExecutions),
+    skillScriptMetadata: asObject(promptBundle.skillScriptMetadata),
   };
 }
 
@@ -1132,8 +1314,23 @@ export async function runCapability({
       };
     }
 
+    const resolvedOutputSkillPack = getSkillPack(outputPayload.skillPackId) || skillPack || null;
+    const beforeReviewScripts = await applySkillScriptPhase({
+      skillPack: resolvedOutputSkillPack,
+      phase: 'before_review',
+      capabilityId,
+      stageKind: capability.stageKind,
+      payload: outputPayload,
+      context: {
+        projectId: inputPayload.projectId ?? project?.id ?? null,
+        episodeId: inputPayload.episodeId ?? null,
+        modelId: model.deploymentId,
+      },
+    });
+    outputPayload = mergeSkillScriptDetails(outputPayload, beforeReviewScripts);
+
     const reviewPolicyIds = project?.setup?.stageConfig?.[capability.stageKind]?.reviewPolicyIds
-      || skillPack?.reviewPolicies
+      || resolvedOutputSkillPack?.reviewPolicies
       || [];
 
     const reviews = evaluateReviewPolicies({

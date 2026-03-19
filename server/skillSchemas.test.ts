@@ -117,4 +117,9 @@ describe('skillSchemas', () => {
 
     expect(reviews.every((item) => item.passed)).toBe(true);
   });
+
+  it('loads skill schemas from file resources', () => {
+    const schema = getSkillSchema('seedance-storyboard-core-v1');
+    expect(schema?.sourcePath).toContain('/schemas/seedance-storyboard-core-v1.json');
+  });
 });

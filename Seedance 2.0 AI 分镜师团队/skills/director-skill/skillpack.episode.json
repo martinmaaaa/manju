@@ -1,0 +1,24 @@
+{
+  "id": "seedance-episode-director-v1",
+  "name": "Seedance Episode Director",
+  "stageKind": "episode_expand",
+  "executionRole": "director",
+  "schemaId": "seedance-episode-expand-core-v1",
+  "capabilitySchemaIds": {
+    "episode_expand": "seedance-episode-expand-core-v1"
+  },
+  "description": "把当前单集扩写成上下文包、分镜节拍和工作台 seed。",
+  "promptMethodology": "先归纳前情与锁定资产，再生成单集上下文、连续性状态和可下游消费的分镜节拍。",
+  "assets": {
+    "primaryOutput": "episode-expansion",
+    "artifacts": ["episode_context", "workspace_seed", "storyboard_beats"]
+  },
+  "references": {
+    "notes": ["和导演拆解技能共用同一来源目录，但输出契约面向单集扩写。"]
+  },
+  "scripts": {
+    "entries": []
+  },
+  "reviewPolicies": ["business-review", "compliance-review"],
+  "promptRecipes": []
+}

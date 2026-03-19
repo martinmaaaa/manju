@@ -9,6 +9,8 @@
   - 当前视频模型输入能力、即梦实机验证和 runtime 映射矩阵。
 - [skills-schema-roadmap.md](C:/Users/marti/Desktop/Code/aiyou/plans/skills-schema-roadmap.md)
   - skills schema 内化路线图和当前完成度。
+- [skillpack-package-spec.md](C:/Users/marti/Desktop/Code/aiyou/plans/skillpack-package-spec.md)
+  - 官方技能包目录规范，定义 `assets / references / scripts` 和 manifest loader 规则。
 
 ## Archive
 - [PLAN01.md](C:/Users/marti/Desktop/Code/aiyou/plans/PLAN01.md)

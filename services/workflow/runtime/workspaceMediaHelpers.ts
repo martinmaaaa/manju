@@ -1,4 +1,4 @@
-import type { CanvasNode, EpisodeWorkspace } from '../../../types/workflowApp';
+import type { CanvasConnection, CanvasNode, EpisodeWorkspace } from '../../../types/workflowApp';
 
 const HTTP_URL_PATTERN = /^https?:\/\//i;
 const AUDIO_DATA_URI_PATTERN = /^data:audio\/[\w.+-]+;base64,/i;
@@ -56,7 +56,7 @@ export function collectEpisodeWorkspaceVideoInputs(
           connection,
           node: nodeById.get(connection.from),
         }))
-        .filter((entry): entry is { connection: { inputKey: string }; node: CanvasNode } => Boolean(entry.node))
+        .filter((entry): entry is { connection: CanvasConnection; node: CanvasNode } => Boolean(entry.node))
     : [];
 
   const referenceImageUrls = Array.from(new Set(videoInputNodes

@@ -99,14 +99,31 @@ function buildPromptSegments(videoPromptText: string, segmentCount: number) {
   return Array.from({ length: segmentCount }, (_, index) => promptSegments[index] || promptSegments[promptSegments.length - 1] || '');
 }
 
-function normalizeShotStrip(strip: EpisodeShotStrip | null | undefined): EpisodeShotStrip {
+function withShotTimeline(slots: EpisodeShotSlot[]): EpisodeShotSlot[] {
+  let currentSeconds = 0;
+
+  return slots.map((slot) => {
+    const durationSeconds = parseShotDurationSeconds(slot.durationLabel);
+    const nextSlot = {
+      ...slot,
+      startSeconds: currentSeconds,
+      endSeconds: currentSeconds + durationSeconds,
+    };
+    currentSeconds += durationSeconds;
+    return nextSlot;
+  });
+}
+
+export function normalizeEpisodeShotStrip(strip: EpisodeShotStrip | null | undefined): EpisodeShotStrip {
   return {
     selectedShotId: strip?.selectedShotId || null,
-    slots: Array.isArray(strip?.slots)
-      ? strip.slots
+    slots: withShotTimeline(
+      Array.isArray(strip?.slots)
+        ? strip.slots
           .filter((slot): slot is EpisodeShotSlot => Boolean(slot?.id))
           .sort((left, right) => left.order - right.order)
-      : [],
+        : [],
+    ),
     removedSlotIds: Array.isArray(strip?.removedSlotIds)
       ? Array.from(new Set(strip.removedSlotIds.map((item) => String(item || '').trim()).filter(Boolean)))
       : [],
@@ -121,7 +138,7 @@ export function buildEpisodeShotStrip(params: {
   currentStrip?: EpisodeShotStrip | null;
 }): EpisodeShotStrip {
   const { episode, episodeContext, storyboardText, videoPromptText, currentStrip } = params;
-  const current = normalizeShotStrip(currentStrip);
+  const current = normalizeEpisodeShotStrip(currentStrip);
   const storyboardSeeds = buildShotSeeds(episode, episodeContext, storyboardText);
   const promptSegments = buildPromptSegments(videoPromptText, storyboardSeeds.length);
   const removedSlotIds = new Set(current.removedSlotIds || []);
@@ -192,13 +209,13 @@ export function buildEpisodeShotStrip(params: {
 
   return {
     selectedShotId,
-    slots,
+    slots: withShotTimeline(slots),
     removedSlotIds: current.removedSlotIds,
   };
 }
 
 export function appendManualEpisodeShotSlot(strip: EpisodeShotStrip | null | undefined): EpisodeShotStrip {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   const manualCount = current.slots.filter((slot) => slot.source === 'manual').length;
   const nextSlot: EpisodeShotSlot = {
     id: `manual-shot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -214,13 +231,13 @@ export function appendManualEpisodeShotSlot(strip: EpisodeShotStrip | null | und
 
   return {
     selectedShotId: nextSlot.id,
-    slots: [...current.slots, nextSlot],
+    slots: withShotTimeline([...current.slots, nextSlot]),
     removedSlotIds: current.removedSlotIds,
   };
 }
 
 export function selectEpisodeShotSlot(strip: EpisodeShotStrip | null | undefined, slotId: string): EpisodeShotStrip {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   if (!current.slots.some((slot) => slot.id === slotId)) {
     return current;
   }
@@ -232,7 +249,7 @@ export function selectEpisodeShotSlot(strip: EpisodeShotStrip | null | undefined
 }
 
 export function findSelectedEpisodeShot(strip: EpisodeShotStrip | null | undefined): EpisodeShotSlot | null {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   return current.slots.find((slot) => slot.id === current.selectedShotId) || null;
 }
 
@@ -240,7 +257,7 @@ export function clearEpisodeShotClip(
   strip: EpisodeShotStrip | null | undefined,
   targetShotId?: string | null,
 ): EpisodeShotStrip {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   const resolvedShotId = targetShotId || current.selectedShotId;
   if (!resolvedShotId) {
     return current;
@@ -248,14 +265,14 @@ export function clearEpisodeShotClip(
 
   return {
     ...current,
-    slots: current.slots.map((slot) => (
+    slots: withShotTimeline(current.slots.map((slot) => (
       slot.id === resolvedShotId
         ? {
             ...slot,
             clip: null,
           }
         : slot
-    )),
+    ))),
   };
 }
 
@@ -265,7 +282,7 @@ export function saveClipToEpisodeShotStrip(params: {
   targetShotId?: string | null;
 }): EpisodeShotStrip {
   const { clip, targetShotId } = params;
-  const current = normalizeShotStrip(params.strip);
+  const current = normalizeEpisodeShotStrip(params.strip);
   const resolvedShotId = targetShotId || current.selectedShotId;
   if (!resolvedShotId) {
     return current;
@@ -273,7 +290,7 @@ export function saveClipToEpisodeShotStrip(params: {
 
   return {
     selectedShotId: resolvedShotId,
-    slots: current.slots.map((slot) => (
+    slots: withShotTimeline(current.slots.map((slot) => (
       slot.id === resolvedShotId
         ? {
             ...slot,
@@ -281,7 +298,7 @@ export function saveClipToEpisodeShotStrip(params: {
             job: null,
           }
         : slot
-    )),
+    ))),
     removedSlotIds: current.removedSlotIds,
   };
 }
@@ -291,7 +308,7 @@ export function renameEpisodeShotSlot(
   slotId: string,
   title: string,
 ): EpisodeShotStrip {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   const nextTitle = String(title || '').trim();
   if (!nextTitle) {
     return current;
@@ -299,14 +316,14 @@ export function renameEpisodeShotSlot(
 
   return {
     ...current,
-    slots: current.slots.map((slot) => (
+    slots: withShotTimeline(current.slots.map((slot) => (
       slot.id === slotId
         ? {
             ...slot,
             title: nextTitle,
           }
         : slot
-    )),
+    ))),
   };
 }
 
@@ -314,7 +331,7 @@ export function deleteEpisodeShotSlot(
   strip: EpisodeShotStrip | null | undefined,
   slotId: string,
 ): EpisodeShotStrip {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   const targetIndex = current.slots.findIndex((slot) => slot.id === slotId);
   if (targetIndex < 0) {
     return current;
@@ -333,7 +350,7 @@ export function deleteEpisodeShotSlot(
 
   return {
     selectedShotId: nextSelectedShotId,
-    slots: nextSlots,
+    slots: withShotTimeline(nextSlots),
     removedSlotIds: target.source === 'storyboard'
       ? Array.from(new Set([...(current.removedSlotIds || []), target.id]))
       : current.removedSlotIds,
@@ -345,7 +362,7 @@ export function reorderEpisodeShotSlot(params: {
   fromShotId: string;
   toShotId?: string | null;
 }): EpisodeShotStrip {
-  const current = normalizeShotStrip(params.strip);
+  const current = normalizeEpisodeShotStrip(params.strip);
   const fromIndex = current.slots.findIndex((slot) => slot.id === params.fromShotId);
   if (fromIndex < 0) {
     return current;
@@ -360,10 +377,10 @@ export function reorderEpisodeShotSlot(params: {
 
   return {
     ...current,
-    slots: nextSlots.map((slot, index) => ({
+    slots: withShotTimeline(nextSlots.map((slot, index) => ({
       ...slot,
       order: index,
-    })),
+    }))),
   };
 }
 
@@ -372,7 +389,7 @@ export function upsertEpisodeShotJob(params: {
   targetShotId?: string | null;
   job: EpisodeShotJob;
 }): EpisodeShotStrip {
-  const current = normalizeShotStrip(params.strip);
+  const current = normalizeEpisodeShotStrip(params.strip);
   const resolvedShotId = params.targetShotId || current.selectedShotId;
   if (!resolvedShotId) {
     return current;
@@ -380,14 +397,14 @@ export function upsertEpisodeShotJob(params: {
 
   return {
     ...current,
-    slots: current.slots.map((slot) => (
+    slots: withShotTimeline(current.slots.map((slot) => (
       slot.id === resolvedShotId
         ? {
             ...slot,
             job: params.job,
           }
         : slot
-    )),
+    ))),
   };
 }
 
@@ -395,7 +412,7 @@ export function clearEpisodeShotJob(
   strip: EpisodeShotStrip | null | undefined,
   targetShotId?: string | null,
 ): EpisodeShotStrip {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   const resolvedShotId = targetShotId || current.selectedShotId;
   if (!resolvedShotId) {
     return current;
@@ -403,14 +420,14 @@ export function clearEpisodeShotJob(
 
   return {
     ...current,
-    slots: current.slots.map((slot) => (
+    slots: withShotTimeline(current.slots.map((slot) => (
       slot.id === resolvedShotId
         ? {
             ...slot,
             job: null,
           }
         : slot
-    )),
+    ))),
   };
 }
 
@@ -425,7 +442,7 @@ export function parseShotDurationSeconds(value?: string | null) {
 }
 
 export function summarizeEpisodeShotStrip(strip: EpisodeShotStrip | null | undefined) {
-  const current = normalizeShotStrip(strip);
+  const current = normalizeEpisodeShotStrip(strip);
   const completedSlots = current.slots.filter((slot) => Boolean(slot.clip?.videoUrl));
   const totalSeconds = completedSlots.reduce((sum, slot) => sum + parseShotDurationSeconds(slot.clip?.durationLabel || slot.durationLabel), 0);
 
@@ -434,6 +451,11 @@ export function summarizeEpisodeShotStrip(strip: EpisodeShotStrip | null | undef
     completedSlots: completedSlots.length,
     totalSeconds,
   };
+}
+
+export function getEpisodeShotStripTotalSeconds(strip: EpisodeShotStrip | null | undefined) {
+  const current = normalizeEpisodeShotStrip(strip);
+  return current.slots[current.slots.length - 1]?.endSeconds || 0;
 }
 
 export function buildEpisodeShotClip(params: {

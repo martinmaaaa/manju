@@ -1,0 +1,36 @@
+{
+  "id": "seedance-art-design-v1",
+  "name": "Seedance Asset Design",
+  "stageKind": "asset_design",
+  "executionRole": "art-designer",
+  "schemaId": "seedance-asset-design-core-v1",
+  "capabilitySchemaIds": {
+    "asset_extract": "seedance-asset-design-core-v1",
+    "image_prompt_generate": "seedance-image-prompt-core-v1"
+  },
+  "description": "把项目圣经整理为角色、场景、道具等 canonical assets。",
+  "promptMethodology": "先收敛角色/场景/道具的 canonical 定义，再补齐预览提示词和版本化描述。",
+  "assets": {
+    "primaryOutput": "asset-design",
+    "artifacts": ["character_prompt_pack", "scene_prompt_pack", "prop_prompt_pack"]
+  },
+  "references": {
+    "notes": ["references 目录包含角色/场景示例，以及图片提示词补充说明。"]
+  },
+  "scripts": {
+    "entries": []
+  },
+  "reviewPolicies": ["business-review", "compliance-review"],
+  "promptRecipes": [
+    {
+      "id": "character-sheet-standard",
+      "name": "角色定板",
+      "description": "优先稳定角色形象和服化特征。"
+    },
+    {
+      "id": "scene-grid-standard",
+      "name": "场景定板",
+      "description": "优先稳定场景构图、氛围和世界观细节。"
+    }
+  ]
+}

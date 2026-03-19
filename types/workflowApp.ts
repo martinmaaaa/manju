@@ -157,6 +157,25 @@ export interface SkillSchemaReviewConfigEntry {
   profileId: string;
 }
 
+export interface SkillPackResourceDocument {
+  path: string;
+  title: string;
+  summary: string;
+  previewText: string;
+  content: string;
+}
+
+export interface SkillPackScriptEntry {
+  id: string;
+  label: string;
+  path: string;
+  runtime: 'node' | 'python' | 'powershell';
+  phase: 'before_prompt' | 'after_normalize' | 'before_review';
+  description?: string;
+  timeoutMs?: number;
+  allowFailure?: boolean;
+}
+
 export interface SkillExecutionSchema {
   id: string;
   version: string;
@@ -188,9 +207,24 @@ export interface SkillPack {
   capabilitySchemaIds?: Record<string, string>;
   description: string;
   promptMethodology: string;
-  templates: {
+  assets: {
     primaryOutput: string;
     artifacts: string[];
+    directories?: string[];
+    files?: string[];
+    documents?: SkillPackResourceDocument[];
+  };
+  references?: {
+    sourceMaterials?: string[];
+    directories?: string[];
+    files?: string[];
+    notes?: string[];
+    documents?: SkillPackResourceDocument[];
+  };
+  scripts?: {
+    directories?: string[];
+    files?: string[];
+    entries?: SkillPackScriptEntry[];
   };
   reviewPolicies: string[];
   promptRecipes: SkillPackPromptRecipe[];
@@ -377,6 +411,8 @@ export interface EpisodeShotSlot {
   promptText: string;
   order: number;
   durationLabel?: string;
+  startSeconds?: number;
+  endSeconds?: number;
   recommendedModelId?: string;
   recommendedModeId?: string;
   referenceAssetNames?: string[];
@@ -390,10 +426,28 @@ export interface EpisodeShotStrip {
   removedSlotIds?: string[];
 }
 
+export interface EpisodeWorkspaceShotGraph {
+  nodes: CanvasNode[];
+  connections?: CanvasConnection[];
+  viewport?: {
+    x: number;
+    y: number;
+    zoom: number;
+  };
+  history?: unknown[];
+}
+
+export interface EpisodeWorkspaceTimeline {
+  currentSeconds: number;
+  totalSeconds: number;
+}
+
 export interface EpisodeWorkspaceContent {
   nodes: CanvasNode[];
   connections?: CanvasConnection[];
   shotStrip?: EpisodeShotStrip;
+  shotGraphs?: Record<string, EpisodeWorkspaceShotGraph>;
+  timeline?: EpisodeWorkspaceTimeline;
   [key: string]: unknown;
 }
 

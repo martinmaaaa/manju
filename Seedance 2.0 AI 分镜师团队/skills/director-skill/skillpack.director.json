@@ -1,0 +1,30 @@
+{
+  "id": "seedance-director-v1",
+  "name": "Seedance Director",
+  "stageKind": "script_decompose",
+  "executionRole": "director",
+  "schemaId": "seedance-director-core-v1",
+  "capabilitySchemaIds": {
+    "script_decompose": "seedance-director-core-v1"
+  },
+  "description": "把长剧本拆解为项目圣经、资产候选和剧集壳子。",
+  "promptMethodology": "先建立项目级世界规则和连续性边界，再整理角色、场景、道具与剧集壳子。",
+  "assets": {
+    "primaryOutput": "director-analysis",
+    "artifacts": ["story_bible", "character_candidates", "scene_candidates", "episode_shells"]
+  },
+  "references": {
+    "notes": ["当前技能包来源于 Seedance 2.0 AI 分镜师团队的导演技能目录。"]
+  },
+  "scripts": {
+    "entries": []
+  },
+  "reviewPolicies": ["business-review", "compliance-review"],
+  "promptRecipes": [
+    {
+      "id": "director-analysis-standard",
+      "name": "标准拆解",
+      "description": "稳定拆出项目圣经和剧集壳子。"
+    }
+  ]
+}

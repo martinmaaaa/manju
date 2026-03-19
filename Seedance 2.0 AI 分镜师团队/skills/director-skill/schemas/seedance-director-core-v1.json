@@ -1,0 +1,80 @@
+{
+  "id": "seedance-director-core-v1",
+  "version": "1.0.0",
+  "stageKind": "script_decompose",
+  "systemInstruction": "你是项目导演，请把长剧本拆解为稳定的项目圣经，并输出严格 JSON。",
+  "promptBlocks": [
+    { "id": "projectTitle", "label": "项目标题", "template": "项目标题：{{projectTitle}}", "requiredKeys": ["projectTitle"] },
+    { "id": "targetMedium", "label": "目标媒介", "template": "目标媒介：{{targetMedium}}", "requiredKeys": ["targetMedium"] },
+    { "id": "aspectRatio", "label": "画幅比例", "template": "画幅比例：{{aspectRatio}}", "requiredKeys": ["aspectRatio"] },
+    { "id": "styleSummary", "label": "整体风格", "template": "整体风格：{{styleSummary}}", "requiredKeys": ["styleSummary"] },
+    { "id": "globalPrompts", "label": "全局提示", "template": "全局提示：{{globalPrompts}}", "requiredKeys": ["globalPrompts"] },
+    { "id": "skillMethodology", "label": "技能方法", "template": "技能方法：{{skillMethodology}}", "requiredKeys": ["skillMethodology"] },
+    { "id": "scriptText", "label": "原始剧本", "template": "原始剧本：\n{{scriptText}}", "requiredKeys": ["scriptText"] }
+  ],
+  "outputContract": {
+    "format": "json",
+    "fields": [
+      { "key": "title", "type": "string", "description": "项目标题" },
+      { "key": "logline", "type": "string", "description": "项目一句话概述" },
+      { "key": "summary", "type": "string", "description": "项目整体摘要" },
+      { "key": "worldRules", "type": "string[]", "description": "世界规则" },
+      { "key": "continuityRules", "type": "string[]", "description": "连续性规则" },
+      {
+        "key": "characters",
+        "type": "object[]",
+        "description": "角色清单",
+        "itemFields": [
+          { "key": "name", "type": "string", "description": "角色名" },
+          { "key": "description", "type": "string", "description": "角色描述" }
+        ]
+      },
+      {
+        "key": "scenes",
+        "type": "object[]",
+        "description": "场景清单",
+        "itemFields": [
+          { "key": "name", "type": "string", "description": "场景名" },
+          { "key": "description", "type": "string", "description": "场景描述" }
+        ]
+      },
+      {
+        "key": "props",
+        "type": "object[]",
+        "description": "道具清单",
+        "itemFields": [
+          { "key": "name", "type": "string", "description": "道具名" },
+          { "key": "description", "type": "string", "description": "道具描述" }
+        ]
+      },
+      {
+        "key": "episodes",
+        "type": "object[]",
+        "description": "剧集壳子",
+        "itemFields": [
+          { "key": "episodeNumber", "type": "number", "description": "集数" },
+          { "key": "title", "type": "string", "description": "集标题" },
+          { "key": "synopsis", "type": "string", "description": "集概述" },
+          { "key": "sourceText", "type": "string", "description": "对应原始文本" }
+        ]
+      }
+    ]
+  },
+  "artifactBindings": {
+    "storyBible": [
+      { "target": "title", "sourceField": "title" },
+      { "target": "logline", "sourceField": "logline" },
+      { "target": "summary", "sourceField": "summary" },
+      { "target": "worldRules", "sourceField": "worldRules" },
+      { "target": "continuityRules", "sourceField": "continuityRules" },
+      { "target": "characters", "sourceField": "characters" },
+      { "target": "scenes", "sourceField": "scenes" },
+      { "target": "props", "sourceField": "props" },
+      { "target": "episodes", "sourceField": "episodes" }
+    ]
+  },
+  "reviewConfig": {
+    "business-review": { "profileId": "business-script-decompose-v1" },
+    "compliance-review": { "profileId": "compliance-default-v1" }
+  }
+}
