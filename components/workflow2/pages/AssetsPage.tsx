@@ -382,13 +382,25 @@ export function AssetsPage({
                 <div className="mt-3 text-2xl font-semibold text-white">{drawerAsset.name}</div>
                 <div className="mt-2 text-sm leading-7 text-slate-300">先对比提示词和预览图，再决定切换当前版本。</div>
               </div>
-              <button
-                type="button"
-                onClick={onCloseVersionDrawer}
-                className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-200"
-              >
-                <X size={16} />
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onCloseVersionDrawer();
+                    onGoEpisodes();
+                  }}
+                  className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition hover:opacity-90"
+                >
+                  进入剧集
+                </button>
+                <button
+                  type="button"
+                  onClick={onCloseVersionDrawer}
+                  className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-slate-200"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
             <div className="mt-6 grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">

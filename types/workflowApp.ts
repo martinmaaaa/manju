@@ -228,6 +228,10 @@ export interface SkillPack {
   };
   reviewPolicies: string[];
   promptRecipes: SkillPackPromptRecipe[];
+  templates?: {
+    primaryOutput: string;
+    artifacts: string[];
+  };
   schema?: SkillExecutionSchema;
   schemasByCapability?: Record<string, SkillExecutionSchema>;
 }

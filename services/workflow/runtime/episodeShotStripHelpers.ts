@@ -433,12 +433,26 @@ export function clearEpisodeShotJob(
 
 export function parseShotDurationSeconds(value?: string | null) {
   const normalized = String(value || '').trim();
-  const match = normalized.match(/^(\d{2}):(\d{2})$/);
-  if (!match) {
+  if (!normalized) {
     return 0;
   }
 
-  return (Number(match[1]) * 60) + Number(match[2]);
+  const minuteSecondMatch = normalized.match(/^(\d{1,2}):(\d{2})$/);
+  if (minuteSecondMatch) {
+    return (Number(minuteSecondMatch[1]) * 60) + Number(minuteSecondMatch[2]);
+  }
+
+  const secondSuffixMatch = normalized.match(/^(\d{1,3})(?:\s*s|\s*sec|\s*secs|\s*seconds?)$/i);
+  if (secondSuffixMatch) {
+    return Number(secondSuffixMatch[1]);
+  }
+
+  const plainNumberMatch = normalized.match(/^(\d{1,3})$/);
+  if (plainNumberMatch) {
+    return Number(plainNumberMatch[1]);
+  }
+
+  return 0;
 }
 
 export function summarizeEpisodeShotStrip(strip: EpisodeShotStrip | null | undefined) {

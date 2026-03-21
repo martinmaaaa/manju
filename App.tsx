@@ -23,7 +23,6 @@ import {
   buildCanvasNodeModelChangePatch,
   buildCanvasConnectionId,
   buildCanvasNodeStagePresetPatch,
-  createCanvasNode,
   getNodePrimaryValue,
   normalizeCanvasContent,
   validateCanvasConnection,
@@ -50,8 +49,30 @@ import {
   seekEpisodeWorkspaceTimelineDraft,
   selectEpisodeWorkspaceShotDraft,
 } from './services/workflow/runtime/episodeWorkspaceEditorHelpers';
+import {
+  applyActiveShotRecommendationToContent,
+  applyJimengJobPatchToNode,
+  applyStagePresetToEpisodeContent,
+  buildEpisodeShotJobState,
+  clearShotResultInContent,
+  connectRecommendedAssetsToContent,
+  repairEpisodeWorkbenchContent,
+  retryShotJobInContent,
+  storeVideoNodeToShot as storeVideoNodeToShotContent,
+  updateNodeInContent,
+} from './services/workflow/runtime/episodeWorkspaceActions';
 import { buildEpisodeWorkspaceViewModel } from './services/workflow/runtime/episodeWorkspaceViewModel';
 import { buildSetupFlowSections } from './services/workflow/runtime/setupPageViewModel';
+import {
+  applySetupModelParamChange,
+  applySetupPromptRecipeChange,
+  applySetupReviewPolicyToggle,
+  applySetupStageModelChange,
+  applySetupStageSkillPackChange,
+  buildPersistedStageConfig,
+  buildProjectSettingSummary,
+  buildProjectSetupPayload,
+} from './services/workflow/runtime/setupPageActions';
 import {
   getEpisodeAssetNodeId,
   getEpisodePrimaryNodeId,
@@ -62,12 +83,6 @@ import {
   summarizeModelConfigFields,
   summarizeModelInputSupport,
 } from './services/workflow/runtime/modelDeploymentHelpers';
-import {
-  applySkillPackSelection,
-  applyStageModelParamChange,
-  applyStageModelSelection,
-  resolveStageModelParams,
-} from './services/workflow/runtime/stageConfigHelpers';
 import {
   collectEpisodeWorkspaceVideoInputs,
   isAudioSource,
@@ -724,7 +739,7 @@ export const App = () => {
     setStudioWorkspaces(res.data);
     const nextId = activeStudioId && res.data.some((item) => item.id === activeStudioId) ? activeStudioId : res.data[0]?.id || null;
     setActiveStudioId(nextId);
-    setSelectedStudioNodeId(res.data.find((item) => item.id === nextId)?.content.nodes?.[0]?.id || null);
+    setSelectedStudioNodeId(null);
   };
 
   const refreshRouteState = async (targetRoute: Route) => {
@@ -1099,16 +1114,6 @@ export const App = () => {
     return () => window.clearInterval(timer);
   }, [user, route, scriptDecomposeRunning, projectRuns, episodeRuns, episodeWorkspaceSaveState]);
 
-  const updateNodeInContent = <T extends EpisodeWorkspace['content'] | StudioWorkspace['content']>(
-    content: T,
-    nodeId: string,
-    patch: Partial<CanvasNode>,
-  ): T => ({
-    ...content,
-    nodes: (content.nodes || []).map((node) => (node.id === nodeId ? { ...node, ...patch } : node)),
-    connections: Array.isArray(content.connections) ? content.connections : [],
-  } as T);
-
   const updateEpisodeWorkspaceDraft = (
     buildNextContent: (content: EpisodeWorkspace['content']) => EpisodeWorkspace['content'],
     options?: { selectedNodeId?: string | null; markDirty?: boolean },
@@ -1185,45 +1190,6 @@ export const App = () => {
     setStudioWorkspaces((current) => current.map((item) => (item.id === workspaceId ? normalizedWorkspace : item)));
     return normalizedWorkspace;
   };
-
-  const buildEpisodeShotJobState = (params: {
-    sourceNodeId: string;
-    providerJobId?: string | null;
-    status: string;
-    phase?: string;
-    progress?: number;
-    error?: string | null;
-    updatedAt?: string | null;
-    previewUrl?: string;
-  }) => ({
-    sourceNodeId: params.sourceNodeId,
-    providerJobId: params.providerJobId || null,
-    status: params.status,
-    phase: params.phase,
-    progress: params.progress,
-    error: params.error || null,
-    updatedAt: params.updatedAt || new Date().toISOString(),
-    previewUrl: params.previewUrl,
-  });
-
-  const applyJimengJobPatchToNode = (node: CanvasNode | null, job: JimengJob): Partial<CanvasNode> => ({
-    output: {
-      ...(node?.output || {}),
-      providerJobId: job.id,
-      previewUrl: job.videoUrl,
-      metadata: {
-        ...((node?.output?.metadata || {}) as Record<string, unknown>),
-        provider: 'jimeng',
-        status: job.status,
-        phase: job.phase,
-        progress: job.progress,
-      },
-    },
-    runStatus: job.status === 'SUCCEEDED' ? 'success' : job.status === 'FAILED' || job.status === 'CANCELLED' ? 'error' : 'running',
-    error: job.error || null,
-    lastRunAt: job.updated_at || new Date().toISOString(),
-    ...(job.videoUrl ? { content: job.videoUrl } : {}),
-  });
 
   const pollJimengNodeJob = async (
     workspaceKind: 'episode' | 'studio',
@@ -1666,12 +1632,7 @@ export const App = () => {
     const isScriptDecomposeActive = scriptDecomposeRunning || isRunningStatus(latestScriptDecomposeRun?.status);
     const storyBible = projectDetail?.storyBible;
     const storyEpisodePreview = (storyBible?.episodes || episodes).slice(0, 4);
-    const projectSettingSummary = [
-      `画幅 ${setupDraft.aspectRatio}`,
-      setupDraft.targetMedium ? `载体 ${setupDraft.targetMedium}` : null,
-      setupDraft.styleSummary ? '已设置整体风格' : null,
-      setupDraft.globalPromptsText.trim() ? `${splitLines(setupDraft.globalPromptsText).length} 条全局提示词` : null,
-    ].filter(Boolean) as string[];
+    const projectSettingSummary = buildProjectSettingSummary(setupDraft);
     const setupFlowSections = buildSetupFlowSections({
       flows: WORKFLOW_STAGE_FLOWS,
       stageLabels: STAGE_LABELS,
@@ -1730,12 +1691,7 @@ export const App = () => {
           try {
             if (route.kind !== 'project-setup') return;
             setProjectSetupSaving(true);
-            const res = await appApi.updateProjectSetup(route.projectId, {
-              aspectRatio: setupDraft.aspectRatio,
-              styleSummary: setupDraft.styleSummary,
-              targetMedium: setupDraft.targetMedium,
-              globalPrompts: splitLines(setupDraft.globalPromptsText),
-            });
+            const res = await appApi.updateProjectSetup(route.projectId, buildProjectSetupPayload(setupDraft));
             if (!res.success) throw new Error(res.error || '保存项目配置失败。');
             await refreshCurrent();
           } catch (err) {
@@ -1762,83 +1718,64 @@ export const App = () => {
             memberForm={memberForm}
             onSelectSkillPack={(stageKind, skillPackId) => {
               const typedStageKind = stageKind as StageKind;
-              const stageSkills = catalogs.skillPacks.filter((item) => item.stageKind === typedStageKind);
-              const nextSkillPack = stageSkills.find((item) => item.id === skillPackId) || null;
-              setStageConfig((current) => ({
-                ...current,
-                [typedStageKind]: applySkillPackSelection(typedStageKind, stageEntry(current, typedStageKind), nextSkillPack),
+              setStageConfig((current) => applySetupStageSkillPackChange({
+                stageConfig: current,
+                stageKind: typedStageKind,
+                skillPackId,
+                skillPacks: catalogs.skillPacks,
+                stageEntry,
               }));
             }}
             onSelectModel={(stageKind, modelId) => setStageConfig((current) => {
               const typedStageKind = stageKind as StageKind;
-              return {
-                ...current,
-                [typedStageKind]: applyStageModelSelection(
-                  stageEntry(current, typedStageKind),
-                  modelId,
-                  catalogs.models,
-                ),
-              };
+              return applySetupStageModelChange({
+                stageConfig: current,
+                stageKind: typedStageKind,
+                modelId,
+                models: catalogs.models,
+                stageEntry,
+              });
             })}
             onSelectPromptRecipe={(stageKind, promptRecipeId) => setStageConfig((current) => {
               const typedStageKind = stageKind as StageKind;
-              return {
-                ...current,
-                [typedStageKind]: {
-                  ...stageEntry(current, typedStageKind),
-                  promptRecipeId: promptRecipeId || undefined,
-                },
-              };
+              return applySetupPromptRecipeChange({
+                stageConfig: current,
+                stageKind: typedStageKind,
+                promptRecipeId,
+                stageEntry,
+              });
             })}
             onToggleReviewPolicy={(stageKind, policyId) => setStageConfig((current) => {
               const typedStageKind = stageKind as StageKind;
-              const stage = stageEntry(current, typedStageKind);
-              const selected = stage.reviewPolicyIds.includes(policyId);
-              return {
-                ...current,
-                [typedStageKind]: {
-                  ...stage,
-                  reviewPolicyIds: selected
-                    ? stage.reviewPolicyIds.filter((item) => item !== policyId)
-                    : [...stage.reviewPolicyIds, policyId],
-                },
-              };
+              return applySetupReviewPolicyToggle({
+                stageConfig: current,
+                stageKind: typedStageKind,
+                policyId,
+                stageEntry,
+              });
             })}
             onChangeModelParam={(stageKind, fieldKey, nextValue) => setStageConfig((current) => {
               const typedStageKind = stageKind as StageKind;
-              return {
-                ...current,
-                [typedStageKind]: applyStageModelParamChange(
-                  {
-                    ...stageEntry(current, typedStageKind),
-                    modelId: getResolvedCapabilityModelId(
-                      stageEntry(current, typedStageKind).capabilityId,
-                      stageEntry(current, typedStageKind).modelId,
-                    ),
-                  },
-                  fieldKey,
-                  nextValue,
-                  catalogs.models,
-                ),
-              };
+              return applySetupModelParamChange({
+                stageConfig: current,
+                stageKind: typedStageKind,
+                fieldKey,
+                nextValue,
+                models: catalogs.models,
+                stageEntry,
+                getResolvedCapabilityModelId,
+              });
             })}
             onSaveStageConfig={async () => {
               try {
                 if (route.kind !== 'project-setup') return;
-                const normalizedStageConfig = Object.fromEntries(
-                  (Object.keys(STAGE_LABELS) as StageKind[]).map((stageKind) => {
-                    const stage = stageEntry(stageConfig, stageKind);
-                    const resolvedModelId = getResolvedCapabilityModelId(stage.capabilityId, stage.modelId);
-                    return [stageKind, {
-                      ...stage,
-                      modelId: resolvedModelId,
-                      modelParams: resolveStageModelParams(
-                        { ...stage, modelId: resolvedModelId },
-                        catalogs.models,
-                      ),
-                    }];
-                  }),
-                );
+                const normalizedStageConfig = buildPersistedStageConfig({
+                  stageConfig,
+                  stageKinds: Object.keys(STAGE_LABELS) as StageKind[],
+                  models: catalogs.models,
+                  stageEntry,
+                  getResolvedCapabilityModelId,
+                });
                 const res = await appApi.updateStageConfig(route.projectId, normalizedStageConfig);
                 if (!res.success) throw new Error(res.error || '保存阶段配置失败。');
                 await refreshCurrent();
@@ -2102,78 +2039,36 @@ export const App = () => {
         return;
       }
 
-      updateEpisodeWorkspaceDraft((currentContent) => {
-        const nextContent = harmonizeEpisodeWorkbenchContent({
-          content: currentContent,
-          episode: currentEpisode,
-          lockedAssets,
-          models: catalogs.models,
-          stageConfig,
-          promptRecipeId: videoPromptStage.promptRecipeId,
-          forceLayout,
-        });
-        return {
-          ...nextContent,
-          shotStrip: buildEpisodeShotStrip({
-            episode: currentEpisode,
-            episodeContext,
-            storyboardText: nextContent.nodes.find((item) => item.id === getEpisodePrimaryNodeId('storyboard', currentEpisode.id))?.content || '',
-            videoPromptText: nextContent.nodes.find((item) => item.id === getEpisodePrimaryNodeId('prompt', currentEpisode.id))?.content || '',
-            currentStrip: nextContent.shotStrip as EpisodeShotStripState | null | undefined,
-          }),
-        };
-      });
+      updateEpisodeWorkspaceDraft((currentContent) => repairEpisodeWorkbenchContent({
+        content: currentContent,
+        episode: currentEpisode,
+        episodeContext,
+        lockedAssets,
+        models: catalogs.models,
+        stageConfig,
+        promptRecipeId: videoPromptStage.promptRecipeId,
+        forceLayout,
+      }));
     };
 
     const applyStagePresetToEpisodeNode = (stageKind: 'video_prompt_generate' | 'video_generate') => {
-      if (!episodeWorkspace || !currentEpisode || route.kind !== 'episode-workspace') {
+      if (!episodeWorkspace || !currentEpisode || route.kind != 'episode-workspace') {
         return;
       }
 
-      const stage = stageEntry(stageConfig, stageKind);
-      const resolvedStage: StageConfig = {
-        ...stage,
-        modelId: getResolvedCapabilityModelId(stage.capabilityId, stage.modelId),
-        modelParams: resolveStageModelParams(
-          {
-            ...stage,
-            modelId: getResolvedCapabilityModelId(stage.capabilityId, stage.modelId),
-          },
-          catalogs.models,
-        ),
-      };
+      const nextDraft = applyStagePresetToEpisodeContent({
+        content: episodeWorkspace.content,
+        episode: currentEpisode,
+        episodeId: route.episodeId,
+        stageKind,
+        stageConfig,
+        models: catalogs.models,
+        selectedWorkspaceNode,
+        lockedAssets,
+        promptRecipeId: videoPromptStage.promptRecipeId,
+      });
 
-      const primaryNodeId = stageKind === 'video_generate'
-        ? getEpisodePrimaryNodeId('video', route.episodeId)
-        : getEpisodePrimaryNodeId('prompt', route.episodeId);
-
-      let nextSelectedId: string | null = null;
-      updateEpisodeWorkspaceDraft((currentContent) => {
-        const nextContent = harmonizeEpisodeWorkbenchContent({
-          content: currentContent,
-          episode: currentEpisode,
-          lockedAssets,
-          models: catalogs.models,
-          stageConfig,
-          promptRecipeId: videoPromptStage.promptRecipeId,
-        });
-        const preferredNode = stageKind === 'video_generate'
-          ? (selectedWorkspaceNode?.type === 'video' ? nextContent.nodes.find((item) => item.id === selectedWorkspaceNode.id) || null : null)
-          : (selectedWorkspaceNode?.id === primaryNodeId ? nextContent.nodes.find((item) => item.id === selectedWorkspaceNode.id) || null : null);
-        const targetNode = preferredNode
-          || nextContent.nodes.find((item) => item.id === primaryNodeId)
-          || null;
-        if (!targetNode) {
-          return nextContent;
-        }
-
-        nextSelectedId = targetNode.id;
-        return updateNodeInContent(
-          nextContent,
-          targetNode.id,
-          buildCanvasNodeStagePresetPatch(targetNode, resolvedStage, catalogs.models),
-        );
-      }, { selectedNodeId: nextSelectedId });
+      updateEpisodeWorkspaceDraft(() => nextDraft.content, { selectedNodeId: nextDraft.selectedNodeId });
     };
 
     const focusEpisodeNode = (node: CanvasNode | null, beatId?: string | null) => {
@@ -2269,62 +2164,41 @@ export const App = () => {
     };
 
     const storeVideoNodeToShot = (nodeId: string) => {
-      const sourceNode = episodeWorkspace?.content.nodes.find((item) => item.id === nodeId) || null;
-      const sourceVideoUrl = sourceNode ? getNodePrimaryValue(sourceNode) : '';
-      const targetShot = findSelectedEpisodeShot(episodeWorkspace?.content.shotStrip as EpisodeShotStripState | undefined);
-
-      if (!targetShot) {
-        setError('请先在下方视频条选中当前分镜槽。');
+      if (!episodeWorkspace) {
         return;
       }
 
-      if (!sourceNode || sourceNode.type !== 'video' || !isVideoSource(sourceVideoUrl)) {
-        setError('当前节点还没有可保存的视频结果。');
-        return;
-      }
-
-      const clip = buildEpisodeShotClip({
-        slot: targetShot,
-        node: sourceNode,
-        videoUrl: sourceVideoUrl,
-        fallbackPromptText: targetShot.promptText || workspaceVideoInputs.prompt || videoPromptText,
+      const nextDraft = storeVideoNodeToShotContent({
+        content: episodeWorkspace.content,
+        nodeId,
+        workspacePromptText: workspaceVideoInputs.prompt,
+        videoPromptText,
       });
 
-      updateEpisodeWorkspaceDraft((currentContent) => ({
-        ...currentContent,
-        shotStrip: saveClipToEpisodeShotStrip({
-          strip: currentContent.shotStrip as EpisodeShotStripState | undefined,
-          targetShotId: targetShot.id,
-          clip,
-        }),
-      }), { selectedNodeId: sourceNode.id });
+      if (nextDraft.error || !nextDraft.content) {
+        setError(nextDraft.error || 'Save shot result failed.');
+        return;
+      }
+
+      updateEpisodeWorkspaceDraft(() => nextDraft.content, { selectedNodeId: nextDraft.selectedNodeId ?? null });
     };
 
     const clearShotResult = (slotId: string) => {
-      updateEpisodeWorkspaceDraft((currentContent) => ({
-        ...currentContent,
-        shotStrip: clearEpisodeShotClip(currentContent.shotStrip as EpisodeShotStripState | undefined, slotId),
-      }));
+      updateEpisodeWorkspaceDraft((currentContent) => clearShotResultInContent(currentContent, slotId));
     };
 
     const retryShotJob = (slotId: string) => {
       const slot = shotStrip.slots.find((item) => item.id === slotId) || null;
       const sourceNodeId = slot?.job?.sourceNodeId || null;
       if (!sourceNodeId) {
-        setError('当前分镜没有可重试的生成节点。');
+        setError('No runnable source node is attached to this shot.');
         return;
       }
 
-      updateEpisodeWorkspaceDraft((currentContent) => ({
-        ...currentContent,
-        shotStrip: clearEpisodeShotJob(
-          selectEpisodeShotSlot(currentContent.shotStrip as EpisodeShotStripState | undefined, slotId),
-          slotId,
-        ),
-      }), { selectedNodeId: sourceNodeId });
+      updateEpisodeWorkspaceDraft((currentContent) => retryShotJobInContent(currentContent, slotId), { selectedNodeId: sourceNodeId });
 
       void runEpisodeCanvasNode(sourceNodeId, slotId).catch((err) => {
-      setError(err instanceof Error ? err.message : '分镜重试失败。');
+        setError(err instanceof Error ? err.message : 'Retrying the shot job failed.');
       });
     };
 
@@ -2380,22 +2254,14 @@ export const App = () => {
         return;
       }
 
-      const primaryVideoNodeId = getEpisodePrimaryNodeId('video', route.episodeId);
-      updateEpisodeWorkspaceDraft((currentContent) => {
-        const currentNode = currentContent.nodes.find((item) => item.id === primaryVideoNodeId) || null;
-        if (!currentNode) {
-          return currentContent;
-        }
+      const nextDraft = applyActiveShotRecommendationToContent({
+        content: episodeWorkspace.content,
+        episodeId: route.episodeId,
+        activeShot,
+        models: catalogs.models,
+      });
 
-        const nextPatch = activeShot.recommendedModelId
-          ? buildCanvasNodeModelChangePatch(currentNode, activeShot.recommendedModelId, catalogs.models)
-          : {};
-
-        return updateNodeInContent(currentContent, primaryVideoNodeId, {
-          ...nextPatch,
-          modeId: activeShot.recommendedModeId || nextPatch.modeId || currentNode.modeId,
-        });
-      }, { selectedNodeId: primaryVideoNodeId });
+      updateEpisodeWorkspaceDraft(() => nextDraft.content, { selectedNodeId: nextDraft.selectedNodeId });
     };
 
     const connectActiveShotRecommendedAssets = () => {
@@ -2407,71 +2273,29 @@ export const App = () => {
         .map((entry) => entry.asset)
         .filter((asset): asset is CanonicalAsset => Boolean(asset));
       if (matchedAssets.length === 0) {
-        setError('当前分镜还没有可匹配的推荐资产。');
+        setError('No recommended locked assets matched the current shot.');
         return;
       }
 
-      const primaryVideoNodeId = getEpisodePrimaryNodeId('video', route.episodeId);
-      let nextSelectedId: string | null = primaryVideoNodeId;
-      let skippedReason: string | null = null;
+      const nextDraft = connectRecommendedAssetsToContent({
+        content: episodeWorkspace.content,
+        episode: currentEpisode,
+        episodeId: route.episodeId,
+        lockedAssets,
+        matchedAssets,
+        models: catalogs.models,
+        stageConfig,
+        promptRecipeId: videoPromptStage.promptRecipeId,
+      });
 
-      updateEpisodeWorkspaceDraft((currentContent) => {
-        const syncedContent = harmonizeEpisodeWorkbenchContent({
-          content: currentContent,
-          episode: currentEpisode,
-          lockedAssets,
-          models: catalogs.models,
-          stageConfig,
-          promptRecipeId: videoPromptStage.promptRecipeId,
-        });
-        const videoNode = syncedContent.nodes.find((node) => node.id === primaryVideoNodeId) || null;
-        if (!videoNode) {
-          skippedReason = '当前工作台还没有主视频节点。';
-          return syncedContent;
-        }
-
-        const nextConnections = Array.isArray(syncedContent.connections) ? [...syncedContent.connections] : [];
-        for (const asset of matchedAssets) {
-          const assetNodeId = getEpisodeAssetNodeId(asset.id);
-          const assetNode = syncedContent.nodes.find((node) => node.id === assetNodeId) || null;
-          if (!assetNode) {
-            skippedReason = `推荐资产 ${asset.name} 还没有同步到工作台。`;
-            continue;
-          }
-
-          const validation = validateCanvasConnection(assetNode, videoNode, catalogs.models, nextConnections);
-          if (!validation.valid || !validation.resolvedInputKey) {
-            skippedReason = validation.error || `推荐资产 ${asset.name} 无法接入当前视频节点。`;
-            continue;
-          }
-
-          const exists = nextConnections.some((connection) => (
-            connection.from === assetNode.id
-            && connection.to === videoNode.id
-            && connection.inputKey === validation.resolvedInputKey
-          ));
-          if (exists) {
-            continue;
-          }
-
-          nextConnections.push({
-            id: buildCanvasConnectionId(assetNode.id, videoNode.id, validation.resolvedInputKey),
-            from: assetNode.id,
-            to: videoNode.id,
-            inputKey: validation.resolvedInputKey,
-            inputType: assetNode.type,
-          });
-        }
-
-        return {
-          ...syncedContent,
-          connections: nextConnections,
-        };
-      }, { selectedNodeId: nextSelectedId });
-
-      if (skippedReason) {
-        setError(skippedReason);
+      if (nextDraft.warning) {
+        setError(nextDraft.warning);
       }
+      if (!nextDraft.content) {
+        return;
+      }
+
+      updateEpisodeWorkspaceDraft(() => nextDraft.content, { selectedNodeId: nextDraft.selectedNodeId ?? null });
     };
 
     const addEpisodeNode = (type: CanvasNode['type'], position?: { x: number; y: number }) => {
@@ -2662,21 +2486,10 @@ export const App = () => {
           setError(err instanceof Error ? err.message : '创建沙盒失败。');
         }
       }}
-      onSelectWorkspace={(workspaceId, firstNodeId) => {
+      onSelectWorkspace={(workspaceId, _firstNodeId) => {
         setActiveStudioId(workspaceId);
-        setSelectedStudioNodeId(firstNodeId);
+        setSelectedStudioNodeId(null);
       }}
-      onAddNode={(type) => setStudioWorkspaces((current) => current.map((item) => item.id === activeStudio?.id ? {
-        ...item,
-          content: {
-            ...item.content,
-            nodes: [
-              ...item.content.nodes,
-              createCanvasNode(type, item.content.nodes.length, catalogs.models),
-            ],
-          connections: Array.isArray(item.content.connections) ? item.content.connections : [],
-        },
-      } : item))}
       onSaveWorkspace={async () => {
         if (!activeStudio) return;
         try {
@@ -2686,13 +2499,18 @@ export const App = () => {
         }
       }}
       canvasProps={activeStudio ? {
-        nodes: activeStudio.content.nodes,
-        connections: activeStudio.content.connections || [],
+        content: activeStudio.content,
         models: catalogs.models,
         selectedNodeId: selectedStudioNodeId,
         onSelectNode: setSelectedStudioNodeId,
-        onChangeNodes: (nodes) => setStudioWorkspaces((current) => current.map((item) => item.id === activeStudio.id ? { ...item, content: { ...item.content, nodes } } : item)),
-        onChangeConnections: (connections) => setStudioWorkspaces((current) => current.map((item) => item.id === activeStudio.id ? { ...item, content: { ...item.content, connections } } : item)),
+        onChangeContent: (buildNextContent, options) => {
+          setStudioWorkspaces((current) => current.map((item) => item.id === activeStudio.id
+            ? { ...item, content: buildNextContent(item.content) as StudioWorkspace['content'] }
+            : item));
+          if (options?.selectedNodeId !== undefined) {
+            setSelectedStudioNodeId(options.selectedNodeId);
+          }
+        },
         stageConfig,
         onRunNode: (nodeId) => void runStudioCanvasNode(activeStudio.id, nodeId).catch((err) => setError(err instanceof Error ? err.message : '节点运行失败。')),
         onUploadAudio: uploadAudioReference,

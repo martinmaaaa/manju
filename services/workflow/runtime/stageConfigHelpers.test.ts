@@ -22,6 +22,10 @@ const directorPack: SkillPack = {
   capabilitySchemaIds: {
     script_decompose: 'director-core-v1',
   },
+  assets: {
+    primaryOutput: 'director-analysis',
+    artifacts: ['story_bible'],
+  },
   templates: {
     primaryOutput: 'director-analysis',
     artifacts: ['story_bible'],
@@ -47,6 +51,10 @@ const videoPack: SkillPack = {
   promptMethodology: 'Keep cinematic intent stable.',
   capabilitySchemaIds: {
     video_prompt_generate: 'video-prompt-core-v1',
+  },
+  assets: {
+    primaryOutput: 'video-prompt',
+    artifacts: ['prompt'],
   },
   templates: {
     primaryOutput: 'video-prompt',

@@ -93,7 +93,7 @@ describe('episodeShotStripHelpers', () => {
           summary: '补充镜头',
           promptText: '手动提示词',
           order: 1,
-          durationLabel: '00:05',
+          durationLabel: '5s',
           clip: null,
         },
       ],

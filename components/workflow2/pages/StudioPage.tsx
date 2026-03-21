@@ -1,7 +1,7 @@
 import React from 'react';
-import type { CanvasNode, StudioWorkspace } from '../../../types/workflowApp';
+import type { StudioWorkspace } from '../../../types/workflowApp';
 import { Card } from '../PagePrimitives';
-import { CanvasSurface } from '../CanvasSurface';
+import { CanvasWorkbench } from '../CanvasWorkbench';
 
 function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ');
@@ -23,9 +23,8 @@ interface StudioPageProps {
   activeStudio: StudioWorkspace | null;
   onCreateWorkspace: () => void | Promise<void>;
   onSelectWorkspace: (workspaceId: string, firstNodeId: string | null) => void;
-  onAddNode: (type: CanvasNode['type']) => void;
   onSaveWorkspace: () => void | Promise<void>;
-  canvasProps: React.ComponentProps<typeof CanvasSurface> | null;
+  canvasProps: React.ComponentProps<typeof CanvasWorkbench> | null;
 }
 
 export function StudioPage({
@@ -34,7 +33,6 @@ export function StudioPage({
   activeStudio,
   onCreateWorkspace,
   onSelectWorkspace,
-  onAddNode,
   onSaveWorkspace,
   canvasProps,
 }: StudioPageProps) {
@@ -71,16 +69,9 @@ export function StudioPage({
       {activeStudio && canvasProps ? (
         <section className="space-y-5">
           <div className="flex flex-wrap items-center gap-3">
-            {(['text', 'image', 'video'] as CanvasNode['type'][]).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => onAddNode(type)}
-                className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-100"
-              >
-                添加{type === 'text' ? '文本' : type === 'image' ? '图片' : '视频'}节点
-              </button>
-            ))}
+            <div className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-200">
+              双击空白区或点击画布左下角 Add node，继续添加文本、图片、视频、音频和上传资源。
+            </div>
             <button
               type="button"
               onClick={() => void onSaveWorkspace()}
@@ -89,7 +80,7 @@ export function StudioPage({
               保存沙盒
             </button>
           </div>
-          <CanvasSurface {...canvasProps} />
+          <CanvasWorkbench {...canvasProps} />
         </section>
       ) : null}
     </div>

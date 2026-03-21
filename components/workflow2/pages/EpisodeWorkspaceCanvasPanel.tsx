@@ -1,7 +1,7 @@
 import React from 'react';
 import type { CanvasNode } from '../../../types/workflowApp';
 import { Card } from '../PagePrimitives';
-import { WorkflowFlowCanvas } from '../WorkflowFlowCanvas';
+import { CanvasWorkbench } from '../CanvasWorkbench';
 
 function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ');
@@ -14,7 +14,7 @@ interface EpisodeWorkspaceCanvasPanelProps {
   onSyncWorkbench: () => void;
   onRelayout: () => void;
   onAddNode: (type: CanvasNode['type'], position?: { x: number; y: number }) => void;
-  canvasProps: React.ComponentProps<typeof WorkflowFlowCanvas>;
+  canvasProps: React.ComponentProps<typeof CanvasWorkbench>;
 }
 
 function formatNodeTypeLabel(type: CanvasNode['type']) {
@@ -76,7 +76,7 @@ export function EpisodeWorkspaceCanvasPanel({
           <div className="absolute z-20 mt-4 w-[320px] rounded-[24px] border border-white/10 bg-[#06090f]/98 p-4 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur">
             <div className="text-[11px] uppercase tracking-[0.24em] text-white/35">Advanced canvas</div>
             <div className="mt-2 text-sm leading-6 text-slate-300">
-              The default path stays template-driven. Use this area only when we need to relayout nodes or add a temporary text, image, video, or audio node. Right-clicking on the canvas opens the same add-node menu.
+              The default path stays template-driven. Use this area only when we need to relayout nodes or add a temporary text, image, video, or audio node. Double-clicking the canvas or using the dock opens the same add-node menu.
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <button
@@ -90,17 +90,18 @@ export function EpisodeWorkspaceCanvasPanel({
                 <button
                   key={type}
                   type="button"
+                  aria-label={`Quick add ${formatNodeTypeLabel(type)} node`}
                   onClick={() => onAddNode(type)}
                   className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-100"
                 >
-                  Add {formatNodeTypeLabel(type)} node
+                  Quick add {formatNodeTypeLabel(type)}
                 </button>
               ))}
             </div>
           </div>
         </details>
       </div>
-      <WorkflowFlowCanvas {...canvasProps} onAddNodeAt={onAddNode} />
+      <CanvasWorkbench {...canvasProps} />
     </Card>
   );
 }
