@@ -937,9 +937,9 @@ export const WorkflowFlowCanvas: React.FC<WorkflowFlowCanvasProps> = ({
       </ReactFlow>
 
       <div className="absolute bottom-5 left-5 z-30 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => {
+          <button
+            type="button"
+            onClick={() => {
             const bounds = shellRef.current?.getBoundingClientRect();
             if (!bounds) {
               return;
@@ -950,7 +950,7 @@ export const WorkflowFlowCanvas: React.FC<WorkflowFlowCanvasProps> = ({
           }}
           className="rounded-full border border-cyan-300/20 bg-cyan-300/12 px-4 py-2 text-sm font-semibold text-cyan-50 shadow-[0_16px_40px_rgba(0,0,0,0.32)] backdrop-blur"
         >
-          Add node
+          添加节点
         </button>
         <div className="rounded-full border border-white/10 bg-[#05070d]/80 px-3 py-2 text-xs text-white/45 backdrop-blur">
           双击空白区快速创建
@@ -1028,4 +1028,3 @@ export const WorkflowFlowCanvas: React.FC<WorkflowFlowCanvasProps> = ({
     </div>
   );
 };
-

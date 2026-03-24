@@ -18,6 +18,29 @@ function isAudioSource(value: string) {
   return /^data:audio\/[\w.+-]+;base64,/i.test(value) || /^https?:\/\//i.test(value);
 }
 
+function StatCard({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string;
+  value: string;
+  tone?: 'default' | 'success' | 'warning';
+}) {
+  const toneClass = tone === 'success'
+    ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-100'
+    : tone === 'warning'
+      ? 'border-amber-300/20 bg-amber-300/10 text-amber-100'
+      : 'border-white/10 bg-white/[0.03] text-slate-100';
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${toneClass}`}>
+      <div className="text-[10px] uppercase tracking-[0.22em] text-white/45">{label}</div>
+      <div className="mt-2 text-sm font-semibold">{value}</div>
+    </div>
+  );
+}
+
 interface EpisodeWorkspacePreviewPanelProps {
   previewTitle: string;
   previewValue: string;
@@ -87,6 +110,10 @@ export function EpisodeWorkspacePreviewPanel({
   onConnectRecommendedAssets,
   onApplyRecommendation,
 }: EpisodeWorkspacePreviewPanelProps) {
+  const referenceSummary = `${imageReferenceCount} 图 / ${videoReferenceCount} 视 / ${audioReferenceCount} 音`;
+  const assetSummary = `${syncedAssetCount} / ${lockedAssetCount}`;
+  const promptStatusLabel = promptReady ? '已就绪' : '待生成';
+
   return (
     <Card eyebrow="预览" title={previewTitle}>
       {isImageSource(previewValue) ? (
@@ -127,35 +154,13 @@ export function EpisodeWorkspacePreviewPanel({
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-3 text-sm text-slate-200">
-        <div className="flex items-center justify-between gap-3">
-          <span>当前分镜</span>
-          <span>{activeShotTitle || '未选择'}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>镜头时长</span>
-          <span>{activeShotDurationLabel || '未定长'}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>提示词</span>
-          <span>{promptReady ? '已就绪' : '待生成'}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>图片参考</span>
-          <span>{imageReferenceCount} 张</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>视频参考</span>
-          <span>{videoReferenceCount} 条</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>音频参考</span>
-          <span>{audioReferenceCount} 条</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>已锁定资产</span>
-          <span>{syncedAssetCount} / {lockedAssetCount}</span>
-        </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="当前分镜" value={activeShotTitle || '未选择'} />
+        <StatCard label="镜头时长" value={activeShotDurationLabel || '未定长'} />
+        <StatCard label="提示词" value={promptStatusLabel} tone={promptReady ? 'success' : 'warning'} />
+        <StatCard label="参考输入" value={referenceSummary} />
+        <StatCard label="已锁定资产" value={assetSummary} />
+        <StatCard label="推荐资产" value={recommendedAssets.length ? `${recommendedAssets.length} 项` : '暂无'} />
       </div>
 
       {previewSummary ? (
@@ -164,7 +169,7 @@ export function EpisodeWorkspacePreviewPanel({
         </div>
       ) : null}
 
-      <div className="mt-4 space-y-4">
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
           <div className="text-[11px] uppercase tracking-[0.24em] text-white/35">视频提示词</div>
           <div className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-300">
@@ -180,48 +185,57 @@ export function EpisodeWorkspacePreviewPanel({
             <div className="mt-2 text-sm leading-7 text-slate-300">把音频节点连到视频节点的全能参考槽位后，这里会显示当前接入的音频参考。</div>
           )}
         </div>
-
-        {assetReferences.length ? (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-white/35">已连接资产版本</div>
-            <div className="mt-3 space-y-2">
-              {assetReferences.map((reference) => (
-                <div
-                  key={`${reference.assetId}-${reference.versionId || 'none'}-${reference.inputKey}`}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-xs text-slate-200"
-                >
-                  <div>
-                    <div className="font-semibold text-white">{reference.assetName || reference.assetId}</div>
-                    <div className="mt-1 text-white/45">
-                      {reference.assetType} · {reference.inputKey} · {reference.versionLabel}
-                    </div>
-                  </div>
-                  <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/60">
-                    {reference.versionNumber ? `V${reference.versionNumber}` : '无版本'}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </div>
 
+      {assetReferences.length ? (
+        <details className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-white">
+            已连接资产版本
+            <span className="ml-2 text-xs font-normal text-white/45">{assetReferences.length} 项</span>
+          </summary>
+          <div className="mt-3 space-y-2">
+            {assetReferences.map((reference) => (
+              <div
+                key={`${reference.assetId}-${reference.versionId || 'none'}-${reference.inputKey}`}
+                className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-xs text-slate-200"
+              >
+                <div>
+                  <div className="font-semibold text-white">{reference.assetName || reference.assetId}</div>
+                  <div className="mt-1 text-white/45">
+                    {reference.assetType} · {reference.inputKey} · {reference.versionLabel}
+                  </div>
+                </div>
+                <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/60">
+                  {reference.versionNumber ? `V${reference.versionNumber}` : '无版本'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+
       {recommendedAssets.length ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {recommendedAssets.map((entry) => (
-            <span
-              key={entry.name}
-              className={cx(
-                'rounded-full border px-3 py-1 text-xs',
-                entry.matched
-                  ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100'
-                  : 'border-amber-300/25 bg-amber-300/10 text-amber-100',
-              )}
-            >
-              {entry.name}
-            </span>
-          ))}
-        </div>
+        <details className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-white">
+            推荐资产命中
+            <span className="ml-2 text-xs font-normal text-white/45">{recommendedAssets.length} 项</span>
+          </summary>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {recommendedAssets.map((entry) => (
+              <span
+                key={entry.name}
+                className={cx(
+                  'rounded-full border px-3 py-1 text-xs',
+                  entry.matched
+                    ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100'
+                    : 'border-amber-300/25 bg-amber-300/10 text-amber-100',
+                )}
+              >
+                {entry.name}
+              </span>
+            ))}
+          </div>
+        </details>
       ) : null}
 
       <div className="mt-4 flex flex-wrap gap-2">

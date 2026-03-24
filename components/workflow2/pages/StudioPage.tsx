@@ -70,7 +70,7 @@ export function StudioPage({
         <section className="space-y-5">
           <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-200">
-              双击空白区或点击画布左下角 Add node，继续添加文本、图片、视频、音频和上传资源。
+              双击空白区或点击画布左下角“添加节点”，继续添加文本、图片、视频、音频和上传资源。
             </div>
             <button
               type="button"
